@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { loginStudent } from './db'; // 👈 අපේ අලුත් Database කෝඩ් එක මෙතනට තනි පේළියක් විදිහට දාන්න
 import { 
   BookOpen, 
   Lock, 
-  Unlock, 
+  Unlock,
   User, 
   Settings, 
   Phone, 
@@ -306,23 +307,27 @@ export default function App() {
   }, [currentStudent]);
 
   // Check login states on bootup
-  const handleStudentLoginSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const found = students.find(s => 
-      s.username.toLowerCase() === loginUser.trim().toLowerCase() && 
-      (s.nic === loginPass || s.username === loginPass || (s as any).password === loginPass)
-    );
+  const handleStudentLoginSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  if (!loginUser.trim() || !loginPass.trim()) {
+    alert("කරුණාකර පරිශීලක නාමය සහ මුරපදය ඇතුළත් කරන්න.");
+    return;
+  }
 
-    if (found) {
-      setCurrentStudent(found);
-      localStorage.setItem('physics_hub_current_student', found.username);
-      setLoginUser('');
-      setLoginPass('');
-      setCurrentView('dashboard');
-    } else {
-      alert("ප්‍රවේශ තොරතුරු වැරදියි! කරුණාකර නැවත උත්සාහ කරන්න හෝ ඔබගේ ගුරුවරයා (WhatsApp 0719152128) සම්බන්ධ කරගන්න.");
-    }
-  };
+  // අපේ සජීවී Database එකෙන් ශිෂ්‍යයාව චෙක් කිරීම
+  const response = await loginStudent(loginUser.trim(), loginPass.trim());
+
+  if (response.success && response.student) {
+    // Database එකෙන් ආපු සිසුවාගේ දත්ත ටික App State එකට එකතු කිරීම
+    setCurrentStudent(response.student);
+    setIsLoggedIn(true);
+    setView('dashboard'); // ඔයාව කෙලින්ම Cockpit/Dashboard එකට රැගෙන යයි
+    alert(`සාදරයෙන් පිළිගනිමු, ${response.student.name}!`);
+  } else {
+    alert(response.message); // "පරිශීලක නාමය හෝ NIC අංකය වැරදියි!" කියා පෙන්වයි
+  }
+};
 
   const handleStudentLogout = () => {
     setCurrentStudent(null);
