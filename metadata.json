@@ -1,0 +1,6 @@
+{
+  "name": "Physics Online Learning Hub",
+  "description": "Professional online learning portal for Taraka Amarasinghe Physics classes, featuring student registration, secure student dashboard, payments, calendar, and announcement systems.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
