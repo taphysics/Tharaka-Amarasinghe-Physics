@@ -1,7 +1,13 @@
 import { neon } from '@neondatabase/serverless';
 
-const databaseUrl = import.meta.env.VITE_POSTGRES_URL;
-const sql = neon(databaseUrl);
+// VITE_ අකුරු වලින් පටන් ගැනීම අනිවාර්යයි
+const connectionString = import.meta.env.VITE_DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("VITE_DATABASE_URL is not set!");
+}
+
+const sql = neon(connectionString);
 
 // 1. Register Student
 export async function registerStudentLive(studentData: any) {
