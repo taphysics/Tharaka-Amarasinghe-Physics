@@ -1,36 +1,31 @@
 import { neon } from '@neondatabase/serverless';
 
-// .env.local එකේ ඇති රහස් ලින්ක් එක ලබා ගැනීම
+// Vercel එකෙන් දත්ත ගබඩාවට සම්බන්ධ වන රහස් ලින්ක් එක
 const databaseUrl = import.meta.env.VITE_POSTGRES_URL;
-
-if (!databaseUrl) {
-  console.error("Warning: VITE_POSTGRES_URL is not defined!");
-}
-
 const sql = neon(databaseUrl);
 
+// 1. ශිෂ්‍ය ලොගින් එක (Student Login)
 export async function loginStudent(username: string, nic: string) {
   try {
-    // Database එකේ මේ ශිෂ්‍යයා ඉන්නවාද කියා සෙවීම
     const result = await sql`
       SELECT * FROM students 
-      WHERE username = ${username} AND nic = ${nic}
+      WHERE username = ${username} AND (nic = ${nic} OR password = ${nic})
     `;
-    
     if (result.length > 0) {
       return { success: true, student: result[0] };
     } else {
-      return { success: false, message: "පරිශීලක නාමය (Username) හෝ NIC අංකය වැරදියි!" };
+      return { success: false, message: "පරිශීලක නාමය (Username) හෝ මුරපදය වැරදියි!" };
     }
   } catch (error) {
     console.error("Database Error:", error);
     return { success: false, message: "දත්ත පද්ධතියට සම්බන්ධ වීමේ දෝෂයකි!" };
   }
 }
-// 1. අලුත් ශිෂ්‍යයෙක් ක්ෂණිකව ලියාපදිංචි කිරීම (Quick Registration)
+
+// 2. අලුත් ශිෂ්‍යයෙක් ක්ෂණිකව ලියාපදිංචි කිරීම (Quick Registration)
 export async function registerStudentLive(student: { username: string; name: string; nic: string; password?: string }) {
   try {
-    const defaultPassword = student.password || student.nic; // Password එකක් වෙනම නැත්නම් NIC එක Password එක වේ
+    const defaultPassword = student.password || student.nic;
     const result = await sql`
       INSERT INTO students (username, name, nic, password, class_types, is_paid, active_months)
       VALUES (${student.username}, ${student.name}, ${student.nic}, ${defaultPassword}, ARRAY[]::TEXT[], FALSE, ARRAY[]::TEXT[])
@@ -44,7 +39,7 @@ export async function registerStudentLive(student: { username: string; name: str
   }
 }
 
-// 2. සියලුම සිසුන්ගේ ලැයිස්තුව ඇඩ්මින් පැනල් එකට ලබා ගැනීම (Active Registry Data)
+// 3. සියලුම සිසුන්ගේ ලැයිස්තුව ලබා ගැනීම (Active Registry Data)
 export async function getAllStudentsLive() {
   try {
     const result = await sql`SELECT * FROM students ORDER BY joined_at DESC`;
@@ -55,7 +50,7 @@ export async function getAllStudentsLive() {
   }
 }
 
-// 3. සිසුවෙකුගේ මුරපදය ක්ෂණිකව වෙනස් කිරීම (Admin Password Reset Tool)
+// 4. සිසුවෙකුගේ මුරපදය ක්ෂණිකව වෙනස් කිරීම (Admin Password Reset Tool)
 export async function resetStudentPasswordLive(username: string, newPassword: string) {
   try {
     const result = await sql`
