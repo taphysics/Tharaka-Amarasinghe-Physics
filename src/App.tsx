@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { loginStudent } from './db'; // 👈 අපේ අලුත් Database කෝඩ් එක මෙතනට තනි පේළියක් විදිහට දාන්න
+import { loginStudent, registerStudentLive, getAllStudentsLive, resetStudentPasswordLive } from './db';
 import { 
   BookOpen, 
   Lock, 

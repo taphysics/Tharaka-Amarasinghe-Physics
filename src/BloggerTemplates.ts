@@ -1,3 +1,4 @@
+import { registerStudentLive, getAllStudentsLive, resetStudentPasswordLive } from './db';
 export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE html>
 <html xmlns='http://www.w3.org/1999/xhtml' xmlns:b='http://google.com/2005/gml/b' xmlns:data='http://google.com/2005/gml/data' xmlns:expr='http://google.com/2005/gml/expr'>
@@ -1747,232 +1748,231 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
     let currentLoggedInUser = null;
     let isAdminAuthenticated = false;
 
-    // Load persisted local storage representation if it exists
-    function loadPersistedState() {
-      const savedStudents = localStorage.getItem("physics_hub_students");
-      if (savedStudents) {
-        students = JSON.parse(savedStudents);
-      } else {
-        localStorage.setItem("physics_hub_students", JSON.stringify(students));
-      }
+    // --- UI & VIEW CONTROLLER ---
 
-      const savedCalendars = localStorage.getItem("physics_hub_calendars");
-      if (savedCalendars) {
-        calendarEvents = JSON.parse(savedCalendars);
-      } else {
-        localStorage.setItem("physics_hub_calendars", JSON.stringify(calendarEvents));
-      }
+// Tab view switching controller
+function switchView(viewId) {
+  const views = document.querySelectorAll(".view");
+  views.forEach(v => v.classList.remove("active"));
+  
+  const targetView = document.getElementById(viewId);
+  if (targetView) targetView.classList.add("active");
 
-      const savedNotifs = localStorage.getItem("physics_hub_notifs");
-      if (savedNotifs) {
-        notifications = JSON.parse(savedNotifs);
-      } else {
-        localStorage.setItem("physics_hub_notifs", JSON.stringify(notifications));
-      }
-      
-      // Auto reconnect session for students
-      const loggedUser = localStorage.getItem("physics_hub_current_student");
-      if (loggedUser) {
-        const found = students.find(s => s.username === loggedUser);
-        if (found) {
-          currentLoggedInUser = found;
-          switchView("dashboardView");
-          renderStudentDashboard();
-        }
-      }
+  // Set active nav buttons
+  const navBtns = document.querySelectorAll(".nav-btn");
+  navBtns.forEach(btn => btn.classList.remove("active"));
+
+  if (viewId === "homeView") document.getElementById("btnHome")?.classList.add("active");
+  else if (viewId === "freeView") document.getElementById("btnFree")?.classList.add("active");
+  else if (viewId === "loginView") document.getElementById("btnLogin")?.classList.add("active");
+  else if (viewId === "registerView") document.getElementById("btnRegister")?.classList.add("active");
+  else if (viewId === "dashboardView") {
+    document.getElementById("btnLogin")?.classList.add("active");
+    if (typeof renderStudentDashboard === 'function') renderStudentDashboard();
+  }
+
+  window.scrollTo(0, 0);
+}
+
+// --- HERO SLIDER ---
+let currentSlideIndex = 0;
+function runBackgroundSlideCycle() {
+  const slider = document.getElementById("heroSlider");
+  if (!slider) return;
+  const slides = slider.querySelectorAll(".hero-bg-slide");
+  if (slides.length === 0) return;
+
+  slides.forEach(s => s.classList.remove("active"));
+  slides[currentSlideIndex].classList.add("active");
+
+  currentSlideIndex = (currentSlideIndex + 1) % slides.length;
+}
+setInterval(runBackgroundSlideCycle, 5000);
+
+// --- INPUT VALIDATIONS ---
+function clearInvalidState(groupId) {
+  const element = document.getElementById(groupId);
+  if (element) {
+    element.classList.remove("invalid");
+  }
+  const btn = document.getElementById("btnRegSubmit");
+  if (btn) btn.removeAttribute("disabled");
+}
+
+    // ==========================================
+// 1. STUDENT REGISTRATION FLOW (LIVE DATABASE)
+// ==========================================
+async function handleStudentRegistration(e) {
+  e.preventDefault();
+
+  const firstEl = document.getElementById("regFirst");
+  const lastEl = document.getElementById("regLast");
+  const nicEl = document.getElementById("regNIC");
+  const distEl = document.getElementById("regDistrict");
+  const whatsappEl = document.getElementById("regWhatsApp");
+  const mobileEl = document.getElementById("regMobile");
+  const passEl = document.getElementById("regPass");
+
+  if (!firstEl || !lastEl || !nicEl || !distEl || !whatsappEl || !mobileEl || !passEl) {
+    return false;
+  }
+
+  const first = firstEl.value.trim();
+  const last = lastEl.value.trim();
+  const nic = nicEl.value.trim();
+  const dist = distEl.value;
+  const whatsapp = whatsappEl.value.trim();
+  const mobile = mobileEl.value.trim();
+  const pass = passEl.value.trim();
+
+  const selectedClasses = [];
+  document.querySelectorAll('input[name="classOption"]:checked').forEach((cb) => {
+    selectedClasses.push(cb.value);
+  });
+
+  let hasErrors = false;
+  let firstErrorGroup = null;
+
+  // Validate Fields
+  if (!first) { document.getElementById("grpFirstName")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpFirstName"; hasErrors = true; }
+  if (!last) { document.getElementById("grpLastName")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpLastName"; hasErrors = true; }
+  if (!nic || nic.length < 9) { document.getElementById("grpNIC")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpNIC"; hasErrors = true; }
+  if (!dist) { document.getElementById("grpDistrict")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpDistrict"; hasErrors = true; }
+  if (selectedClasses.length === 0) { document.getElementById("grpClassType")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpClassType"; hasErrors = true; }
+  
+  const phoneRegex = /^0\d{9}$/;
+  if (!phoneRegex.test(whatsapp)) { document.getElementById("grpWhatsApp")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpWhatsApp"; hasErrors = true; }
+  if (!phoneRegex.test(mobile)) { document.getElementById("grpMobile")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpMobile"; hasErrors = true; }
+  if (!pass || pass.length < 4) { document.getElementById("grpPassword")?.classList.add("invalid"); if (!firstErrorGroup) firstErrorGroup = "grpPassword"; hasErrors = true; }
+
+  if (hasErrors) {
+    const submitBtn = document.getElementById("btnRegSubmit");
+    if (submitBtn) submitBtn.setAttribute("disabled", "disabled");
+    if (firstErrorGroup) {
+      const el = document.getElementById(firstErrorGroup);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }
+    return false;
+  }
 
-    function saveState() {
-      localStorage.setItem("physics_hub_students", JSON.stringify(students));
-      localStorage.setItem("physics_hub_calendars", JSON.stringify(calendarEvents));
-      localStorage.setItem("physics_hub_notifs", JSON.stringify(notifications));
-    }
+  // Credentials Auto Generation
+  const rawFirstPrefix = first.substring(0, 2).toUpperCase();
+  const rawLastPrefix = last.substring(0, 2).toUpperCase();
+  const nicSuffix = nic.substring(nic.length - 2);
+  const whatsappSuffix = whatsapp.substring(whatsapp.length - 2);
+  const generatedUsername = rawFirstPrefix + rawLastPrefix + nicSuffix + whatsappSuffix;
+  const fullName = first + " " + last;
 
-    // Tab view switching controller
-    function switchView(viewId) {
-      document.querySelectorAll(".view").forEach(v => {
-        v.classList.remove("active");
-      });
-      document.getElementById(viewId).classList.add("active");
+  const submitBtn = document.getElementById("btnRegSubmit");
+  if (submitBtn) {
+    submitBtn.innerText = "කරුණාකර රැඳී සිටින්න...";
+    submitBtn.disabled = true;
+  }
 
-      // Set active nav buttons
-      document.querySelectorAll(".nav-btn").forEach(btn => {
-        btn.classList.remove("active");
-      });
+  // සජීවී Database එකට Pending Request එකක් ලෙස යැවීම
+  const result = await registerStudentLive({
+    username: generatedUsername,
+    name: fullName,
+    first_name: first,
+    last_name: last,
+    nic: nic,
+    password: pass,
+    district: dist,
+    whatsapp: whatsapp,
+    mobile: mobile,
+    class_types: selectedClasses
+  });
 
-      if (viewId === "homeView") document.getElementById("btnHome").classList.add("active");
-      else if (viewId === "freeView") document.getElementById("btnFree").classList.add("active");
-      else if (viewId === "loginView") document.getElementById("btnLogin").classList.add("active");
-      else if (viewId === "registerView") document.getElementById("btnRegister").classList.add("active");
-      else if (viewId === "dashboardView") {
-        document.getElementById("btnLogin").classList.add("active");
-        renderStudentDashboard();
-      }
+  if (!result.success) {
+    alert("දත්ත ගබඩාවට ඇතුළත් කිරීම අසාර්ථකයි: " + result.message);
+    if (submitBtn) { submitBtn.innerText = "Register"; submitBtn.disabled = false; }
+    return false;
+  }
 
-      // Scroll to top
-      window.scrollTo(0, 0);
-    }
+  // Formulate WhatsApp payload
+  const waMessage = "*New Student Registration - TA Physics Online Hub*\n\n" +
+    "First Name: " + first + "\n" +
+    "Last Name: " + last + "\n" +
+    "NIC: " + nic + "\n" +
+    "District: " + dist + "\n" +
+    "Classes: " + selectedClasses.join(", ") + "\n" +
+    "WhatsApp: " + whatsapp + "\n" +
+    "Mobile: " + mobile + "\n\n" +
+    "*Auto-Generated Credentials*:\n" +
+    "Username: *" + generatedUsername + "*\n" +
+    "Password: *" + nic + "*\n\n" +
+    "Please approve and verify my account!";
 
-    // Hero sliding backdrops
-    let currentSlideIndex = 0;
-    function runBackgroundSlideCycle() {
-      const slider = document.getElementById("heroSlider");
-      if (!slider) return;
-      const slides = slider.querySelectorAll(".hero-bg-slide");
-      if (slides.length === 0) return;
+  const encText = encodeURIComponent(waMessage);
+  const url = "https://wa.me/94719152128?text=" + encText;
+  window.open(url, "_blank");
 
-      slides.forEach(s => s.classList.remove("active"));
-      slides[currentSlideIndex].classList.add("active");
+  // Show Success Modal
+  if (typeof window.showGlobalModal === "function") {
+    window.showGlobalModal("Registration Request Sent!", 
+      "<p>ඔබගේ ලියාපදිංචිය සාර්ථකව යොමු කරන ලදී. (Username: <strong>" + generatedUsername + "</strong>, Password: <strong>" + nic + "</strong>).</p>" +
+      "<p>ඔබගේ ගිණුම පරීක්ෂා කර සක්‍රීය (Verify) කළ පසු ඔබට ලොග් විය හැක.</p>" +
+      "<div style='margin-top:15px; text-align:center;'><button class='cta primary' onclick='switchView(\"loginView\"); closeGlobalModal();'>Go to Student Login</button></div>"
+    );
+  } else {
+    alert("Registration Successful!\nUsername: " + generatedUsername + "\nPassword: " + nic + "\n\nඔබගේ ගිණුම Verify කළ පසු ලොග් විය හැක.");
+  }
 
-      currentSlideIndex = (currentSlideIndex + 1) % slides.length;
-    }
-    setInterval(runBackgroundSlideCycle, 5000);
+  const regForm = document.getElementById("registerForm");
+  if (regForm) regForm.reset();
+  
+  if (submitBtn) { submitBtn.innerText = "Register Now"; submitBtn.disabled = false; }
+  return true;
+}
 
-    // Dynamic field inputs validations (No required="required" omissions)
-    function clearInvalidState(groupId) {
-      const element = document.getElementById(groupId);
-      if (element) {
-        element.classList.remove("invalid");
-      }
-      // Reactivate button as soon as they edit
-      const btn = document.getElementById("btnRegSubmit");
-      if (btn) btn.removeAttribute("disabled");
-    }
+// ==========================================
+// 2. STUDENT FORGOT PASSWORD (FOR STUDENTS)
+// ==========================================
+function handleForgotPassword() {
+  const username = prompt("කරුණාකර ඔබගේ පරිශීලක නාමය (Username) ඇතුළත් කරන්න:");
+  if (!username) return;
 
-    // Student Registration flow
-    function handleStudentRegistration(e) {
-      e.preventDefault();
-      
-      const first = document.getElementById("regFirst").value.trim();
-      const last = document.getElementById("regLast").value.trim();
-      const nic = document.getElementById("regNIC").value.trim();
-      const dist = document.getElementById("regDistrict").value;
-      const whatsapp = document.getElementById("regWhatsApp").value.trim();
-      const mobile = document.getElementById("regMobile").value.trim();
-      const pass = document.getElementById("regPass").value.trim();
+  const nic = prompt("කරුණාකර ඔබගේ NIC අංකය ඇතුළත් කරන්න:");
+  if (!nic) return;
 
-      // Get multi-select checked classes
-      const selectedClasses = [];
-      document.querySelectorAll('input[name="classOption"]:checked').forEach(cb => {
-        selectedClasses.push(cb.value);
-      });
+  const waMessage = "*Password Reset Request - TA Physics Online Hub*\n\n" +
+    "Username: " + username + "\n" +
+    "NIC: " + nic + "\n\n" +
+    "මට මගේ මුරපදය (Password) අමතක වී ඇත. කරුණාකර එය පරීක්ෂා කර නව මුරපදයක් ලබා දෙන්න.";
 
-      let hasErrors = false;
-      let firstErrorGroup = null;
+  const encText = encodeURIComponent(waMessage);
+  const url = "https://wa.me/94719152128?text=" + encText;
+  window.open(url, "_blank");
+}
 
-      // Validate Fields
-      if (!first) {
-        document.getElementById("grpFirstName").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpFirstName";
-        hasErrors = true;
-      }
-      if (!last) {
-        document.getElementById("grpLastName").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpLastName";
-        hasErrors = true;
-      }
-      if (!nic || nic.length < 9) {
-        document.getElementById("grpNIC").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpNIC";
-        hasErrors = true;
-      }
-      if (!dist) {
-        document.getElementById("grpDistrict").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpDistrict";
-        hasErrors = true;
-      }
-      if (selectedClasses.length === 0) {
-        document.getElementById("grpClassType").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpClassType";
-        hasErrors = true;
-      }
-      // Checks starting with 0 and exactly 10 digits
-      const phoneRegex = /^0\d{9}$/;
-      if (!phoneRegex.test(whatsapp)) {
-        document.getElementById("grpWhatsApp").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpWhatsApp";
-        hasErrors = true;
-      }
-      if (!phoneRegex.test(mobile)) {
-        document.getElementById("grpMobile").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpMobile";
-        hasErrors = true;
-      }
-      if (!pass || pass.length < 4) {
-        document.getElementById("grpPassword").classList.add("invalid");
-        if (!firstErrorGroup) firstErrorGroup = "grpPassword";
-        hasErrors = true;
-      }
+// ==========================================
+// 3. ADMIN PASSWORD RESET TOOL (FOR YOU)
+// ==========================================
+async function handleAdminPasswordReset() {
+  const adminPasswordInput = prompt("ඇඩ්මින් මුරපදය (Admin Password) ඇතුළත් කරන්න:");
+  if (adminPasswordInput !== "dsPHYSICSds*18223") {
+    alert("ඇතුළත් කළ ඇඩ්මින් මුරපදය වැරදියි! ක්‍රියාව අවලංගු කරන ලදී.");
+    return;
+  }
 
-      if (hasErrors) {
-        const submitBtn = document.getElementById("btnRegSubmit");
-        if (submitBtn) submitBtn.setAttribute("disabled", "disabled");
+  const username = prompt("මුරපදය වෙනස් කළ යුතු ශිෂ්‍යයාගේ Username එක ඇතුළත් කරන්න:");
+  if (!username) return;
 
-        if (firstErrorGroup) {
-          const el = document.getElementById(firstErrorGroup);
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        }
-        return false;
-      }
+  const newPassword = prompt("අලුත් මුරපදය (New Password) ඇතුළත් කරන්න:");
+  if (!newPassword || newPassword.length < 4) {
+    alert("කරුණාකර අවම වශයෙන් අකුරු/ඉලක්කම් 4ක වත් මුරපදයක් ඇතුළත් කරන්න.");
+    return;
+  }
 
-      // Generate credentials
-      // Username auto formulation
-      const rawFirstPrefix = first.substring(0, 2).toUpperCase();
-      const rawLastPrefix = last.substring(0, 2).toUpperCase();
-      const nicSuffix = nic.substring(nic.length - 2);
-      const whatsappSuffix = whatsapp.substring(whatsapp.length - 2);
-      const generatedUsername = rawFirstPrefix + rawLastPrefix + nicSuffix + whatsappSuffix;
+  alert("කරුණාකර මොහොතක් රැඳී සිටින්න... මුරපදය වෙනස් කරමින් පවතී...");
+  const result = await resetStudentPasswordLive(username, newPassword);
 
-      const newStudent = {
-        username: generatedUsername,
-        firstName: first,
-        lastName: last,
-        nic: nic,
-        classTypes: selectedClasses,
-        district: dist,
-        whatsapp: whatsapp,
-        mobile: mobile,
-        isPaid: false, // Default is unpaid until verified
-        activeMonths: [],
-        password: pass // Save for local auth lookup
-      };
-
-      // Store in client array
-      students.push(newStudent);
-      saveState();
-
-      // Formulate beautifully stylized WhatsApp text
-      const waMessage = "*New Student Registration - TA Physics Online Hub*\\n\\n" +
-        "First Name: " + first + "\\n" +
-        "Last Name: " + last + "\\n" +
-        "NIC: " + nic + "\\n" +
-        "District: " + dist + "\\n" +
-        "Classes: " + selectedClasses.join(", ") + "\\n" +
-        "WhatsApp: " + whatsapp + "\\n" +
-        "Mobile: " + mobile + "\\n\\n" +
-        "*Auto-Generated Credentials*:\\n" +
-        "Username: *" + generatedUsername + "*\\n" +
-        "Password: *" + nic + "*\\n\\n" +
-        "Please approve and activate my physics student dashboard!";
-
-      // Open WhatsApp Web/App Link
-      const encText = encodeURIComponent(waMessage);
-      const url = "https://wa.me/94719152128?text=" + encText;
-      window.open(url, "_blank");
-
-      // Notify user of next steps
-      showGlobalModal("Registration Code Ready!", 
-        "<p>Your profile has been created successfully (Username: <strong>" + generatedUsername + "</strong>, Password: <strong>" + nic + "</strong>).</p>" +
-        "<p>We have formulated your registration payload and redirected you to your instructor's WhatsApp account (0719152128) to activate your paid features.</p>" +
-        "<div style='margin-top:15px; text-align:center;'><button class='cta primary' onclick='switchView(\"loginView\"); closeGlobalModal();'>Go to Student Login</button></div>"
-      );
-
-      // Reset form
-      document.getElementById("registerForm").reset();
-      return true;
-    }
+  if (result.success) {
+    alert("නියමයි! " + username + " ශිෂ්‍යයාගේ මුරපදය සාර්ථකව වෙනස් කරන ලදී.");
+  } else {
+    alert("දෝෂයකි: " + result.message);
+  }
+}
 
     // Student Login flow
     function handleStudentLogin(e) {
@@ -1980,35 +1980,53 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       const userVal = document.getElementById("loginUsername").value.trim();
       const passVal = document.getElementById("loginPassword").value.trim();
 
-      // Lookup student credentials
-      const found = students.find(s => 
-        s.username.toLowerCase() === userVal.toLowerCase() && 
-        (s.password === passVal || s.nic === passVal)
-      );
+      // Lookup student credentials (Database Version)
+const result = await loginStudent(userVal, passVal);
 
-      if (found) {
-        currentLoggedInUser = found;
-        localStorage.setItem("physics_hub_current_student", found.username);
-        
-        // Handle Welcome Alert trigger flag (Only shown on first login)
-        const closedOnce = localStorage.getItem("physics_hub_welcome_closed_" + found.username);
-        if (!closedOnce) {
-          localStorage.setItem("physics_hub_show_welcome_" + found.username, "true");
-        }
+if (result.success && result.student) {
+  currentLoggedInUser = result.student;
+  
+  // localStorage ඉවත් කර ඇත. 
+  // අවශ්ය නම් පමණක් sessionStorage පාවිච්චි කරන්න (Browser එක වහන විට මැකී යයි)
+  sessionStorage.setItem("current_student_username", result.student.username);
 
-        switchView("dashboardView");
-        renderStudentDashboard();
-      } else {
-        alert("Invalid Username or Password! Please register or check details with admin WhatsApp +94719152128.");
-      }
-    }
+  switchView("dashboardView");
+  renderStudentDashboard();
+  
+  // Welcome Alert සඳහා අවශ්‍ය නම්:
+  const welcomeNotice = document.getElementById("welcomeActiveNotice");
+  if (welcomeNotice) {
+    welcomeNotice.style.display = "flex"; 
+  }
+} else {
+  alert("Invalid Username or Password! " + (result.message || "Please check details."));
+}
+        // Handle Login success (Database Version)
+// මෙම කොටස ඔබ ලොගින් වන තැන (උදා: handleStudentLogin) තිබිය යුතුය
+if (found) {
+  currentLoggedInUser = found;
+  
+  // Welcome Alert සඳහා localStorage වෙනුවට Database එකේ boolean එකක් පාවිච්චි කළ හැකිය.
+  // නමුත් ලේසිම ක්‍රමය තමයි sessionStorage පාවිච්චි කිරීම (මෙය Browser එක වහන විට මැකී යයි, එරර්ස් එන්නේ නැත)
+  const closedOnce = sessionStorage.getItem("welcome_closed_" + found.username);
+  if (!closedOnce) {
+    // මෙය Welcome message එක පෙන්වීමට උදව් වේ
+    sessionStorage.setItem("show_welcome_" + found.username, "true");
+  }
 
-    function handleStudentLogout() {
-      currentLoggedInUser = null;
-      localStorage.removeItem("physics_hub_current_student");
-      switchView("homeView");
-    }
+  switchView("dashboardView");
+  renderStudentDashboard();
+} else {
+  alert("Invalid Username or Password! Please register or check details with admin WhatsApp +94719152128.");
+}
 
+// Handle Student Logout (Database Version)
+function handleStudentLogout() {
+  currentLoggedInUser = null;
+  // localStorage වෙනුවට සරලව session එක ඉවත් කිරීම
+  sessionStorage.clear(); 
+  switchView("homeView");
+}
     // Password recovery trigger to WhatsApp
     function showForgotPassword() {
       const usernamePrompt = prompt("Please enter your Student Username:");
@@ -2037,23 +2055,44 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       const classesJoined = student.classTypes && student.classTypes.length > 0 ? student.classTypes.join(", ") : "Not Enrolled";
       document.getElementById("pillClassType").textContent = classesJoined;
 
-      // Class Month selection indicator
-      const activeState = student.isPaid ? "Access: Active (Paid)" : "Access: Hold (Unpaid)";
-      const statusPill = document.getElementById("pillStatus");
-      statusPill.textContent = activeState;
-      if (student.isPaid) {
-        statusPill.className = "status-pill";
-        document.getElementById("welcomeActiveNotice").style.display = localStorage.getItem("physics_hub_show_welcome_" + student.username) === "true" ? "flex" : "none";
-        document.getElementById("paymentHoldBox").style.display = "none";
-      } else {
-        statusPill.className = "status-pill last-month";
-        statusPill.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
-        statusPill.style.color = "var(--danger)";
-        statusPill.style.borderColor = "rgba(239, 68, 68, 0.25)";
-        document.getElementById("welcomeActiveNotice").style.display = "none";
-        document.getElementById("paymentHoldBox").style.display = "flex";
-      }
+      // Class Month selection indicator (Database & Session Version)
+const activeState = student.is_verified ? "Access: Active (Verified)" : "Access: Hold (Unpaid)";
+const statusPill = document.getElementById("pillStatus");
 
+if (statusPill) {
+  statusPill.textContent = activeState;
+}
+
+if (student.is_verified) {
+  if (statusPill) {
+    statusPill.className = "status-pill";
+    statusPill.style.backgroundColor = ""; // Default styles
+    statusPill.style.color = "";
+    statusPill.style.borderColor = "";
+  }
+  
+  // Welcome Notice පෙන්වීම (localStorage වෙනුවට sessionStorage)
+  const welcomeNotice = document.getElementById("welcomeActiveNotice");
+  if (welcomeNotice) {
+    welcomeNotice.style.display = sessionStorage.getItem("show_welcome_" + student.username) === "true" ? "flex" : "none";
+  }
+  
+  const holdBox = document.getElementById("paymentHoldBox");
+  if (holdBox) holdBox.style.display = "none";
+} else {
+  if (statusPill) {
+    statusPill.className = "status-pill last-month";
+    statusPill.style.backgroundColor = "rgba(239, 68, 68, 0.15)";
+    statusPill.style.color = "var(--danger)";
+    statusPill.style.borderColor = "rgba(239, 68, 68, 0.25)";
+  }
+  
+  const welcomeNotice = document.getElementById("welcomeActiveNotice");
+  if (welcomeNotice) welcomeNotice.style.display = "none";
+  
+  const holdBox = document.getElementById("paymentHoldBox");
+  if (holdBox) holdBox.style.display = "flex";
+}
       // Sidebar details overview
       const detailsBox = document.getElementById("studentSidebarDetails");
       detailsBox.innerHTML = 
@@ -2070,41 +2109,48 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       buildDashboardNotices();
     }
 
-    // Profiles Modal popup on click (Excluding Password showing)
-    function showStudentProfileDetails() {
-      if (!currentLoggedInUser) return;
-      const student = currentLoggedInUser;
+    // Profiles Modal popup on click
+function showStudentProfileDetails() {
+  if (!currentLoggedInUser) return;
+  const student = currentLoggedInUser;
 
-      const profileHtml = 
-        "<div style='background:rgba(255,255,255,0.02); padding:1.5rem; border-radius:10px; border:1px solid var(--border);'>" +
-          "<div style='text-align:center; margin-bottom:1.5rem;'>" +
-            "<div style='width:70px; height:70px; border-radius:50%; background:linear-gradient(135deg, var(--primary), #ec4899); display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:white; font-size:1.8rem; margin-bottom:0.5rem;'>" + student.firstName.substring(0,1) + "</div>" +
-            "<h4>" + student.firstName + " " + student.lastName + "</h4>" +
-            "<p style='color:#64748b; font-size:0.8rem; margin:0;'>Student registration details verified</p>" +
-          "</div>" +
-          "<div style='display:flex; flex-direction:column; gap:10px; font-size:0.9rem;'>" +
-            "<div><strong>STUDENT ID (Username):</strong> <span style='color:var(--primary); font-family:monospace;'>" + student.username + "</span></div>" +
-            "<div><strong>First Name:</strong> <span>" + student.firstName + "</span></div>" +
-            "<div><strong>Last Name:</strong> <span>" + student.lastName + "</span></div>" +
-            "<div><strong>National ID (NIC) Number:</strong> <span>" + student.nic + "</span></div>" +
-            "<div><strong>Enrolled Course Plan:</strong> <span style='background:rgba(139,92,246,0.1); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem; color:var(--primary);'>" + student.classTypes.join(", ") + "</span></div>" +
-            "<div><strong>Home District:</strong> <span>" + student.district + "</span></div>" +
-            "<div><strong>WhatsApp Contact:</strong> <span>" + student.whatsapp + "</span></div>" +
-            "<div><strong>Mobile Voice:</strong> <span>" + student.mobile + "</span></div>" +
-          "</div>" +
-        "</div>";
+  const profileHtml = 
+    "<div style='background:rgba(255,255,255,0.02); padding:1.5rem; border-radius:10px; border:1px solid var(--border);'>" +
+      "<div style='text-align:center; margin-bottom:1.5rem;'>" +
+        "<div style='width:70px; height:70px; border-radius:50%; background:linear-gradient(135deg, var(--primary), #ec4899); display:inline-flex; align-items:center; justify-content:center; font-weight:700; color:white; font-size:1.8rem; margin-bottom:0.5rem;'>" + (student.first_name ? student.first_name.substring(0,1) : "S") + "</div>" +
+        "<h4>" + student.name + "</h4>" +
+        "<p style='color:#64748b; font-size:0.8rem; margin:0;'>Student registration details verified</p>" +
+      "</div>" +
+      "<div style='display:flex; flex-direction:column; gap:10px; font-size:0.9rem;'>" +
+        "<div><strong>STUDENT ID (Username):</strong> <span style='color:var(--primary); font-family:monospace;'>" + student.username + "</span></div>" +
+        "<div><strong>First Name:</strong> <span>" + (student.first_name || student.name) + "</span></div>" +
+        "<div><strong>Last Name:</strong> <span>" + (student.last_name || "") + "</span></div>" +
+        "<div><strong>National ID (NIC) Number:</strong> <span>" + student.nic + "</span></div>" +
+        "<div><strong>Enrolled Course Plan:</strong> <span style='background:rgba(139,92,246,0.1); padding:0.2rem 0.5rem; border-radius:4px; font-size:0.75rem; color:var(--primary);'>" + (student.class_types ? student.class_types.join(", ") : "None") + "</span></div>" +
+        "<div><strong>Home District:</strong> <span>" + student.district + "</span></div>" +
+        "<div><strong>WhatsApp Contact:</strong> <span>" + student.whatsapp + "</span></div>" +
+        "<div><strong>Mobile Voice:</strong> <span>" + student.mobile + "</span></div>" +
+      "</div>" +
+    "</div>";
 
-      showGlobalModal("Verify Student Profile Data", profileHtml);
+  if (typeof showGlobalModal === 'function') {
+    showGlobalModal("Verify Student Profile Data", profileHtml);
+  }
+}
+
+// Welcome banner closing
+function closeWelcomeBanner() {
+  if (currentLoggedInUser) {
+    // localStorage වෙනුවට sessionStorage භාවිතා කිරීම
+    sessionStorage.setItem("welcome_closed_" + currentLoggedInUser.username, "true");
+    sessionStorage.setItem("show_welcome_" + currentLoggedInUser.username, "false");
+    
+    const welcomeNotice = document.getElementById("welcomeActiveNotice");
+    if (welcomeNotice) {
+      welcomeNotice.style.display = "none";
     }
-
-    function closeWelcomeBanner() {
-      if (currentLoggedInUser) {
-        localStorage.setItem("physics_hub_welcome_closed_" + currentLoggedInUser.username, "true");
-        localStorage.setItem("physics_hub_show_welcome_" + currentLoggedInUser.username, "false");
-        document.getElementById("welcomeActiveNotice").style.display = "none";
-      }
-    }
-
+  }
+}
     // Live link access logic
     function accessPortalUrl(dest) {
       if (!currentLoggedInUser) return;
@@ -2326,61 +2372,76 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       }
     }
 
-    // Populate students list table for Admin
-    function renderAdminStudentsTable() {
-      const tbody = document.getElementById("adminStudentsTable").querySelector("tbody");
-      if (!tbody) return;
+    // Populate students list table for Admin (Live Database Version)
+async function renderAdminStudentsTable() {
+  const table = document.getElementById("adminStudentsTable");
+  const tbody = table ? table.querySelector("tbody") : null;
+  if (!tbody) return;
 
-      tbody.innerHTML = "";
-      students.forEach((stu, index) => {
-        const tr = document.createElement("tr");
+  tbody.innerHTML = "<tr><td colspan='4'>දත්ත ලබාගනිමින් පවතී...</td></tr>";
 
-        const detailsTd = document.createElement("td");
-        detailsTd.innerHTML = "<strong>" + stu.firstName + " " + stu.lastName + "</strong><br/><span style='font-family:monospace; font-size:0.75rem; color:var(--primary);'>" + stu.username + "</span>";
-        tr.appendChild(detailsTd);
+  // Database එකෙන් සියලුම සිසුන් ලබා ගැනීම
+  const allStudents = await getAllStudentsLive();
+  tbody.innerHTML = "";
 
-        const classTd = document.createElement("td");
-        classTd.textContent = stu.classTypes ? stu.classTypes.join(", ") : "None";
-        tr.appendChild(classTd);
+  allStudents.forEach((stu) => {
+    const tr = document.createElement("tr");
 
-        const statusTd = document.createElement("td");
-        const statusText = stu.isPaid ? "✅ Paid (Full Unlocked)" : "❌ Unpaid / Hold";
-        statusTd.textContent = statusText;
-        tr.appendChild(statusTd);
+    const detailsTd = document.createElement("td");
+    detailsTd.innerHTML = "<strong>" + stu.name + "</strong><br/><span style='font-family:monospace; font-size:0.75rem; color:var(--primary);'>" + stu.username + "</span>";
+    tr.appendChild(detailsTd);
 
-        const actionsTd = document.createElement("td");
-        const toggleBtn = document.createElement("button");
-        toggleBtn.className = "mini-btn";
-        toggleBtn.style.marginRight = "5px";
-        toggleBtn.textContent = stu.isPaid ? "Set Unpaid" : "Grant Access";
-        toggleBtn.onclick = () => {
-          stu.isPaid = !stu.isPaid;
-          saveState();
-          renderAdminStudentsTable();
-        };
+    const classTd = document.createElement("td");
+    classTd.textContent = stu.class_types ? stu.class_types.join(", ") : "None";
+    tr.appendChild(classTd);
 
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "mini-btn";
-        deleteBtn.style.backgroundColor = "rgba(239,68,68,0.15)";
-        deleteBtn.style.color = "var(--danger)";
-        deleteBtn.style.borderColor = "rgba(239, 68, 68, 0.25)";
-        deleteBtn.textContent = "Remove";
-        deleteBtn.onclick = () => {
-          if (confirm("Delete " + stu.firstName + " profile registration record?")) {
-            students.splice(index, 1);
-            saveState();
-            renderAdminStudentsTable();
-          }
-        };
+    const statusTd = document.createElement("td");
+    // Database එකේ ඇති is_verified තීරුව භාවිතා කිරීම
+    const statusText = stu.is_verified ? "✅ Verified (Access Granted)" : "❌ Pending / Hold";
+    statusTd.textContent = statusText;
+    tr.appendChild(statusTd);
 
-        actionsTd.appendChild(toggleBtn);
-        actionsTd.appendChild(deleteBtn);
-        tr.appendChild(actionsTd);
+    const actionsTd = document.createElement("td");
+    
+    // Grant/Revoke Access බටන් එක
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className = "mini-btn";
+    toggleBtn.style.marginRight = "5px";
+    toggleBtn.textContent = stu.is_verified ? "Revoke Access" : "Grant Access";
+    
+    toggleBtn.onclick = async () => {
+      const newStatus = !stu.is_verified;
+      // Database එකේ updateStatus function එක මෙතැනදී call කරන්න
+      // (ඔබේ db.ts එකේ මේ නම තියෙනවාදැයි පරීක්ෂා කරන්න)
+      const success = await updateStudentStatusLive(stu.username, newStatus); 
+      if (success) {
+        renderAdminStudentsTable(); // සාර්ථක නම් නැවත ලැයිස්තුව load කරන්න
+      } else {
+        alert("සැකසීම අසාර්ථක විය!");
+      }
+    };
 
-        tbody.appendChild(tr);
-      });
-    }
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "mini-btn";
+    deleteBtn.style.backgroundColor = "rgba(239,68,68,0.15)";
+    deleteBtn.style.color = "var(--danger)";
+    deleteBtn.style.borderColor = "rgba(239, 68, 68, 0.25)";
+    deleteBtn.textContent = "Remove";
+    deleteBtn.onclick = async () => {
+      if (confirm("Delete " + stu.name + " profile registration record?")) {
+        // Database එකෙන් delete කරන function එකක් මෙතනට දාන්න
+        await deleteStudentLive(stu.username);
+        renderAdminStudentsTable();
+      }
+    };
 
+    actionsTd.appendChild(toggleBtn);
+    actionsTd.appendChild(deleteBtn);
+    tr.appendChild(actionsTd);
+
+    tbody.appendChild(tr);
+  });
+}
     // Manual profile code generator inside Admin section
     function generateManualStudentCode() {
       const first = document.getElementById("manFirstName").value.trim();
@@ -2425,92 +2486,127 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
         password: nic // Password defaults to NIC
       };
 
-      // Add to main storage list
-      students.push(obj);
-      saveState();
-      
-      const jsonStr = JSON.stringify(obj, null, 2);
-      document.getElementById("manResultText").value = jsonStr;
-      document.getElementById("manResultBox").style.display = "block";
-      
-      renderAdminStudentsTable();
-      alert("Manual credentials registered! Username is: " + generatedUsername + " with Password: " + nic);
-    }
+      // Add to main storage list (Database Version)
+// 'obj' එකේ දත්ත තියෙනවා නම්, ඒක කෙලින්ම Database එකට යවන්න
+const result = await registerStudentLive(obj); 
 
-    function copyManualStudentText() {
-      const copyText = document.getElementById("manResultText");
-      copyText.select();
-      copyText.setSelectionRange(0, 99999);
-      document.execCommand("copy");
-      alert("Registration JSON profile code copied!");
-    }
+if (result.success) {
+  const jsonStr = JSON.stringify(obj, null, 2);
+  const resultText = document.getElementById("manResultText");
+  const resultBox = document.getElementById("manResultBox");
+  
+  if (resultText) resultText.value = jsonStr;
+  if (resultBox) resultBox.style.display = "block";
+  
+  // Table එක නැවත අලුතින් load කරන්න
+  renderAdminStudentsTable();
+  alert("Manual credentials registered! Username is: " + obj.username + " with Password: " + obj.password);
+} else {
+  alert("දත්ත ගබඩාවට ඇතුළත් කිරීම අසාර්ථකයි: " + result.message);
+}
 
-    // Submit planned calendar event
-    function submitPlannedEvent() {
-      const date = document.getElementById("planDate").value;
-      const title = document.getElementById("planTitle").value.trim();
-      const status = document.getElementById("planStatus").value;
-      const warning = document.getElementById("planWarning").value.trim();
+// copyManualStudentText Function එකේ කිසිම වෙනසක් අවශ්‍ය නැත, එය පවතින පරිදිම තබා ගන්න.
+function copyManualStudentText() {
+  const copyText = document.getElementById("manResultText");
+  if (copyText) {
+    copyText.select();
+    copyText.setSelectionRange(0, 99999);
+    document.execCommand("copy");
+    alert("Registration JSON profile code copied!");
+  }
+}
 
-      if (!date || !title) {
-        alert("Fill date & session title details!");
-        return;
-      }
+    // Submit planned calendar event (Database Version)
+async function submitPlannedEvent() {
+  const dateInput = document.getElementById("planDate") as HTMLInputElement;
+  const titleInput = document.getElementById("planTitle") as HTMLInputElement;
+  const statusInput = document.getElementById("planStatus") as HTMLSelectElement;
+  const warningInput = document.getElementById("planWarning") as HTMLInputElement;
 
-      const newEvent = {
-        id: "plan-" + Date.now(),
-        date: date,
-        title: title,
-        description: "Scheduled online physics session core course pack topic discussion.",
-        status: status,
-        warningMessage: status === "cancelled" ? (warning || "⚠️ Session Postponed by Admin Alert!") : ""
-      };
+  if (!dateInput || !titleInput || !statusInput) return;
 
-      calendarEvents.push(newEvent);
-      saveState();
-      alert("Physics Calendar Plotted! Day active: " + date);
-      
-      // Reset Planner Fields
-      document.getElementById("planTitle").value = "";
-      document.getElementById("planWarning").value = "";
-    }
+  const date = dateInput.value;
+  const title = titleInput.value.trim();
+  const status = statusInput.value;
+  const warning = warningInput ? warningInput.value.trim() : "";
 
-    // Broadcaster Alert submit
-    function submitAdAlert() {
-      const type = document.getElementById("notType").value;
-      const user = document.getElementById("notUser").value.trim();
-      const title = document.getElementById("notTitle").value.trim();
-      const content = document.getElementById("notContent").value.trim();
+  if (!date || !title) {
+    alert("Fill date & session title details!");
+    return;
+  }
 
-      if (!title || !content) {
-        alert("Please complete notice headlines and body content details!");
-        return;
-      }
+  // Database එකට යැවිය යුතු Object එක
+  const newEvent = {
+    date: date,
+    title: title,
+    description: "Scheduled online physics session core course pack topic discussion.",
+    status: status,
+    warning_message: status === "cancelled" ? (warning || "⚠️ Session Postponed by Admin Alert!") : ""
+  };
 
-      const not = {
-        id: "not-" + Date.now(),
-        title: title,
-        content: content,
-        date: "2026-05-25", // Simulated live date
-        type: type,
-        targetUser: type === "private" ? user : ""
-      };
+  // Database එකට ඇතුළත් කිරීම
+  const result = await createCalendarEventLive(newEvent);
 
-      notifications.push(not);
-      saveState();
-      alert("Broadcasting payload complete! Notices saved.");
-      
-      // Reset inputs
-      document.getElementById("notTitle").value = "";
-      document.getElementById("notContent").value = "";
-      document.getElementById("notUser").value = "";
-    }
+  if (result.success) {
+    alert("Physics Calendar Plotted! Day active: " + date);
+    
+    // Reset Planner Fields
+    titleInput.value = "";
+    if (warningInput) warningInput.value = "";
+    
+    // අවශ්‍ය නම් කලින් තිබූ renderCalendar() වැනි function එකක් මෙතනදී කැඳවන්න
+  } else {
+    alert("දත්ත ගබඩාවට ඇතුළත් කිරීම අසාර්ථකයි: " + result.message);
+  }
+}
+
+    // Broadcaster Alert submit (Database Version)
+async function submitAdAlert() {
+  const typeInput = document.getElementById("notType") as HTMLSelectElement;
+  const userInput = document.getElementById("notUser") as HTMLInputElement;
+  const titleInput = document.getElementById("notTitle") as HTMLInputElement;
+  const contentInput = document.getElementById("notContent") as HTMLTextAreaElement;
+
+  if (!typeInput || !userInput || !titleInput || !contentInput) return;
+
+  const type = typeInput.value;
+  const user = userInput.value.trim();
+  const title = titleInput.value.trim();
+  const content = contentInput.value.trim();
+
+  if (!title || !content) {
+    alert("Please complete notice headlines and body content details!");
+    return;
+  }
+
+  // Database එකට යැවිය යුතු Notification Object එක
+  const not = {
+    title: title,
+    content: content,
+    date: new Date().toISOString().split('T')[0], // ස්වයංක්‍රීයව අද දිනය ලබා ගැනීම
+    type: type,
+    target_user: type === "private" ? user : null
+  };
+
+  // Database එකට ඇතුළත් කිරීම
+  const result = await createNotificationLive(not); 
+
+  if (result.success) {
+    alert("Broadcasting payload complete! Notices saved.");
+    
+    // Reset inputs
+    titleInput.value = "";
+    contentInput.value = "";
+    userInput.value = "";
+  } else {
+    alert("දෝෂයකි: " + result.message);
+  }
+}
 
     // Initial load setup bootstrapper
-    window.onload = function() {
-      loadPersistedState();
-      runBackgroundSlideCycle();
-    };
+window.onload = function() {
+  runBackgroundSlideCycle();
+};
     
     //]]>
   </script>
