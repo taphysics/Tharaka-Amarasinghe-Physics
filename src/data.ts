@@ -3,12 +3,14 @@ import { Student, CalendarEvent, Announcement, SiteConfig } from './types';
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
   heroTitle: "තාරක අමරසිංහ",
   heroSubtitle: "දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පන්ති",
-  logoUrl: "https://cdn.pixabay.com/photo/2014/12/21/23/28/physics-575630_1280.png",
+  logoUrl: "/logo.png",
   heroImage1: "https://images.unsplash.com/photo-1614064641938-3bbee52942c7?q=80&w=1200&auto=format&fit=crop",
   heroImage2: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=1200&auto=format&fit=crop",
   heroImage3: "https://images.unsplash.com/photo-1507668077129-56e32842fceb?q=80&w=1200&auto=format&fit=crop",
   heroImage4: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop",
-  contactPhone: "071 915 2128"
+  contactPhone: "071 915 2128",
+  directorImage: "/teacher.png",
+  directorTitle: "B.Sc (Hon's) University of Peradeniya | Physics Teacher",
 };
 
 export const DEFAULT_STUDENTS: Student[] = [

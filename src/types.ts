@@ -67,4 +67,6 @@ export interface SiteConfig {
   heroImage3: string;
   heroImage4: string;
   contactPhone: string;
+  classRatesText?: string;
+  classScheduleText?: string;
 }

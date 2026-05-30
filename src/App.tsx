@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { loginStudent, registerStudentLive, getAllStudentsLive, resetStudentPasswordLive } from './db';
 import { 
   BookOpen, 
   Lock, 
-  Unlock,
+  Unlock, 
   User, 
   Settings, 
   Phone, 
@@ -26,7 +25,9 @@ import {
   ChevronRight,
   Send,
   Video,
-  Folder
+  Folder,
+  Download,
+  Play
 } from 'lucide-react';
 import { Student, CalendarEvent, Announcement, SiteConfig } from './types';
 import { 
@@ -36,37 +37,59 @@ import {
   DEFAULT_SITE_CONFIG,
   SRI_LANKA_DISTRICTS 
 } from './data';
+import { supabase } from './supabaseClient';
+
+import { useSupabaseSync } from './hooks/useSupabaseSync';
+import AdminRegistryTable from './components/AdminRegistryTable';
+import AdminPaymentManager from './components/AdminPaymentManager';
+import AdminPaymentHistory from './components/AdminPaymentHistory';
+import AdminGlobalConfig from './components/AdminGlobalConfig';
+import AdminSiteConfig from './components/AdminSiteConfig';
+import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
+import AdminPasswordReset from './components/AdminPasswordReset';
+import { useSupabaseConfig } from './hooks/useSupabaseConfig';
+import AdminAttentionLogs from './components/AdminAttentionLogs';
 
 export default function App() {
+  // Helper for current month payment check
+  const isCurrentMonthPaid = (activeMonths?: string[]) => {
+    if (!activeMonths || activeMonths.length === 0) return false;
+    const now = new Date();
+    // Assuming month string format is like "2026-05" or year "2026"
+    const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const currentYearStr = `${now.getFullYear()}`;
+    return activeMonths.includes(currentMonthStr) || activeMonths.includes(currentYearStr);
+  };
   // State variables
-  const [siteConfig, setSiteConfig] = useState<SiteConfig>(() => {
-    const saved = localStorage.getItem('physics_hub_site_config');
-    return saved ? JSON.parse(saved) : DEFAULT_SITE_CONFIG;
-  });
-  const [students, setStudents] = useState<Student[]>(() => {
-    const saved = localStorage.getItem('physics_hub_students');
-    return saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
-  });
+  const [siteConfigRaw, setSiteConfigRaw] = useSupabaseConfig();
+  const siteConfig = siteConfigRaw || DEFAULT_SITE_CONFIG;
 
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>(() => {
-    const saved = localStorage.getItem('physics_hub_calendars');
-    return saved ? JSON.parse(saved) : DEFAULT_CALENDAR_EVENTS;
-  });
+  const globalClasses: { id: string, name: string, fee: number }[] = (() => {
+    try {
+      if (siteConfig?.classRatesText) {
+        const parsed = JSON.parse(siteConfig.classRatesText);
+        if (parsed.classes && Array.isArray(parsed.classes)) return parsed.classes;
+      }
+    } catch (e) {}
+    return [
+      { id: '1', name: '2027 Theory', fee: 3500 },
+      { id: '2', name: '2027 Revision', fee: 3000 },
+      { id: '3', name: '2027 Paper Class', fee: 2000 },
+      { id: '4', name: '2028 Theory', fee: 3500 },
+      { id: '5', name: '2028 Revision', fee: 3000 },
+      { id: '6', name: '2028 Paper Class', fee: 2000 }
+    ];
+  })();
+  const globalClassNames = (globalClasses || []).map(c => c?.name || '').filter(Boolean);
+  const setSiteConfig = setSiteConfigRaw;
+  
+  // Replace localStorage students with Supabase Realtime sync
+  const [students, setStudents] = useSupabaseSync<any>('students', []);
 
-  const [announcements, setAnnouncements] = useState<Announcement[]>(() => {
-    const saved = localStorage.getItem('physics_hub_notifs');
-    return saved ? JSON.parse(saved) : DEFAULT_ANNOUNCEMENTS;
-  });
-
-  const [resourceLinks, setResourceLinks] = useState<ResourceLink[]>(() => {
-    const saved = localStorage.getItem('physics_hub_resources');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>(() => {
-    const saved = localStorage.getItem('physics_hub_lives');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [calendarEvents, setCalendarEvents] = useSupabaseSync<any>('calendar_events', []);
+  const [announcements, setAnnouncements] = useSupabaseSync<any>('announcements', []);
+  const [resourceLinks, setResourceLinks] = useSupabaseSync<any>('class_resources', []);
+  const [scheduledLives, setScheduledLives] = useSupabaseSync<any>('scheduled_lives', []);
 
   const [currentView, setCurrentView] = useState<'home' | 'free-notes' | 'register' | 'login' | 'dashboard' | 'admin' | 'live' | 'tutes' | 'recordings'>('home');
   const [currentStudent, setCurrentStudent] = useState<Student | null>(() => {
@@ -84,23 +107,23 @@ export default function App() {
   const slideImages = [
     {
       url: siteConfig.heroImage1,
-      title: "Interactive Live Feed",
-      desc: "Weekly real-time streams paired with live quiz features."
+      title: siteConfig.slide1Title || "Interactive Live Feed",
+      desc: siteConfig.slide1Desc || "Weekly real-time streams paired with live quiz features."
     },
     {
       url: siteConfig.heroImage2,
-      title: "Particle & Quantum Models",
-      desc: "Deconstructing core theories using high-end simulated models."
+      title: siteConfig.slide2Title || "Particle & Quantum Models",
+      desc: siteConfig.slide2Desc || "Deconstructing core theories using high-end simulated models."
     },
     {
       url: siteConfig.heroImage3,
-      title: "Practical Laboratory Sessions",
-      desc: "Comprehensive guides on practical apparatus and physics methodologies."
+      title: siteConfig.slide3Title || "Practical Laboratory Sessions",
+      desc: siteConfig.slide3Desc || "Comprehensive guides on practical apparatus and physics methodologies."
     },
     {
       url: siteConfig.heroImage4,
-      title: "Astrophysics & Solar Systems",
-      desc: "Special seminars investigating gravitation, fields, and mechanics."
+      title: siteConfig.slide4Title || "Astrophysics & Solar Systems",
+      desc: siteConfig.slide4Desc || "Special seminars investigating gravitation, fields, and mechanics."
     }
   ];
 
@@ -111,31 +134,6 @@ export default function App() {
     }, 5000);
     return () => clearInterval(timer);
   }, [slideImages.length]);
-
-  // Sync state to local storage
-  useEffect(() => {
-    localStorage.setItem('physics_hub_site_config', JSON.stringify(siteConfig));
-  }, [siteConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('physics_hub_students', JSON.stringify(students));
-  }, [students]);
-
-  useEffect(() => {
-    localStorage.setItem('physics_hub_calendars', JSON.stringify(calendarEvents));
-  }, [calendarEvents]);
-
-  useEffect(() => {
-    localStorage.setItem('physics_hub_notifs', JSON.stringify(announcements));
-  }, [announcements]);
-
-  useEffect(() => {
-    localStorage.setItem('physics_hub_resources', JSON.stringify(resourceLinks));
-  }, [resourceLinks]);
-
-  useEffect(() => {
-    localStorage.setItem('physics_hub_lives', JSON.stringify(scheduledLives));
-  }, [scheduledLives]);
 
   // Ensure current password matches to handle cross-device password refresh
   useEffect(() => {
@@ -154,28 +152,45 @@ export default function App() {
 
   // Dashboard inner tabs
   const [dashboardTab, setDashboardTab] = useState<'overview' | 'live' | 'tutes' | 'recordings'>('overview');
+  const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
+  
   // Attention Check states
   const [attentionCheckTime, setAttentionCheckTime] = useState<number>(0);
   const [showAttentionCheck, setShowAttentionCheck] = useState(false);
 
   // Attention Check Timer setup for Live Video Watch
   useEffect(() => {
-    // interval runs every second when in 'live' dashboard tab
-    if (currentView === 'dashboard' && dashboardTab === 'live' && !showAttentionCheck) {
+    // Determine interval dynamically (default 45 minutes)
+    let intervalSeconds = 2700; 
+    try {
+      if (siteConfig?.classRatesText) {
+         const parsed = JSON.parse(siteConfig.classRatesText);
+         if (parsed.attentionInterval) {
+           intervalSeconds = parseInt(parsed.attentionInterval, 10) * 60;
+         }
+      }
+    } catch(e) {}
+
+    const isWatchingVideo = (currentView === 'dashboard' && dashboardTab === 'live') || playingVideoUrl !== null;
+
+    if (isWatchingVideo && !showAttentionCheck) {
       const intervalId = setInterval(() => {
         setAttentionCheckTime(prev => {
           const next = prev + 1;
-          // Every 45 minutes = 2700 seconds
-          if (next >= 2700) {
+          if (next >= intervalSeconds) {
             setShowAttentionCheck(true);
-            return 0; // reset local timer wait counter
+            return 0; // reset
           }
           return next;
         });
       }, 1000);
       return () => clearInterval(intervalId);
+    } else if (!isWatchingVideo) {
+      // Reset timer if video is closed
+      setAttentionCheckTime(0);
+      setShowAttentionCheck(false);
     }
-  }, [currentView, dashboardTab, showAttentionCheck]);
+  }, [currentView, dashboardTab, showAttentionCheck, playingVideoUrl, siteConfig]);
 
   useEffect(() => {
     // If attention check is shown, wait 5 minutes (300 seconds) to play ringtone
@@ -210,13 +225,11 @@ export default function App() {
   const [manNIC, setManNIC] = useState('');
   const [manDistrict, setManDistrict] = useState('Colombo');
   const [manClassTypes, setManClassTypes] = useState<string[]>([]);
+  const [manFreeToggle, setManFreeToggle] = useState(false);
+  const [manFreeMonthsString, setManFreeMonthsString] = useState('');
   const [manWhatsApp, setManWhatsApp] = useState('');
   const [manMobile, setManMobile] = useState('');
   const [generatedJSON, setGeneratedJSON] = useState('');
-
-  // Admin Password Reset Tool states
-  const [adminResetUser, setAdminResetUser] = useState('');
-  const [adminResetNewPass, setAdminResetNewPass] = useState('');
 
   // Calendar event manager form fields
   const [planDate, setPlanDate] = useState('2026-05-28');
@@ -264,9 +277,13 @@ export default function App() {
   // Login inputs
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
+  const [loginError, setLoginError] = useState(false);
+  const [loginShake, setLoginShake] = useState(false);
+  const [loginAttempts, setLoginAttempts] = useState(0);
 
   // Forgot password username
   const [forgotUsername, setForgotUsername] = useState('');
+  const [forgotNIC, setForgotNIC] = useState('');
   const [showForgotBox, setShowForgotBox] = useState(false);
 
   // Registration states
@@ -291,6 +308,14 @@ export default function App() {
   const grpClassRef = useRef<HTMLDivElement>(null);
   const grpWhatsAppRef = useRef<HTMLDivElement>(null);
   const grpMobileRef = useRef<HTMLDivElement>(null);
+  const adminContentRef = useRef<HTMLDivElement>(null);
+
+  const handleAdminTabChange = (tab: string) => {
+    setActiveAdminTab(tab);
+    setTimeout(() => {
+      adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
 
   // Welcome back active state
   const [showWelcomeBanner, setShowWelcomeBanner] = useState(false);
@@ -307,27 +332,32 @@ export default function App() {
   }, [currentStudent]);
 
   // Check login states on bootup
-  const handleStudentLoginSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!loginUser.trim() || !loginPass.trim()) {
-    alert("කරුණාකර පරිශීලක නාමය සහ මුරපදය ඇතුළත් කරන්න.");
-    return;
-  }
+  const handleStudentLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(false);
+    setLoginShake(false);
 
-  // අපේ සජීවී Database එකෙන් ශිෂ්‍යයාව චෙක් කිරීම
-  const response = await loginStudent(loginUser.trim(), loginPass.trim());
+    setTimeout(() => {
+      const found = students.find(s => 
+        s.username.toLowerCase() === loginUser.trim().toLowerCase() && 
+        (s.nic === loginPass || s.username === loginPass || (s as any).password === loginPass)
+      );
 
-  if (response.success && response.student) {
-    // Database එකෙන් ආපු සිසුවාගේ දත්ත ටික App State එකට එකතු කිරීම
-    setCurrentStudent(response.student);
-    setIsLoggedIn(true);
-    setView('dashboard'); // ඔයාව කෙලින්ම Cockpit/Dashboard එකට රැගෙන යයි
-    alert(`සාදරයෙන් පිළිගනිමු, ${response.student.name}!`);
-  } else {
-    alert(response.message); // "පරිශීලක නාමය හෝ NIC අංකය වැරදියි!" කියා පෙන්වයි
-  }
-};
+      if (found) {
+        setLoginAttempts(0);
+        setCurrentStudent(found);
+        localStorage.setItem('physics_hub_current_student', found.username);
+        setLoginUser('');
+        setLoginPass('');
+        setCurrentView('dashboard');
+      } else {
+        setLoginError(true);
+        setLoginShake(true);
+        setLoginAttempts(prev => prev + 1);
+        setTimeout(() => setLoginShake(false), 1000); // Remove animation class after shake 1s
+      }
+    }, 10);
+  };
 
   const handleStudentLogout = () => {
     setCurrentStudent(null);
@@ -335,20 +365,31 @@ export default function App() {
     setCurrentView('home');
   };
 
-  const handleForgotPasswordRequest = (e: React.FormEvent) => {
+  const handleForgotPasswordRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!forgotUsername.trim()) {
-      alert("කරුණාකර ඔබගේ පරිශීලක නාමය (Username) ඇතුළත් කරන්න.");
+    if (!forgotUsername.trim() || !forgotNIC.trim()) {
+      alert("කරුණාකර ඔබගේ පරිශීලක නාමය (Username) සහ NIC අංකය ඇතුළත් කරන්න.");
       return;
     }
     
+    // Find the student locally first to verify
+    const std = students.find(s => s.username === forgotUsername.trim() && s.nic === forgotNIC.trim());
+    if (!std) {
+      alert("ඔබ ලබා දුන් Username හෝ NIC අංකය වැරදිය. නැවත පරීක්ෂා කර බලන්න.");
+      return;
+    }
+
+    // Set the password_reset_requested flag in Supabase
+    await supabase.from('students').update({ password_reset_requested: true }).eq('id', std.id);
+
     // Construct WhatsApp Message
-    const text = `හෙලෝ සර්, මගේ Taraka Physics Hub ගිණුමේ මුරපදය අමතක වී ඇත. කරුණාකර එය යථා තත්ත්වයට පත් කර දෙන්න (Password Reset). Username: ${forgotUsername.trim()}`;
+    const text = `හෙලෝ සර්, මගේ Taraka Physics Hub ගිණුමේ මුරපදය අමතක වී ඇත. කරුණාකර එය යථා තත්ත්වයට පත් කර දෙන්න (Password Reset). Username: ${forgotUsername.trim()} NIC: ${forgotNIC.trim()}`;
     const encText = encodeURIComponent(text);
     const waUrl = `https://wa.me/94719152128?text=${encText}`;
     window.open(waUrl, '_blank');
     setShowForgotBox(false);
     setForgotUsername('');
+    setForgotNIC('');
   };
 
   // Student direct registration submission from student app view
@@ -414,6 +455,29 @@ export default function App() {
     const encoded = encodeURIComponent(formattedMessage);
     const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
     
+    // Save to Supabase
+    supabase.from('students').insert([{
+      username: `PENDING_${Date.now()}`, // Temporary unique username
+      password: '',
+      name: `${regFirst} ${regLast}`,
+      first_name: regFirst,
+      last_name: regLast,
+      nic: regNIC,
+      district: regDistrict,
+      class_types: regClassTypes,
+      whatsapp: regWhatsApp,
+      mobile: regMobile,
+      is_paid: false,
+      is_approved: false,
+      active_months: [],
+      joined_at: new Date().toISOString()
+    }]).then(({ error }) => {
+      if (error) {
+        console.error('Error saving to DB:', error);
+        alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
+      }
+    });
+
     // Reset fields
     setRegFirst('');
     setRegLast('');
@@ -543,7 +607,7 @@ export default function App() {
     setPayAmount('2500');
   };
 
-  const handleAddLive = (e: React.FormEvent) => {
+  const handleAddLive = async (e: React.FormEvent) => {
     e.preventDefault();
     const isYouTube = liveUrl.includes('youtube.com') || liveUrl.includes('youtu.be');
     let embedUrl = liveUrl;
@@ -555,33 +619,48 @@ export default function App() {
       }
     }
 
-    const newLive: ScheduledLive = {
-      id: `live-${Date.now()}`,
+    // Split datetime-local value (e.g. "2026-05-28T14:30")
+    let [datePart, timePart] = liveScheduleDate.split('T');
+    
+    const newLive = {
       title: liveTitle,
-      videoUrl: embedUrl,
-      classType: liveClassType,
-      scheduledAt: liveScheduleDate
+      link: embedUrl,
+      platform: liveUrl.includes('zoom') ? 'zoom' : 'youtube',
+      target_classes: [liveClassType],
+      date: datePart,
+      time: timePart,
+      visibility: 'paid'
     };
-    setScheduledLives(prev => [newLive, ...prev]);
-    alert('සජීවී පන්තිය සුරැකිණි.');
-    setLiveTitle('');
-    setLiveUrl('');
+    const { error } = await supabase.from('scheduled_lives').insert([newLive]);
+    if (error) {
+      console.error(error);
+      alert('Error saving live class.');
+    } else {
+      alert('සජීවී පන්තිය සුරැකිණි.');
+      setLiveTitle('');
+      setLiveUrl('');
+    }
   };
 
-  const handleAddResource = (e: React.FormEvent) => {
+  const handleAddResource = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newRes: ResourceLink = {
-      id: `res-${Date.now()}-${resType}`,
+    const newRes = {
       title: resTitle,
-      url: resUrl.includes('http') ? resUrl : `https://${resUrl}`,
-      classType: resClassType,
-      targetMonth: resTargetMonth,
-      date: new Date().toISOString()
+      link: resUrl.includes('http') ? resUrl : `https://${resUrl}`,
+      target_classes: [resClassType],
+      target_month: resTargetMonth,
+      date_added: new Date().toISOString(),
+      type: resType
     };
-    setResourceLinks(prev => [newRes, ...prev]);
-    alert(`${resType === 'tute' ? 'නිබන්ධනය' : 'පටිගත කිරීම'} සාර්ථකව යාවත්කාලීන කරන ලදී.`);
-    setResTitle('');
-    setResUrl('');
+    const { error } = await supabase.from('class_resources').insert([newRes]);
+    if (error) {
+      console.error(error);
+      alert('Error updating resource.');
+    } else {
+      alert(`${resType === 'tute' ? 'නිබන්ධනය' : 'පටිගත කිරීම'} සාර්ථකව යාවත්කාලීන කරන ලදී.`);
+      setResTitle('');
+      setResUrl('');
+    }
   };
 
   const handleAdminLogout = () => {
@@ -591,7 +670,7 @@ export default function App() {
   };
 
   // Code generator form inside admin cockpit
-  const handleAdminManualGenerate = () => {
+  const handleAdminManualGenerate = async () => {
     if (!manFirst.trim() || !manLast.trim() || !manNIC.trim() || !manWhatsApp.trim() || manClassTypes.length === 0) {
       alert("සියලුම අත්‍යවශ්‍ය ක්ෂේත්‍ර පුරවන්න.");
       return;
@@ -603,58 +682,41 @@ export default function App() {
     const waSuffix = manWhatsApp.slice(-2);
     const finalUsername = `${firstPrefix}${lastPrefix}${nicSuffix}${waSuffix}`;
 
-    const newStudent: Student = {
+    const parsedFreeMonths = manFreeToggle ? manFreeMonthsString.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const initialMonths = parsedFreeMonths.length > 0 ? parsedFreeMonths : [new Date().toISOString().slice(0, 7)];
+
+    const newStudent = {
       username: finalUsername,
+      password: manNIC,
       name: `${manFirst} ${manLast}`,
-      firstName: manFirst,
-      lastName: manLast,
+      first_name: manFirst,
+      last_name: manLast,
       nic: manNIC,
-      classTypes: manClassTypes,
+      class_types: manClassTypes,
       district: manDistrict,
       whatsapp: manWhatsApp,
       mobile: manMobile,
-      isPaid: true, // Admin generated is active
-      activeMonths: ['2026-05'],
-      joinedAt: new Date().toISOString()
+      is_paid: true,
+      is_approved: true, // Manual generations are auto-approved
+      active_months: initialMonths,
+      plan_type: manFreeToggle ? 'free' : 'paid',
+      joined_at: new Date().toISOString()
     };
 
-    // Match password to NIC number
-    (newStudent as any).password = manNIC;
+    const { error } = await supabase.from('students').insert([newStudent]);
 
-    setStudents(prev => [...prev, newStudent]);
-    setGeneratedJSON(JSON.stringify(newStudent, null, 2));
-
-    alert(`ක්‍රියාව සාර්ථකයි! ශිෂ්‍යයා නිර්මාණය විය.\n• Username: ${finalUsername}\n• Password: ${manNIC}`);
+    if (error) {
+      console.error(error);
+      alert('දත්ත ගබඩා කිරීමේ දෝෂයකි.');
+    } else {
+      setGeneratedJSON(JSON.stringify(newStudent, null, 2));
+      alert(`ක්‍රියාව සාර්ථකයි! ශිෂ්‍යයා නිර්මාණය විය.\n• Username: ${finalUsername}\n• Password: ${manNIC}`);
+    }
   };
 
   const handleCopyJSON = () => {
     navigator.clipboard.writeText(generatedJSON);
     alert("ශිෂ්‍ය ගොනුවේ JSON කේතය සාර්ථකව පිටපත් කර ගන්නා ලදී.");
-  };
-
-  const handleAdminResetPassword = () => {
-    const studentIndex = students.findIndex(s => s.username.toLowerCase() === adminResetUser.toLowerCase());
-    if (studentIndex === -1) {
-      alert("ශිෂ්‍යයා හමු නොවීය! (User not found).");
-      return;
-    }
-    
-    if (!adminResetNewPass) {
-      alert("අලුත් මුරපදය ඇතුළත් කරන්න.");
-      return;
-    }
-
-    const updatedStudents = [...students];
-    updatedStudents[studentIndex] = {
-      ...updatedStudents[studentIndex],
-      password: adminResetNewPass
-    };
-    
-    setStudents(updatedStudents);
-    setAdminResetFound(false);
-    setAdminResetUser('');
-    setAdminResetNewPass('');
-    alert("මුරපදය සාර්ථකව යාවත්කාලීන විය! (Password Reset Successful)");
   };
 
   // Add Free Resource Notes simulated inside Admin view
@@ -670,50 +732,58 @@ export default function App() {
   };
 
   // Schedule class events
-  const handleScheduleClass = (e: React.FormEvent) => {
+  const handleScheduleClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!planTitle.trim()) {
       alert("කරුණාකර පන්තියේ මාතෘකාව ඇතුළත් කරන්න.");
       return;
     }
 
-    const newEvent: CalendarEvent = {
-      id: `plan-${Date.now()}`,
+    const newEvent = {
       date: planDate,
       title: planTitle.trim(),
       description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
       status: planStatus,
-      warningMessage: planStatus === 'cancelled' ? (planWarning.trim() || '⚠️ පන්තිය කල් දමා ඇත. විකල්ප දින ඉක්මනින් දැනුම් දෙනු ලැබේ.') : undefined
+      warning_message: planStatus === 'cancelled' ? (planWarning.trim() || '⚠️ පන්තිය කල් දමා ඇත. විකල්ප දින ඉක්මනින් දැනුම් දෙනු ලැබේ.') : null
     };
 
-    setCalendarEvents(prev => [...prev, newEvent]);
-    setPlanTitle('');
-    setPlanWarning('');
-    alert(`පන්ති දර්ශකයට සාර්ථකව ඇතුළත් කරන ලදී: ${planDate}`);
+    const { error } = await supabase.from('calendar_events').insert([newEvent]);
+    if (error) {
+      console.error(error);
+      alert('Error scheduling class.');
+    } else {
+      setPlanTitle('');
+      setPlanWarning('');
+      alert(`පන්ති දර්ශකයට සාර්ථකව ඇතුළත් කරන ලදී: ${planDate}`);
+    }
   };
 
   // Broadcast Alert notification creator
-  const handleBroadcastAlert = (e: React.FormEvent) => {
+  const handleBroadcastAlert = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notTitle.trim() || !notContent.trim()) {
       alert("මාතෘකාව සහ විස්තරය අනිවාර්ය වේ.");
       return;
     }
 
-    const newAlert: Announcement = {
-      id: `not-${Date.now()}`,
+    const newAlert = {
       title: notTitle.trim(),
       content: notContent.trim(),
       date: new Date().toISOString().split('T')[0],
       type: notType,
-      targetUser: notType === 'private' ? notTargetUser.trim() : undefined
+      target_user: notType === 'private' ? notTargetUser.trim() : null
     };
 
-    setAnnouncements(prev => [newAlert, ...prev]);
-    setNotTitle('');
-    setNotContent('');
-    setNotTargetUser('');
-    alert("නිවේදනය සාර්ථකව විකාශනය කෙරිණි!");
+    const { error } = await supabase.from('announcements').insert([newAlert]);
+    if (error) {
+      console.error(error);
+      alert('Error broadcasting alert.');
+    } else {
+      setNotTitle('');
+      setNotContent('');
+      setNotTargetUser('');
+      alert("නිවේදනය සාර්ථකව විකාශනය කෙරිණි!");
+    }
   };
 
   // Interactive custom portals access checking
@@ -795,20 +865,23 @@ export default function App() {
       
       {/* Dynamic Top Navigation Bar */}
       <header className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-850 px-4 py-3 md:px-8 flex justify-between items-center transition-all">
-        <div className="flex items-center gap-3">
+        <div 
+          className="flex items-center gap-3 cursor-pointer group"
+          onClick={() => setCurrentView(currentStudent ? 'dashboard' : 'home')}
+        >
           {siteConfig.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
-            <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg" />
+            <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg group-hover:scale-105 transition-transform" />
           ) : (
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-900/20 font-display text-lg">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-900/20 font-display text-lg group-hover:scale-105 transition-transform">
               Ω
             </div>
           )}
           <div>
-            <h1 className="text-lg md:text-xl font-bold font-sans tracking-tight text-white leading-tight">
-              {siteConfig.heroTitle}
+            <h1 className="text-lg md:text-xl font-bold font-sans tracking-tight text-white leading-tight group-hover:text-blue-200 transition-colors">
+              {siteConfig.headerTitle || siteConfig.heroTitle}
             </h1>
-            <p className="text-[10px] text-blue-400 font-sans tracking-widest font-bold uppercase">
-              PHYSICS ONLINE HUB
+            <p className="text-[10px] text-blue-400 font-sans tracking-widest font-bold uppercase transition-colors group-hover:text-amber-400">
+              {siteConfig.headerSubtitle || 'PHYSICS ONLINE HUB'}
             </p>
           </div>
         </div>
@@ -921,7 +994,7 @@ export default function App() {
                 <div className="relative z-20 space-y-6 max-w-2xl my-auto">
                   <div>
                     <span className="inline-block px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-bold tracking-wider border border-blue-500/30">
-                      Welcome to Taraka Physics Online Space
+                      {siteConfig.homeWelcomeBadge || "Welcome to Taraka Physics Online Space"}
                     </span>
                   </div>
                   
@@ -948,24 +1021,6 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-
-                {/* Bottom features statistics strip for slide indicators */}
-                <div className="relative z-20 border-t border-slate-800/80 pt-5 mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {slideImages.map((s, idx) => (
-                    <div 
-                      key={idx} 
-                      onClick={() => setActiveSlide(idx)}
-                      className={`cursor-pointer group flex flex-col gap-1.5 p-2 rounded-xl transition duration-200 ${idx === activeSlide ? 'bg-blue-500/10 border border-blue-500/20' : 'hover:bg-slate-900/30'}`}
-                    >
-                      <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
-                        <div className={`h-full bg-blue-500 transition-all duration-[5000ms] ${idx === activeSlide ? 'w-full' : 'w-0'}`} />
-                      </div>
-                      <span className={`text-[11px] font-mono tracking-wide ${idx === activeSlide ? 'text-blue-300 font-semibold' : 'text-slate-500'}`}>
-                        0{idx + 1}. {s.title}
-                      </span>
-                    </div>
-                  ))}
-                </div>
               </div>
 
               {/* Right Column: Professional Teacher Branding (Bento Accent Card) */}
@@ -981,18 +1036,24 @@ export default function App() {
                 <div className="my-6">
                   <div className="relative w-40 h-40 mx-auto bg-white p-1.5 rounded-2xl shadow-2xl rotate-3 transform group-hover:rotate-0 group-hover:scale-105 transition-all duration-300">
                     <div className="w-full h-full rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center relative">
-                      <div className="absolute inset-0 bg-gradient-to-tr from-blue-600/30 to-sky-400/30 mix-blend-multiply" />
-                      <User size={64} className="text-blue-900 relative z-10" />
+                      {siteConfig.directorImage && siteConfig.directorImage.trim() !== '' ? (
+                         <img src={siteConfig.directorImage} className="w-full h-full object-cover relative z-10" alt="Director Core" />
+                      ) : (
+                         <>
+                           <div className="absolute inset-0 bg-gradient-to-tr from-blue-600/30 to-sky-400/30 mix-blend-multiply" />
+                           <User size={64} className="text-blue-900 relative z-10" />
+                         </>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-1 z-10">
                   <h3 className="text-2xl font-bold text-white tracking-tight">
-                    {siteConfig.heroTitle}
+                    {siteConfig.directorName || siteConfig.heroTitle}
                   </h3>
                   <p className="text-xs text-blue-200 font-mono tracking-widest uppercase font-semibold opacity-90">
-                    B.Sc. Hon. USJP | Physics Teacher
+                    {siteConfig.directorTitle || "B.Sc (Hon's) University of Peradeniya | Physics Teacher"}
                   </p>
                 </div>
 
@@ -1001,7 +1062,7 @@ export default function App() {
                     Advice &amp; Quote
                   </span>
                   <p className="text-blue-100 text-sm italic font-sans leading-relaxed py-1">
-                    "භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි."
+                    "{siteConfig.directorQuote || 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.'}"
                   </p>
                 </div>
 
@@ -1019,7 +1080,7 @@ export default function App() {
                 </div>
                 <h4 className="text-lg font-bold text-white font-display">Free Resources</h4>
                 <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  නොමිලේ ලබාදෙන සම්මන්ත්‍රණ, වීඩියෝ දර්ශන, ක්‍රියාකාරී ඇලර්ට් සහ අනුමාන ප්‍රශ්න පත්‍ර ඕනෑම අයෙකුට පහසුවෙන් ලබා ගත හැක.
+                  {siteConfig.feat1Desc || "නොමිලේ ලබාදෙන සම්මන්ත්‍රණ, වීඩියෝ දර්ශන, ක්‍රියාකාරී ඇලර්ට් සහ අනුමාන ප්‍රශ්න පත්‍ර ඕනෑම අයෙකුට පහසුවෙන් ලබා ගත හැක."}
                 </p>
               </div>
 
@@ -1029,7 +1090,7 @@ export default function App() {
                 </div>
                 <h4 className="text-lg font-bold text-white font-display">Paid Portal Resources</h4>
                 <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  සක්‍රීය සිසුන්ට අදාළ මාසයේ සජීවී දේශන සබැඳි, සවිස්තරාත්මක නිබන්ධන පත්‍රිකා සහ සියලුම පටිගත කළ පාඩම් ලිපිගොනු ඇතුළත් වේ.
+                  {siteConfig.feat2Desc || "සක්‍රීය සිසුන්ට අදාළ මාසයේ සජීවී දේශන සබැඳි, සවිස්තරාත්මක නිබන්ධන පත්‍රිකා සහ සියලුම පටිගත කළ පාඩම් ලිපිගොනු ඇතුළත් වේ."}
                 </p>
               </div>
 
@@ -1039,40 +1100,12 @@ export default function App() {
                 </div>
                 <h4 className="text-lg font-bold text-white font-display">Interactive Calendar</h4>
                 <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  ඊළඟ පන්ති පැවැත්වෙන දිනය, පැය සහ කිසියම් හේතුවක් නිසා පන්තිය කල් දමන්නේ නම් ඒ පිළිබඳ warning ඇලර්ට් දින දර්ශනයෙන් දැකගත හැක.
+                  {siteConfig.feat3Desc || "ඊළඟ පන්ති පැවැත්වෙන දිනය, පැය සහ කිසියම් හේතුවක් නිසා පන්තිය කල් දමන්නේ නම් ඒ පිළිබඳ warning ඇලර්ට් දින දර්ශනයෙන් දැකගත හැක."}
                 </p>
               </div>
             </div>
 
-            {/* Quick reminder demo trigger (Bento Accent Card) */}
-            <div className="bg-gradient-to-r from-blue-950/40 via-blue-900/10 to-slate-900 border border-blue-500/25 rounded-3xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-xl">
-              <div className="space-y-1 text-center sm:text-left">
-                <h4 className="text-md font-bold text-slate-100 uppercase tracking-wider font-display">
-                  Next Month Payment Reminders Demo
-                </h4>
-                <p className="text-xs text-slate-400 max-w-2xl">
-                  සිසුන්ගේ මාසික ප්‍රවේශ සීමාව සහ ගෙවීම් මතක් කිරීම් පද්ධතිය පරීක්ෂා කිරීමට මෙමඟින් මතක් කිරීම ප්‍රදර්ශනය කළ හැක.
-                </p>
-              </div>
-              <button 
-                onClick={() => {
-                  setModalTitle("⚡ Payment Fee Reminder Simulation");
-                  setModalContent(
-                    <div className="space-y-3">
-                      <p className="text-sm">සිසුවා ගෙවීම් පියවා නොමැති විට හෝ ඊළඟ මාසයේ මතක් කිරීම් සක්‍රීය වන විට පහත පරිදි ප්‍රමුඛ ඇලර්ට් පණිවුඩයක් දිස් වේ:</p>
-                      <div className="p-3 bg-amber-500 text-slate-950 rounded-lg font-semibold flex items-center gap-2">
-                        <AlertTriangle size={18} /> ඊළඟ මස සඳහා පන්ති ගාස්තු ගෙවීම් සිදු කිරිමට මතක් කිරීමක්!
-                      </div>
-                      <p className="text-xs text-slate-400">මෙම ඇලර්ට් එක ක්ලෝස් කළහොත් එම අවස්ථාවේදී එය සැඟවෙන අතර, සිසුවා නැවත වෙබ් අඩවියට පිවිසෙන විට නැවත දිස් වේ.</p>
-                    </div>
-                  );
-                  setIsModalOpen(true);
-                }}
-                className="bg-blue-950 hover:bg-blue-900 text-blue-300 border border-blue-800 hover:border-blue-600 px-4 py-2 rounded-xl text-xs font-semibold uppercase tracking-wider transition"
-              >
-                Preview Reminder
-              </button>
-            </div>
+
           </div>
         )}
 
@@ -1096,22 +1129,25 @@ export default function App() {
                 </h3>
                 
                 <div className="divide-y divide-slate-800/80">
-                  {freeMaterials.map((mat) => (
+                  {resourceLinks.filter(r => r.target_classes?.includes("Free Notes / Public")).map((mat: any) => (
                     <div key={mat.id} className="py-3.5 flex justify-between items-center gap-4 transition hover:bg-slate-800/30 px-2 rounded-xl">
                       <div className="space-y-0.5">
                         <p className="text-sm font-semibold text-slate-100">{mat.title}</p>
-                        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest font-semibold">FORMAT: PDF • FREE ACCESS</p>
+                        <p className="text-[10px] font-mono text-amber-500 uppercase tracking-widest font-semibold flex items-center gap-1">FORMAT: {mat.type.toUpperCase()} • FREE ACCESS</p>
                       </div>
                       <a 
-                        href="https://taphysics.blogspot.com/p/free-notes.html"
+                        href={mat.link}
                         target="_blank"
                         referrerPolicy="no-referrer"
                         className="bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white px-4 py-2 rounded-full text-xs font-semibold border border-slate-700 hover:border-blue-500 transition-all shrink-0 shadow-sm"
                       >
-                        Download PDF
+                        {mat.type === 'recording' ? 'Watch Video' : 'Download PDF'}
                       </a>
                     </div>
                   ))}
+                  {resourceLinks.filter(r => r.target_classes?.includes("Free Notes / Public")).length === 0 && (
+                     <div className="py-8 text-center text-slate-500 text-xs font-semibold">කිසිදු දත්තයක් හමුවී නොමැත. පසුව නැවත උත්සාහ කරන්න.</div>
+                  )}
                 </div>
               </div>
 
@@ -1149,82 +1185,154 @@ export default function App() {
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-2xl relative overflow-hidden">
               <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-600 to-sky-400" />
               
-              <div className="text-center space-y-1.5">
-                <h3 className="text-2xl font-bold text-white font-display">Student Portal Login</h3>
-                <p className="text-xs text-slate-400">
-                  ලියාපදිංචි වීමේදී ඔබට ලැබුණු පරිශීලක නාමය (Username) හා මුරපදය (NIC) ඇතුළත් කරන්න.
-                </p>
-              </div>
+              {showForgotBox ? (
+                 <div className="space-y-5 animate-slide-up">
+                   <div className="text-center space-y-1.5">
+                     <h3 className="text-lg font-bold text-white uppercase tracking-wider font-display">මුරපදය යළි සැකසීම (Request Reset)</h3>
+                     <p className="text-xs text-slate-400 leading-relaxed mt-2">
+                       ඔබගේ Username එක සහ NIC අංකය පහතින් ටයිප් කර සෙන්ඩ් කළ පසු, මුරපදය අලුත් කර දෙන ලෙස ඉල්ලීමක් ගුරුතුමාගේ WhatsApp ගිණුමට (0719152128) යොමු කිරීමට හැකි වනු ඇත.
+                     </p>
+                   </div>
+                   
+                   <form onSubmit={(e) => {
+                     e.preventDefault();
+                     if (!forgotUsername || !forgotNIC) return;
+                     const text = `මට මගේ මුරපදය අමතක වී ඇත.\nUsername: ${forgotUsername}\nNIC: ${forgotNIC}\nකරුණාකර සහාය වන්න.`;
+                     window.open(`https://wa.me/94719152128?text=${encodeURIComponent(text)}`, '_blank');
+                   }} className="space-y-4 flex flex-col">
+                     <div className="space-y-1.5">
+                       <input 
+                         type="text" 
+                         required
+                         placeholder="Username (ID)"
+                         value={forgotUsername}
+                         onChange={(e) => setForgotUsername(e.target.value)}
+                         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-white"
+                       />
+                     </div>
+                     <div className="space-y-1.5">
+                       <input 
+                         type="text" 
+                         required
+                         placeholder="NIC අංකය"
+                         value={forgotNIC}
+                         onChange={(e) => setForgotNIC(e.target.value)}
+                         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-white"
+                       />
+                     </div>
+                     <button 
+                       type="submit" 
+                       className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-xl text-sm font-bold shadow-md transition"
+                     >
+                       Send WhatsApp Request
+                     </button>
+                     <button 
+                       type="button" 
+                       onClick={() => setShowForgotBox(false)}
+                       className="w-full text-amber-500 hover:text-amber-400 hover:underline px-4 py-2 rounded-xl text-xs font-semibold transition"
+                     >
+                       Back to Login
+                     </button>
+                   </form>
+                 </div>
+              ) : (
+                <>
+                  <div className="text-center space-y-1.5">
+                    <h3 className="text-2xl font-bold text-white font-display">Student Portal Login</h3>
+                    <p className="text-xs text-slate-400">
+                      ලියාපදිංචි වීමේදී ඔබට ලැබුණු පරිශීලක නාමය (Username) හා මුරපදය (NIC) ඇතුළත් කරන්න.
+                    </p>
+                  </div>
 
-              <form onSubmit={handleStudentLoginSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-350 font-medium font-sans">Username (පරිශීලක හැඳුනුම)</label>
-                  <input 
-                    type="text" 
-                    required 
-                    placeholder="e.g. KAPE7882"
-                    value={loginUser}
-                    onChange={(e) => setLoginUser(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border border-slate-800 text-white focus:border-blue-500 focus:outline-none transition-all"
-                  />
-                </div>
+                  {loginAttempts >= 4 ? (
+                    <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-700 space-y-4 text-center animate-slide-up">
+                      <h3 className="text-lg font-bold text-red-400 mb-2">ඔබට ලොගින් ඩීටේල්ස් අමතක උනාද?</h3>
+                      <p className="text-sm text-slate-300">දැන්ම ඇඩ්මින්ව සම්බන්ධ කරගන්න</p>
+                      <a 
+                        href="https://wa.me/94719152128?text=මට%20මගේ%20ලොගින්%20විස්තර%20අමතක%20වී%20ඇත.%20කරුණාකර%20සහාය%20වන්න." 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="block w-full bg-green-600 hover:bg-green-500 text-white font-semibold py-3 rounded-xl transition-all shadow-md mt-4 text-sm"
+                      >
+                        WhatsApp ඔස්සේ පණිවිඩයක් එවන්න
+                      </a>
+                      <button 
+                        onClick={() => {
+                          setLoginAttempts(0);
+                          setLoginError(false);
+                          setLoginShake(false);
+                          setLoginPass('');
+                        }}
+                        className="mt-4 block w-full text-blue-400 border border-blue-500/30 hover:bg-blue-500/10 py-2.5 rounded-xl text-sm font-semibold transition"
+                      >
+                        Back to Login
+                      </button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleStudentLoginSubmit} className={`space-y-4 ${loginShake ? 'animate-shake' : ''}`}>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-350 font-medium font-sans">Username (පරිශීලක හැඳුනුම)</label>
+                        <input 
+                          type="text" 
+                          required 
+                          placeholder="e.g. KAPE7882"
+                          value={loginUser}
+                          onChange={(e) => {
+                            setLoginUser(e.target.value);
+                            if (loginError) {
+                              setLoginError(false);
+                              setLoginShake(false);
+                            }
+                          }}
+                          className={`w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-100' : 'border-slate-800 text-white'} focus:border-blue-500 focus:outline-none transition-all`}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-350 font-medium font-sans">Password or NIC Number (මුරපදය)</label>
+                        <input 
+                          type="password" 
+                          required 
+                          placeholder="Enter password or National ID"
+                          value={loginPass}
+                          onChange={(e) => {
+                            setLoginPass(e.target.value);
+                            if (loginError) {
+                              setLoginError(false);
+                              setLoginShake(false);
+                            }
+                          }}
+                          className={`w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-100' : 'border-slate-800 text-white'} focus:border-blue-500 focus:outline-none transition-all`}
+                        />
+                      </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-350 font-medium font-sans">Password or NIC Number (මුරපදය)</label>
-                  <input 
-                    type="password" 
-                    required 
-                    placeholder="Enter password or National ID"
-                    value={loginPass}
-                    onChange={(e) => setLoginPass(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border border-slate-800 text-white focus:border-blue-500 focus:outline-none transition-all"
-                  />
-                </div>
+                      {loginError && (
+                         <div className="text-red-500 text-center text-xs font-bold leading-relaxed">
+                            ඔබගේ ලොගින් යූසනේම් හෝ පාස්වර්ඩ් වැරැදි.<br/>නැවත පරික්ෂා කර බලා ලොග් වන්න.
+                         </div>
+                      )}
 
-                <div className="flex justify-between items-center text-xs pt-1">
-                  <button 
-                    type="button" 
-                    onClick={() => setShowForgotBox(!showForgotBox)}
-                    className="text-blue-450 hover:text-blue-300 hover:underline transition font-semibold"
-                  >
-                    Forgot Password?
-                  </button>
-                  <span className="text-slate-500">Support: WhatsApp 0719152128</span>
-                </div>
+                      <div className="flex justify-between items-center text-xs pt-1">
+                        <button 
+                          type="button" 
+                          onClick={() => setShowForgotBox(true)}
+                          className="text-blue-450 hover:text-blue-300 hover:underline transition font-semibold"
+                        >
+                          Forgot Password?
+                        </button>
+                        <span className="text-slate-500">Support: WhatsApp 0719152128</span>
+                      </div>
 
-                <button 
-                  type="submit" 
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-xl transition-all shadow-md shadow-blue-900/10"
-                >
-                  Confirm Login
-                </button>
-              </form>
-
-              {/* Forgot password interface expands smoothly */}
-              {showForgotBox && (
-                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-3 animate-slide-up">
-                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">මුරපදය යළි සැකසීම (Request Reset)</h4>
-                  <p className="text-[11px] text-slate-400 leading-normal">ඔබගේ Username එක පහතින් ටයිප් කර සෙන්ඩ් කළ පසු, මුරපදය අලුත් කර දෙන ලෙස ඉල්ලීමක් ගුරුතුමාගේ WhatsApp ගිණුමට (0719152128) ලැබෙනු ඇත.</p>
-                  
-                  <form onSubmit={handleForgotPasswordRequest} className="space-y-2 flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Username (ID)"
-                      value={forgotUsername}
-                      onChange={(e) => setForgotUsername(e.target.value)}
-                      className="flex-1 px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs focus:outline-none focus:border-blue-500 text-white"
-                    />
-                    <button 
-                      type="submit" 
-                      className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-xs font-bold shrink-0 transition"
-                    >
-                      Send WhatsApp
-                    </button>
-                  </form>
-                </div>
+                      <button 
+                        type="submit" 
+                        className={`w-full font-semibold py-2.5 rounded-xl transition-all shadow-md shadow-blue-900/10 ${loginError ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+                      >
+                        Confirm Login
+                      </button>
+                    </form>
+                  )}
+                </>
               )}
-
-              <div className="border-t border-slate-800 pt-4 text-center">
+              <div className="text-center pt-4 border-t border-slate-700/50 mt-4">
                 <button 
                   onClick={() => setCurrentView('register')}
                   className="text-xs text-slate-400 hover:text-white transition"
@@ -1351,10 +1459,7 @@ export default function App() {
                   </label>
                   
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-950/60 border border-slate-850 rounded-2xl p-4">
-                    {[
-                      '2027 Theory', '2027 Revision', '2027 Paper Class',
-                      '2028 Theory', '2028 Revision', '2028 Paper Class'
-                    ].map((item, idx) => (
+                    {globalClassNames.map((item, idx) => (
                       <label key={idx} className="flex items-center gap-2.5 text-xs text-slate-350 hover:text-white cursor-pointer select-none font-medium">
                         <input 
                           type="checkbox"
@@ -1434,7 +1539,6 @@ export default function App() {
                       setRegClassTypes([]);
                       setRegWhatsApp('');
                       setRegMobile('');
-                      setRegPassword('');
                       setInvalidGroups({});
                       setIsSubmitButtonDisabled(false);
                     }}
@@ -1459,10 +1563,10 @@ export default function App() {
               <div className="lg:col-span-3 bg-slate-800/40 border border-slate-700/50 p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px]">
                 
                 {/* Status Sticker */}
-                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${currentStudent.isPaid ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
-                  {currentStudent.isPaid && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
-                  {!currentStudent.isPaid && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
-                  {currentStudent.isPaid ? 'Premium' : 'Action Required'}
+                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
+                  {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
+                  {!isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
+                  {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
                 </div>
 
                 <div 
@@ -1508,8 +1612,8 @@ export default function App() {
                         <CheckCircle size={18} />
                       </div>
                       <div className="space-y-0.5">
-                        <h4 className="font-bold text-emerald-400 text-sm font-display">Welcome back, {currentStudent.firstName}!</h4>
-                        <p className="text-xs text-slate-350">Your account is active and verified.</p>
+                        <h4 className="font-bold text-emerald-400 text-sm font-display">{siteConfig.dashboardWelcomeMsg ? siteConfig.dashboardWelcomeMsg.replace('{name}', currentStudent.firstName) : `Welcome back, ${currentStudent.firstName}!`}</h4>
+                        <p className="text-xs text-slate-350">{siteConfig.dashboardIntroText || "Your account is active and verified."}</p>
                       </div>
                     </div>
                     <button 
@@ -1523,15 +1627,15 @@ export default function App() {
                 )}
 
                 {/* Unpaid Warning block banner */}
-                {!currentStudent.isPaid && (
+                {!isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && (
                   <div className="bg-gradient-to-r from-amber-950/25 to-slate-900 border border-amber-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-pulse">
                     <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5">
                       <AlertTriangle size={16} />
                     </div>
-                    <div>
-                      <h4 className="font-bold text-amber-500 text-sm font-sans">Payment Settle Warning Alert</h4>
+                    <div className="whitespace-pre-wrap">
+                      <h4 className="font-bold text-amber-500 text-sm font-sans">{siteConfig.dashboardUnpaidWarningTitle || "Payment Settle Warning Alert"}</h4>
                       <p className="text-xs text-slate-300 leading-relaxed mt-1">
-                        ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න.
+                        {siteConfig.dashboardUnpaidWarningText || "ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර මෙම මාසයේ ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න."}
                       </p>
                     </div>
                   </div>
@@ -1539,8 +1643,8 @@ export default function App() {
 
                 {/* Status indicator strip blocks */}
                 <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${currentStudent.isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    Access: {currentStudent.isPaid ? 'ACTIVE' : 'ON SUSPENSION'}
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    Access: {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
                   </span>
                   <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
                     ID: {currentStudent.username}
@@ -1561,8 +1665,8 @@ export default function App() {
                     <div className="absolute inset-0 bg-gradient-to-b from-rose-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
                     {/* Visual Sticker Badges */}
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${currentStudent.isPaid ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {currentStudent.isPaid ? 'Live Open' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Live Open' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-450 text-3xl group-hover:scale-110 group-hover:rotate-6 transition duration-300 my-4 shadow-inner z-10">
@@ -1583,8 +1687,8 @@ export default function App() {
                   >
                     <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${currentStudent.isPaid ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {currentStudent.isPaid ? 'Notes Open' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Notes Open' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-450 text-3xl group-hover:scale-110 group-hover:-translate-y-1 transition duration-300 my-4 shadow-inner z-10">
@@ -1605,8 +1709,8 @@ export default function App() {
                   >
                     <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${currentStudent.isPaid ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {currentStudent.isPaid ? 'Recs Available' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Recs Available' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-450 text-3xl group-hover:scale-110 group-hover:-rotate-3 transition duration-300 my-4 shadow-inner z-10">
@@ -1738,42 +1842,94 @@ export default function App() {
                     </div>
                     {/* Embedded auto-play video logic */}
                     <div className="flex-1 rounded-2xl overflow-hidden border border-slate-700 relative bg-black flex items-center justify-center">
-                      {scheduledLives.filter(sl => new Date(sl.scheduledAt).getTime() <= Date.now() && currentStudent.classTypes.includes(sl.classType)).length > 0 ? (
-                        <>
-                          <iframe 
-                            src={scheduledLives.filter(sl => new Date(sl.scheduledAt).getTime() <= Date.now() && currentStudent.classTypes.includes(sl.classType))[0].videoUrl}
-                            className="w-full h-[500px]"
-                            frameBorder="0"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                          ></iframe>
-                          <div className="absolute top-4 left-4 bg-red-600 border border-red-400 text-white text-[10px] font-bold px-3 py-1.5 rounded shadow-lg animate-pulse flex items-center gap-2">
-                             <div className="w-2 h-2 rounded-full bg-white animate-ping"></div> LIVE
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-center text-slate-500 p-10">
-                          <Video size={48} className="mx-auto mb-4 opacity-50" />
-                          <p className="text-sm">දැනට සජීවී විකාශන නොමැත. නියමිත වේලාවට ඔබගේ පන්තියේ සජීවී විකාශය මෙහි දර්ශනය වේ.</p>
-                        </div>
-                      )}
+                      {(() => {
+                        const now = new Date();
+                        const validLives = scheduledLives.filter(sl => {
+                           if (sl.visibility === 'free' && (!currentStudent.free_months || currentStudent.free_months.length === 0)) return false;
+                           // Simplified classes check
+                           const stClasses = currentStudent.class_types || currentStudent.classTypes || [];
+                           const hasClass = sl.target_classes?.some((c: string) => stClasses.includes(c));
+                           if (!hasClass) return false;
+                           
+                           // Date check (only show if it's today's event or active)
+                           if (!sl.date || sl.date !== now.toISOString().split('T')[0]) return false;
+                           
+                           return true;
+                        });
+                        const activeLive = validLives[0];
+                        if (!activeLive) {
+                          return (
+                            <div className="text-slate-500 flex flex-col items-center gap-3">
+                              <Video size={48} className="opacity-30" />
+                              <p className="text-sm">අද දිනට සජීවී පන්ති නොමැත.</p>
+                            </div>
+                          );
+                        }
+
+                        // We need the standard countdown to 0. 
+                        const timeUntilStart = new Date(`${activeLive.date}T${activeLive.time || '00:00'}`).getTime() - Date.now();
+                        const isCountdown = timeUntilStart > 0 && timeUntilStart <= 300000;
+                        const isLive = timeUntilStart <= 0;
+
+                        if (isCountdown) {
+                           return (
+                              <div className="text-center flex flex-col items-center gap-4 animate-pulse">
+                                <h1 className="text-3xl font-extrabold text-white">පන්තිය ආරම්භ වීමට තව...</h1>
+                                <div className="text-6xl font-mono font-bold text-red-500 tracking-widest drop-shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                                  {Math.floor(timeUntilStart / 60000)}:{(Math.floor((timeUntilStart % 60000) / 1000)).toString().padStart(2, '0')}
+                                </div>
+                              </div>
+                           );
+                        }
+
+                        if (isLive) {
+                           return (
+                             <>
+                               <iframe 
+                                 src={activeLive.link}
+                                 className="w-full h-[500px]"
+                                 frameBorder="0"
+                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                 allowFullScreen
+                               ></iframe>
+                               <div className="absolute top-4 left-4 bg-red-600 border border-red-400 text-white text-[10px] font-bold px-3 py-1.5 rounded shadow-lg animate-pulse flex items-center gap-2">
+                                  <div className="w-2 h-2 rounded-full bg-white animate-ping"></div> LIVE
+                               </div>
+                             </>
+                           );
+                        }
+
+                        return (
+                           <div className="text-slate-500 flex flex-col items-center gap-3 p-10">
+                             <Video size={48} className="opacity-30" />
+                             <p className="text-sm">පන්තිය {activeLive.time} ට ආරම්භ වේ.</p>
+                           </div>
+                        );
+                      })()}
                     </div>
 
                     {showAttentionCheck && (
-                      <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md z-50 rounded-3xl flex flex-col items-center justify-center text-center p-8 animate-in fade-in zoom-in duration-300 border border-red-500/50 shadow-2xl">
-                        <AlertTriangle size={64} className="text-red-500 mb-6 animate-bounce" />
-                        <h2 className="text-3xl font-extrabold text-white mb-4">Are you still watching?</h2>
-                        <p className="text-slate-300 text-sm mb-8 max-w-md leading-relaxed">
-                          ඔබේ අවධානය තහවුරු කරන්න! ඔබ තවමත් පන්තියේ රඳී සිටීද යන්න තහවුරු කිරීමට පහත බොත්තම ඔබන්න. විනාඩි 5ක් තුළ තහවුරු නොකළහොත්, Warning Ringtone එකක් නාද වීමට පටන් ගනී.
-                        </p>
+                      <div className="absolute bottom-6 right-6 bg-slate-900 border border-amber-500/50 shadow-2xl z-50 rounded-2xl flex flex-col items-center justify-center text-center p-5 animate-slide-up w-72">
+                        <AlertTriangle size={32} className="text-amber-500 mb-2 animate-pulse" />
+                        <h2 className="text-sm font-extrabold text-white mb-2">අවධානයෙන් පන්තියට සහභාගී වන්න!</h2>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             setShowAttentionCheck(false);
                             setAttentionCheckTime(0);
                             const audio = document.getElementById('attention-audio') as HTMLAudioElement;
                             if(audio) audio.pause();
+                            // Register in database as announcement log
+                            if(currentStudent) {
+                               await supabase.from('announcements').insert([{
+                                  title: 'Watch Log',
+                                  content: JSON.stringify({ liveId: dashboardTab, markedAt: new Date().toISOString() }),
+                                  type: 'attention_log',
+                                  target_user: currentStudent.username,
+                                  date: new Date().toISOString().split('T')[0]
+                               }]);
+                            }
                           }}
-                          className="px-8 py-4 bg-red-600 hover:bg-red-500 text-white font-bold text-lg rounded-2xl shadow-[0_0_40px_rgba(220,38,38,0.4)] transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+                          className="px-4 py-2 w-full bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all cursor-pointer"
                         >
                           I'm Here! (ඇටෙන්ශන් මාක් කරන්න)
                         </button>
@@ -1804,17 +1960,17 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {resourceLinks.filter(r => r.id.includes('tute') && currentStudent.classTypes.includes(r.classType) && (!filterMonth || r.targetMonth === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.payments?.some(p => p.month === r.targetMonth && p.status === 'paid');
+                       {resourceLinks.filter(r => r.type === 'tute' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
+                         const hasAccess = currentStudent.active_months?.includes(r.target_month) || currentStudent.free_months?.includes(r.target_month);
                          return (
                            <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-amber-500/20 hover:border-amber-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
                              <div>
                                <h4 className="font-bold text-sm text-white mb-1">{r.title}</h4>
-                               <p className="text-[10px] text-slate-400 font-mono">{r.classType} • {r.targetMonth}</p>
+                               <p className="text-[10px] text-slate-400 font-mono">{r.target_classes?.join(', ')} • {r.target_month}</p>
                              </div>
                              {hasAccess ? (
-                               <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 justify-center text-xs font-bold bg-amber-500/10 text-amber-500 px-3 py-2 rounded-lg hover:bg-amber-500/20 transition w-full">
-                                 Download PDF Link
+                               <a href={r.link} target="_blank" rel="noopener noreferrer" className="bg-amber-500 text-black px-4 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 hover:bg-amber-400 transition-colors shadow-[0_0_15px_rgba(245,158,11,0.2)] w-full">
+                                 Download PDF <Download size={14} />
                                </a>
                              ) : (
                                <span className="text-[10px] text-red-500 bg-red-500/10 px-3 py-2 rounded-lg flex items-center justify-center gap-1"><Lock size={12}/> මාසික ගාස්තු ගෙවා නොමැත</span>
@@ -1822,7 +1978,7 @@ export default function App() {
                            </div>
                          );
                        })}
-                       {resourceLinks.filter(r => r.id.includes('tute') && currentStudent.classTypes.includes(r.classType)).length === 0 && (
+                       {resourceLinks.filter(r => r.type === 'tute' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct))).length === 0 && (
                          <div className="col-span-2 text-center text-slate-500 text-sm py-10">දැනට නිබන්ධන කිසිවක් එක් කර නැත.</div>
                        )}
                     </div>
@@ -1850,25 +2006,28 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {resourceLinks.filter(r => r.id.includes('recording') && currentStudent.classTypes.includes(r.classType) && (!filterMonth || r.targetMonth === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.payments?.some(p => p.month === r.targetMonth && p.status === 'paid');
+                       {resourceLinks.filter(r => r.type === 'recording' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
+                         const hasAccess = currentStudent.active_months?.includes(r.target_month) || currentStudent.free_months?.includes(r.target_month);
                          return (
                            <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-purple-500/20 hover:border-purple-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
                              <div>
                                <h4 className="font-bold text-sm text-white mb-1">{r.title}</h4>
-                               <p className="text-[10px] text-slate-400 font-mono">{r.classType} • {r.targetMonth}</p>
+                               <p className="text-[10px] text-slate-400 font-mono">{r.target_classes?.join(', ')} • {r.target_month}</p>
                              </div>
                              {hasAccess ? (
-                               <a href={r.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 justify-center text-xs font-bold bg-purple-500/10 text-purple-400 px-3 py-2 rounded-lg hover:bg-purple-500/20 transition w-full">
-                                 Watch Recording Link
-                               </a>
+                               <button 
+                                 onClick={() => setPlayingVideoUrl(r.link)} 
+                                 className="w-full bg-purple-600 text-white px-4 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 hover:bg-purple-500 transition-colors shadow-[0_0_15px_rgba(168,85,247,0.2)] cursor-pointer"
+                               >
+                                 Watch Recording <Play size={14} fill="currentColor" />
+                               </button>
                              ) : (
                                <span className="text-[10px] text-red-500 bg-red-500/10 px-3 py-2 rounded-lg flex items-center justify-center gap-1"><Lock size={12}/> මාසික ගාස්තු ගෙවා නොමැත</span>
                              )}
                            </div>
                          );
                        })}
-                       {resourceLinks.filter(r => r.id.includes('recording') && currentStudent.classTypes.includes(r.classType)).length === 0 && (
+                       {resourceLinks.filter(r => r.type === 'recording' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct))).length === 0 && (
                          <div className="col-span-2 text-center text-slate-500 text-sm py-10">දැනට පටිගත කිරීම් කිසිවක් එක් කර නැත.</div>
                        )}
                     </div>
@@ -1877,6 +2036,32 @@ export default function App() {
 
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Recording Fullscreen Player Overlay */}
+        {playingVideoUrl && (
+          <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center animate-fade-in p-4 lg:p-10">
+             <button onClick={() => setPlayingVideoUrl(null)} className="absolute top-6 right-6 text-white hover:text-red-400 bg-slate-900/50 hover:bg-slate-800/80 p-3 rounded-full transition cursor-pointer z-[60]">
+               <X size={32} />
+             </button>
+             <div className="w-full h-full max-w-7xl max-h-[85vh] relative rounded-3xl overflow-hidden border border-slate-700 shadow-2xl bg-slate-950">
+               {playingVideoUrl.includes('youtube') || playingVideoUrl.includes('youtu.be') ? (
+                  <iframe 
+                    className="w-full h-full border-none"
+                    src={playingVideoUrl} 
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+               ) : (
+                  <video 
+                    className="w-full h-full object-contain"
+                    controls 
+                    autoPlay 
+                    src={playingVideoUrl}
+                  />
+               )}
+             </div>
           </div>
         )}
 
@@ -1945,45 +2130,63 @@ export default function App() {
                 </div>
 
                 {/* Admin Tab Navigation */}
-                <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-none border-b border-slate-800">
+                <div className="flex flex-wrap gap-2 pb-2 border-b border-slate-800">
                   <button 
-                    onClick={() => setActiveAdminTab('registry')}
+                    onClick={() => handleAdminTabChange('registry')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'registry' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Student Registry
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('payments')}
+                    onClick={() => handleAdminTabChange('resets')}
+                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resets' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                  >
+                    Password Resets
+                  </button>
+                  <button 
+                    onClick={() => handleAdminTabChange('payments')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'payments' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Manage Payments
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('site_configs')}
+                    onClick={() => handleAdminTabChange('history')}
+                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'history' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                  >
+                    Payment History
+                  </button>
+                  <button 
+                    onClick={() => handleAdminTabChange('global_configs')}
+                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'global_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                  >
+                    Global Config
+                  </button>
+                  <button 
+                    onClick={() => handleAdminTabChange('site_configs')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'site_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Site Configuration
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('planner')}
+                    onClick={() => handleAdminTabChange('planner')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'planner' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Class Planner
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('live_classes')}
+                    onClick={() => handleAdminTabChange('live_classes')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'live_classes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Live Scheduled
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('resources')}
+                    onClick={() => handleAdminTabChange('resources')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resources' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Tutes &amp; Records
                   </button>
                   <button 
-                    onClick={() => setActiveAdminTab('broadcast')}
+                    onClick={() => handleAdminTabChange('broadcast')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'broadcast' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
                     Broadcast Notices
@@ -1991,117 +2194,20 @@ export default function App() {
                 </div>
 
                 {/* Sub panels split grids */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div ref={adminContentRef} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start scroll-mt-6">
                   
                   {activeAdminTab === 'registry' && (
                     <>
-                      {/* Student Registry Table list */}
+                      <div className="lg:col-span-12">
+                         <AdminRegistryTable students={students} setStudents={setStudents} />
+                      </div>
+                      <div className="lg:col-span-12">
+                         <AdminSampleDataGenerator />
+                      </div>
+
+                  {/* Password Reset Tool Removed to separate view tab */}
+
                   <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                    <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display">
-                      <UserCheck size={16} className="text-blue-400" /> Active Registry Data ({students.length})
-                    </h3>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs text-slate-300 space-y-1">
-                        <thead>
-                          <tr className="border-b border-slate-800 text-slate-400 font-sans uppercase text-[10px] tracking-wider">
-                            <th className="py-2.5 pr-2">Student ID &amp; Name</th>
-                            <th className="py-2.5 px-2">Password</th>
-                            <th className="py-2.5 px-2">NIC / Contact</th>
-                            <th className="py-2.5 px-2">Classes &amp; District</th>
-                            <th className="py-2.5 px-2">Access Status</th>
-                            <th className="py-2.5 pl-2 text-right">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/65">
-                          {students.map((st, idx) => (
-                            <tr key={st.username} className="hover:bg-slate-900/30 transition">
-                              <td className="py-2.5 pr-2">
-                                <div className="font-semibold text-slate-200">{st.name}</div>
-                                <div className="text-[10px] font-mono text-blue-400 font-bold">{st.username}</div>
-                              </td>
-                              <td className="py-2.5 px-2">
-                                <div className="font-mono text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 inline-block">{st.password || 'N/A'}</div>
-                              </td>
-                              <td className="py-2.5 px-2 font-mono text-[10px]">
-                                <div className="text-slate-300">NIC: {st.nic}</div>
-                                <div className="text-slate-400">Mo: {st.mobile}</div>
-                                <div className="text-slate-400">WA: {st.whatsapp}</div>
-                              </td>
-                              <td className="py-2.5 px-2">
-                                <div className="text-[10px] text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800 mb-1 max-w-[120px] truncate">{st.classTypes.join(', ')}</div>
-                                <div className="font-mono text-[10px] text-slate-500">{st.district}</div>
-                              </td>
-                              <td className="py-2.5 px-2">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full font-bold tracking-wider text-[9px] font-mono ${st.isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                                  {st.isPaid ? 'PAID ENROLLED' : 'HOLD'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 pl-2 text-right space-x-1.5 shrink-0">
-                                <button 
-                                  onClick={() => {
-                                    setStudents(prev => prev.map((s, sI) => sI === idx ? { ...s, isPaid: !s.isPaid } : s));
-                                  }}
-                                  className="bg-slate-800 border border-slate-705 text-[10px] font-bold text-slate-300 px-2.5 py-1 rounded-lg hover:bg-blue-600 hover:text-white transition cursor-pointer"
-                                >
-                                  Toggle status
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    if (confirm(`${st.name} ගිණුම මකා දැමීමට අවශ්‍යද?`)) {
-                                      setStudents(prev => prev.filter((_, sI) => sI !== idx));
-                                      alert("ශිෂ්‍ය ගිණුම මකා දමන ලදී.");
-                                    }
-                                  }}
-                                  className="text-[10px] font-bold bg-red-950/30 border border-red-500/20 text-red-400 px-2.5 py-1 rounded-lg hover:bg-red-600 hover:text-white transition cursor-pointer"
-                                >
-                                  Remove
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Password Reset Tool */}
-                  <div className="lg:col-span-6 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                    <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                      <Lock size={16} className="text-amber-400" /> Admin Password Reset Tool
-                    </h3>
-                    <p className="text-[11px] text-slate-400 leading-relaxed font-sans mb-3">සිසුවාගේ Username එක ටයිප් කර අලුත් මුරපදයක් ලබාදීමෙන් මුරපදය ක්ෂණිකව වෙනස් කළ හැක.</p>
-                    <div className="space-y-3">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400">Target Username (ID)</label>
-                        <input 
-                          type="text" 
-                          placeholder="e.g. NISI4528"
-                          value={adminResetUser}
-                          onChange={(e) => setAdminResetUser(e.target.value)}
-                          className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400">New Password</label>
-                        <input 
-                          type="password" 
-                          placeholder="Enter new secure password"
-                          value={adminResetNewPass}
-                          onChange={(e) => setAdminResetNewPass(e.target.value)}
-                          className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                        />
-                      </div>
-                      <button 
-                        onClick={handleAdminResetPassword}
-                        className="w-full bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold px-4 py-2 rounded-lg transition shadow-lg shadow-amber-900/20"
-                      >
-                        Password Reset Now / Save
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="lg:col-span-6 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
                     <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
                       <Plus size={16} className="text-blue-400" /> Quick Student Registration Coder
                     </h3>
@@ -2157,10 +2263,7 @@ export default function App() {
                       <div className="space-y-1">
                         <label className="text-[10px] text-slate-400">Class Option Checkboxes</label>
                         <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2.5 border border-slate-850 rounded">
-                          {[
-                            '2027 Theory', '2027 Revision', '2027 Paper Class',
-                            '2028 Theory', '2028 Revision', '2028 Paper Class'
-                          ].map((item, idx) => (
+                          {globalClassNames.map((item, idx) => (
                             <label key={idx} className="flex items-center gap-1.5 text-[11px] text-slate-300">
                               <input 
                                 type="checkbox"
@@ -2200,6 +2303,32 @@ export default function App() {
                         </div>
                       </div>
 
+                      <div className="flex items-center gap-2 mt-4 mb-4 bg-blue-500/10 p-3 rounded-lg border border-blue-500/20">
+                         <input 
+                           type="checkbox"
+                           id="freeStudentToggle"
+                           checked={manFreeToggle}
+                           onChange={(e) => setManFreeToggle(e.target.checked)}
+                           className="w-4 h-4 cursor-pointer"
+                         />
+                         <label htmlFor="freeStudentToggle" className="text-xs text-blue-300 font-bold cursor-pointer">
+                           Give this student a FREE CARD (Full Access)
+                         </label>
+                      </div>
+
+                      {manFreeToggle && (
+                        <div className="space-y-1 bg-blue-900/20 border border-blue-500/30 p-3 rounded-xl mt-2 mb-2">
+                          <label className="text-[10px] text-blue-300 font-bold">Free Access Months (Comma separated)</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. 2026-05, 2026-06, 2026-07"
+                            value={manFreeMonthsString}
+                            onChange={(e) => setManFreeMonthsString(e.target.value)}
+                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-blue-500/50 text-xs focus:outline-none focus:border-blue-400"
+                          />
+                        </div>
+                      )}
+
                       <button 
                         onClick={handleAdminManualGenerate}
                         className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md cursor-pointer"
@@ -2230,104 +2359,25 @@ export default function App() {
                   )}
 
                   {activeAdminTab === 'payments' && (
-                    <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                      <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                        <Award size={16} className="text-green-400" /> Student Monthly Payments Manager
-                      </h3>
-
-                      <form onSubmit={handleAddPayment} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-slate-900/40 p-4 border border-slate-700/50 rounded-xl">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Student ID (Username)</label>
-                          <input 
-                            type="text" 
-                            required
-                            placeholder="e.g. KAPE7882"
-                            value={payStudentUser}
-                            onChange={(e) => setPayStudentUser(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-green-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Month (e.g. 2026-05)</label>
-                          <input 
-                            type="month" 
-                            required
-                            value={payMonth}
-                            onChange={(e) => setPayMonth(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-green-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Amount (LKR)</label>
-                          <input 
-                            type="number" 
-                            required
-                            value={payAmount}
-                            onChange={(e) => setPayAmount(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-green-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Status</label>
-                          <select 
-                            value={payStatus}
-                            onChange={(e) => setPayStatus(e.target.value as any)}
-                            className="w-full bg-slate-950 text-white border border-slate-800 p-1.5 rounded text-xs focus:outline-none"
-                          >
-                            <option value="paid" className="text-black bg-white">PAID</option>
-                            <option value="pending" className="text-black bg-white">PENDING</option>
-                          </select>
-                        </div>
-                        <button 
-                          type="submit"
-                          className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-1.5 rounded text-xs transition shadow-md cursor-pointer h-[32px]"
-                        >
-                          Add Record
-                        </button>
-                      </form>
-
-                      {/* Display recent payments across all users or selected user */}
-                      <div className="mt-6">
-                         <h4 className="font-bold text-sm text-slate-300 mb-3">All Recorded Payments Feed</h4>
-                         <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                           {students.flatMap(s => (s.payments || []).map(p => ({...p, student: s}))).sort((a, b) => new Date(b.paidDate || '').getTime() - new Date(a.paidDate || '').getTime()).map((p, pIdx) => (
-                             <div key={pIdx} className="flex justify-between items-center bg-slate-900 border border-slate-800 p-3 rounded-xl">
-                               <div>
-                                 <strong className="text-white text-xs font-mono">{p.student.username}</strong>
-                                 <span className="text-slate-400 text-xs ml-2 font-semibold">{p.student.name}</span>
-                                 <div className="text-[10px] text-slate-500 mt-0.5">Record Added: {new Date(p.paidDate || '').toLocaleString()}</div>
-                               </div>
-                               <div className="text-right">
-                                 <div className="text-xs text-slate-300 font-bold">Month: {p.month} | Rs. {p.amount}</div>
-                                 <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold tracking-wider ${p.status === 'paid' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-500 border border-amber-500/30'}`}>
-                                   {p.status.toUpperCase()}
-                                 </span>
-                                 <button
-                                   onClick={() => {
-                                      if(confirm('මෙම ගෙවීම් වාර්තාව මකා දැමීමට අවශ්‍යද?')) {
-                                        setStudents(prev => {
-                                          const copy = [...prev];
-                                          const targetIdx = copy.findIndex(s => s.username === p.student.username);
-                                          if(targetIdx !== -1) {
-                                            copy[targetIdx].payments = copy[targetIdx].payments?.filter(x => x.id !== p.id);
-                                          }
-                                          return copy;
-                                        });
-                                      }
-                                   }}
-                                   className="ml-3 text-[9px] text-red-400 hover:text-red-300 underline cursor-pointer"
-                                 >
-                                   Delete
-                                 </button>
-                               </div>
-                             </div>
-                           ))}
-                           {students.flatMap(s => (s.payments || [])).length === 0 && (
-                             <p className="text-xs text-slate-500 text-center py-4">No payment records found. Add one above.</p>
-                           )}
-                         </div>
-                      </div>
+                    <div className="lg:col-span-12">
+                       <AdminPaymentManager students={students} />
                     </div>
+                  )}
+
+                  {activeAdminTab === 'history' && (
+                    <div className="lg:col-span-12">
+                       <AdminPaymentHistory students={students} />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'global_configs' && (
+                    <div className="lg:col-span-12">
+                       <AdminGlobalConfig />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'resets' && (
+                    <AdminPasswordReset students={students} />
                   )}
 
                   {activeAdminTab === 'live_classes' && (
@@ -2397,16 +2447,16 @@ export default function App() {
                            {scheduledLives.map((sl, idx) => (
                              <div key={idx} className="flex flex-col md:flex-row justify-between md:items-center bg-slate-900 border border-slate-800 p-3 rounded-xl gap-2">
                                <div>
-                                 <strong className="text-white text-xs font-mono">{sl.classType}</strong>
+                                 <strong className="text-white text-xs font-mono">{sl.target_classes?.[0]}</strong>
                                  <span className="text-slate-400 text-xs ml-2 font-semibold">- {sl.title}</span>
-                                 <div className="text-[10px] text-slate-500 mt-0.5">Scheduled info: {new Date(sl.scheduledAt).toLocaleString()}</div>
+                                 <div className="text-[10px] text-slate-500 mt-0.5">Scheduled info: {sl.date} • {sl.time}</div>
                                </div>
                                <div className="flex items-center gap-3">
-                                 <div className="text-xs text-red-400 font-mono truncate max-w-[200px]">{sl.videoUrl}</div>
+                                 <div className="text-xs text-red-400 font-mono truncate max-w-[200px]">{sl.link}</div>
                                  <button
-                                   onClick={() => {
+                                   onClick={async () => {
                                       if(confirm('මෙම සක්‍රීය සැලසුම පවතින ලැයිස්තුවෙන් ඉවත් කිරීමට අවශ්‍යද?')) {
-                                        setScheduledLives(prev => prev.filter(x => x.id !== sl.id));
+                                        await supabase.from('scheduled_lives').delete().eq('id', sl.id);
                                       }
                                    }}
                                    className="text-[10px] text-red-500 hover:text-red-400 underline cursor-pointer"
@@ -2421,6 +2471,9 @@ export default function App() {
                            )}
                          </div>
                       </div>
+
+                      <AdminAttentionLogs scheduledLives={scheduledLives} />
+
                     </div>
                   )}
 
@@ -2443,15 +2496,16 @@ export default function App() {
                           </select>
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Class Type</label>
-                          <input 
-                            type="text" 
+                          <label className="text-[10px] text-slate-400">Class Type or Free Allocation</label>
+                          <select 
                             required
-                            placeholder="e.g. 2026 Theory"
                             value={resClassType}
                             onChange={(e) => setResClassType(e.target.value)}
                             className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                          />
+                          >
+                             {globalClassNames.map(c => <option key={c} value={c}>{c}</option>)}
+                             <option value="Free Notes / Public">Free Notes / Public</option>
+                          </select>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] text-slate-400">Target Month (e.g. 2026-05)</label>
@@ -2500,16 +2554,18 @@ export default function App() {
                          <div className="flex-1 border border-slate-800 rounded-xl p-4 bg-slate-900/30">
                            <h4 className="font-bold text-sm text-slate-300 mb-3 border-b border-slate-800 pb-2">All Uploaded Tutes/PDFs</h4>
                            <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                             {resourceLinks.filter(r => r.id.includes('tute')).map((r, idx) => (
+                             {resourceLinks.filter(r => r.type === 'tute').map((r, idx) => (
                                <div key={idx} className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-xs flex justify-between items-center">
                                  <div>
-                                   <div className="font-bold text-amber-500">{r.classType} ({r.targetMonth})</div>
+                                   <div className="font-bold text-amber-500">{r.targetClasses?.[0]} ({r.targetMonth})</div>
                                    <div className="text-white">{r.title}</div>
                                  </div>
-                                 <button onClick={() => setResourceLinks(prev => prev.filter(x => x.id !== r.id))} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
+                                 <button onClick={async () => {
+                                   await supabase.from('class_resources').delete().eq('id', r.id);
+                                 }} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
                                </div>
                              ))}
-                             {resourceLinks.filter(r => r.id.includes('tute')).length === 0 && (
+                             {resourceLinks.filter(r => r.type === 'tute').length === 0 && (
                                <div className="text-[10px] text-slate-500 italic">No tutes uploaded yet.</div>
                              )}
                            </div>
@@ -2517,16 +2573,18 @@ export default function App() {
                          <div className="flex-1 border border-slate-800 rounded-xl p-4 bg-slate-900/30">
                            <h4 className="font-bold text-sm text-slate-300 mb-3 border-b border-slate-800 pb-2">All Video Recordings</h4>
                            <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                             {resourceLinks.filter(r => r.id.includes('recording')).map((r, idx) => (
+                             {resourceLinks.filter(r => r.type === 'recording').map((r, idx) => (
                                <div key={idx} className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-xs flex justify-between items-center">
                                  <div>
-                                   <div className="font-bold text-green-500">{r.classType} ({r.targetMonth})</div>
+                                   <div className="font-bold text-green-500">{r.targetClasses?.[0]} ({r.targetMonth})</div>
                                    <div className="text-white">{r.title}</div>
                                  </div>
-                                 <button onClick={() => setResourceLinks(prev => prev.filter(x => x.id !== r.id))} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
+                                 <button onClick={async () => {
+                                   await supabase.from('class_resources').delete().eq('id', r.id);
+                                 }} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
                                </div>
                              ))}
-                             {resourceLinks.filter(r => r.id.includes('recording')).length === 0 && (
+                             {resourceLinks.filter(r => r.type === 'recording').length === 0 && (
                                <div className="text-[10px] text-slate-500 italic">No recordings uploaded yet.</div>
                              )}
                            </div>
@@ -2536,87 +2594,7 @@ export default function App() {
                   )}
 
                   {activeAdminTab === 'site_configs' && (
-                    <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                      <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                        <Globe size={16} className="text-blue-400" /> Website Appearance &amp; Configurations
-                      </h3>
-                      
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Website Header Title</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroTitle}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroTitle: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Website Subtitle</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroSubtitle}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroSubtitle: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Main Logo URL (Base64 or external URL)</label>
-                          <input 
-                            type="text" 
-                            value={siteConfig.logoUrl}
-                            onChange={(e) => setSiteConfig(prev => ({ ...prev, logoUrl: e.target.value }))}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Hero Slider Image 1 URL</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroImage1}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroImage1: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Hero Slider Image 2 URL</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroImage2}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroImage2: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Hero Slider Image 3 URL</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroImage3}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroImage3: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400">Hero Slider Image 4 URL</label>
-                            <input 
-                              type="text" 
-                              value={siteConfig.heroImage4}
-                              onChange={(e) => setSiteConfig(prev => ({ ...prev, heroImage4: e.target.value }))}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-blue-500"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs leading-relaxed text-blue-300 font-sans shadow-inner">
-                          💡 **Information:** The website will instantly reflect the changes across all pages once you alter the text or image URLs above. No save button is required it autosaves instantly.
-                        </div>
-                      </div>
-                    </div>
+                    <AdminSiteConfig />
                   )}
 
                   {activeAdminTab === 'planner' && (
@@ -2695,9 +2673,9 @@ export default function App() {
                             <div className="flex flex-col items-end gap-1.5">
                               <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${c.status === 'active' ? 'bg-blue-500/20 text-blue-400' : c.status === 'past' ? 'bg-slate-700/50 text-slate-300' : 'bg-red-500/20 text-red-400'}`}>{c.status}</span>
                               <button
-                                onClick={() => {
+                                onClick={async () => {
                                   if(confirm("මෙම දින සැලසුම මකාදැමීමට අවශ්‍යද?")) {
-                                    setCalendarEvents(prev => prev.filter(nx => nx.id !== c.id));
+                                    await supabase.from('calendar_events').delete().eq('id', c.id);
                                   }
                                 }}
                                 className="text-[10px] text-red-400 bg-red-500/10 px-2 py-1 rounded hover:bg-red-500/20 transition cursor-pointer"
@@ -2796,9 +2774,9 @@ export default function App() {
                               {a.targetUser && <div className="text-[9px] text-red-500 font-mono">Target: {a.targetUser}</div>}
                             </div>
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if(confirm("මෙම නිවේදනය මකාදැමීමට අවශ්‍යද?")) {
-                                  setAnnouncements(prev => prev.filter(nx => nx.id !== a.id));
+                                  await supabase.from('announcements').delete().eq('id', a.id);
                                 }
                               }}
                               className="text-[10px] text-red-400 bg-red-500/10 px-2 py-1 rounded hover:bg-red-500/20 transition cursor-pointer"
@@ -2921,7 +2899,6 @@ export default function App() {
         <div className="flex justify-center gap-6 text-slate-400 font-bold">
           <button onClick={() => { setCurrentView('home'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Home Page</button>
           <button onClick={() => { setCurrentView('free-notes'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Free Notes</button>
-          <button onClick={openPublicAlertsModal} className="hover:text-white transition cursor-pointer text-blue-400">Public Alert!</button>
         </div>
         <div>
           <p className="font-sans">© 2026 Taraka Amarasinghe Physics Zone. All rights reserved.</p>
