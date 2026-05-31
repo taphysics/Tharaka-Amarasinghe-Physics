@@ -7,7 +7,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase URL or Anon Key is missing. Please provide them in settings.')
+  console.warn('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlvcGVwa3B3bW56eWd5bmp3c3poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4NDQwNjcsImV4cCI6MjA5NTQyMDA2N30.2__GFOakLAsFm1pMxRLcp_S4zM7uqyuTs0HfezFfmQA')
 }
 
-export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder')
+export const supabase = createClient(supabaseUrl || 'https://yopepkpwmnzygynjwszh.supabase.co', supabaseAnonKey || 'placeholder')
