@@ -1,3 +1,4 @@
+// @ts-ignore
 import { createClient } from '@supabase/supabase-js'
 
 // @ts-ignore
@@ -10,4 +11,3 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder')
-// test
