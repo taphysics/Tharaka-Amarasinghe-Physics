@@ -1190,7 +1190,7 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
               <img src='/teacher.png' class='teacher-img' alt='Taraka Amarasinghe' onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
               <div style='display:none; background-color:#1e293b; border-radius:50%; width:100%; height:100%; align-items:center; justify-content:center; font-family:"Space Grotesk", sans-serif; font-size:3rem; font-weight:700; color:var(--primary); box-shadow:0 0 10px rgba(0,0,0,0.5);'>TA</div>
             </div>
-            <div class='teacher-name'>Taraka Amarasinghe</div>
+            <div class='teacher-name'>තාරක අමරසිංහ</div>
             <div class='teacher-title'>B.Sc (Hon's) University of Peradeniya | Physics Tutor</div>
             <div class='teacher-quote-box'>
               <p class='teacher-quote'>
