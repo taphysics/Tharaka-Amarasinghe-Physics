@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-// කෙළින්ම ඔයාගේ ඇත්තම Supabase දත්ත මෙතනට ලබා දී ඇත
-const supabaseUrl = 'https://yopepkpwmnzygynjwszh.supabase.co'
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlvcGVwa3B3bW56eWd5bmp3c3poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4NDQwNjcsImV4cCI6MjA5NTQyMDA2N30.2__GFOakLAsFm1pMxRLcp_S4zM7uqyuTs0HfezFfmQA'
+// import.meta එක (any) විදිහට ගත්තම TypeScript කෑගසන්නේ නැත
+const metaEnv = (import.meta as any).env
+
+const supabaseUrl = metaEnv.VITE_SUPABASE_URL
+const supabaseAnonKey = metaEnv.VITE_SUPABASE_ANON_KEY
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
