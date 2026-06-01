@@ -1,9 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
 
-// import.meta එක (any) විදිහට ගත්තම TypeScript කෑගසන්නේ නැත
-const metaEnv = (import.meta as any).env
+// @ts-ignore
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+// @ts-ignore
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-const supabaseUrl = metaEnv.VITE_SUPABASE_URL
-const supabaseAnonKey = metaEnv.VITE_SUPABASE_ANON_KEY
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn('Supabase URL or Anon Key is missing. Please provide them in settings.')
+}
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder')
