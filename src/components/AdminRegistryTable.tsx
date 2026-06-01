@@ -37,37 +37,29 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     .sort((a, b) => new Date(a.joined_at || a.created_at).getTime() - new Date(b.joined_at || b.created_at).getTime());
 
   // Updated handleActivate to accept single ID string or Array of IDs
-  const handleActivate = async (ids: string | string[]) => {
-    try {
-      const idArray = typeof ids === 'string' ? [ids] : ids;
-      if (idArray.length === 0) return;
+const handleActivate = async (student: any) => {
+  // ස්ථිර යූසර්නේම් එකක් හදනවා (Reg No එක)
+  const username = `${student.first_name.charAt(0).toUpperCase()}${student.last_name.charAt(0).toUpperCase()}${student.nic.slice(-2)}${student.whatsapp.slice(-2)}`;
+  
+  const { data, error } = await supabase
+    .from('students')
+    .update({
+      is_approved: true,
+      is_paid: true,
+      username: username,      // මේකෙන් පෙන්ඩින් යූසර්නේම් එක ඉවර වෙනවා
+      password: student.nic    
+    })
+    .eq('id', student.id);
 
-      // 1. Supabase ඩේටාබේස් එක අප්ඩේට් කිරීම (Using .in for bulk support)
-      const { error } = await supabase
-        .from('students')
-        .update({ is_approved: true, is_paid: true })
-        .in('id', idArray);
-
-      if (error) throw error;
-
-      // 2. UI එකේ ලිස්ට් එකෙන් ඒ ශිෂ්‍යයන්ව ඉවත් කිරීම
-      setStudents((prevStudents: any[]) => 
-        prevStudents.filter((student: any) => !idArray.includes(student.id))
-      );
-
-      // Clear selection if it was a bulk operation
-      if (typeof ids !== 'string') {
-        setSelectedPending([]);
-      }
-
-      alert("තෝරාගත් ශිෂ්‍යයා/ශිෂ්‍යයන් සාර්ථකව ඇක්ටිව් කරන ලදී!");
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("Error activating student(s):", errorMessage);
-      alert("ඇක්ටිව් කිරීමේදී ගැටලුවක් මතු විය!");
-    }
-  };
+  if (error) {
+    console.error("Error:", error);
+    alert("අවුලක් ආවා: " + error.message);
+  } else {
+    alert("සාර්ථකව ඇක්ටිව් කරන ලදී!");
+    // පේජ් එක රීලෝඩ් කරන්න
+    window.location.reload(); 
+  }
+};
 
   const handleDeletePending = async (ids: string[]) => {
     if (!confirm('මෙම පෙන්ඩින් දත්ත මැකීමට අවශ්‍යද?')) return;
