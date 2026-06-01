@@ -23,35 +23,36 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const pendingStudents = filteredStudents.filter(s => !s.is_approved).sort((a,b) => new Date(b.joined_at).getTime() - new Date(a.joined_at).getTime());
   const activeStudents = filteredStudents.filter(s => s.is_approved).sort((a,b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
 
-const handleActivate = async (ids: string[]) => {
-  try {
-    for (const id of ids) {
-      // 1. මුලින්ම පරණ එක Delete කරන්නේ නැතුව Update පමණක් කරමු
-      const { data, error } = await supabase
-        .from('students')
-        .update({ 
-          is_approved: true,
-          is_paid: true 
-        })
-        .eq('id', id)
-        .select(); // මේකෙන් අලුතින් හැදුණු record එක ලැබෙනවා
+  const handleActivate = async (e: React.MouseEvent, ids: string[]) => {
+    e.preventDefault(); // පේජ් එක රීඩිරෙක්ට් වීම හෝ රීලෝඩ් වීම වළක්වයි
+    try {
+      for (const id of ids) {
+        // 1. මුලින්ම පරණ එක Delete කරන්නේ නැතුව Update පමණක් කරමු
+        const { data, error } = await supabase
+          .from('students')
+          .update({ 
+            is_approved: true,
+            is_paid: true 
+          })
+          .eq('id', id)
+          .select(); // මේකෙන් අලුතින් හැදුණු record එක ලැබෙනවා
 
-      if (error) {
-        console.error("Supabase Update Error:", error);
-        alert('දෝෂයක් සිදුවිය: ' + error.message);
-        continue;
+        if (error) {
+          console.error("Supabase Update Error:", error);
+          alert('දෝෂයක් සිදුවිය: ' + error.message);
+          continue;
+        }
       }
+
+      // 2. අන්තිමට එක පාරක් Refresh කරමු
+      alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
+      window.location.reload(); // Hard refresh දෙන එක තමයි දැනට හොඳම දේ
+
+    } catch (err) {
+      console.error(err);
+      alert('පද්ධතියේ දෝෂයක් ඇත!');
     }
-
-    // 2. අන්තිමට එක පාරක් Refresh කරමු
-    alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
-    window.location.reload(); // Hard refresh දෙන එක තමයි දැනට හොඳම දේ
-
-  } catch (err) {
-    console.error(err);
-    alert('පද්ධතියේ දෝෂයක් ඇත!');
-  }
-};
+  };
 
   const handleDeletePending = async (ids: string[]) => {
     if (!confirm('මෙම පෙන්ඩින් දත්ත මැකීමට අවශ්‍යද?')) return;
@@ -123,7 +124,7 @@ const handleActivate = async (ids: string[]) => {
               <button onClick={() => toggleSelectAll(true)} className="text-[10px] text-slate-400 hover:text-white px-2 cursor-pointer border border-slate-700 rounded-md">All</button>
               {selectedPending.length > 0 && (
                 <>
-                  <button onClick={() => handleActivate(selectedPending)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2 py-1 object-fit rounded-md cursor-pointer transition">Activate</button>
+                  <button onClick={(e) => handleActivate(e, selectedPending)} className="text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2 py-1 object-fit rounded-md cursor-pointer transition">Activate</button>
                   <button onClick={() => handleDeletePending(selectedPending)} className="text-[10px] bg-red-600 hover:bg-red-500 text-white font-bold px-2 py-1 rounded-md cursor-pointer transition"><Trash2 size={12}/></button>
                 </>
               )}
@@ -172,8 +173,8 @@ const handleActivate = async (ids: string[]) => {
                       <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
                         {st.name} <span className="bg-slate-950 text-blue-400 px-2 py-0.5 rounded text-[10px] border border-blue-500/20">{st.username}</span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.isPaid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
-                        {st.isPaid ? 'PAID' : 'UNPAID current month'}
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.is_paid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
+                        {st.is_paid ? 'PAID' : 'UNPAID current month'}
                       </span>
                     </div>
                     <div className="text-[9px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1 mt-1 font-mono">
@@ -203,7 +204,7 @@ const handleActivate = async (ids: string[]) => {
              {activeStudents.filter(s => {
                 const now = new Date();
                 const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-                return !(s.activeMonths || []).includes(currentMonthStr);
+                return !(s.activeMonths || s.active_months || []).includes(currentMonthStr);
              }).map(st => (
                <div key={st.id} className="bg-slate-900/60 p-3 flex justify-between items-center border border-slate-800/80 rounded-xl">
                  <div>
@@ -251,8 +252,6 @@ const handleActivate = async (ids: string[]) => {
           <button onClick={() => {
             if(!reminderUserIds) return;
             const message = `*TA Physics Online Hub - Payment Reminder*\n\nDear Student,\nYour payment for the month of *${reminderMonth}* is pending.\n\n*Fees Breakdown:*\n${reminderFees}\n*Total Due: Rs. ${reminderTotal}*\n\nPlease make the payment to restore your portal access. Thank you!`;
-            // Normally you would integrate with a WhatsApp API here to send it to all numbers automatically based on IDs.
-            // For now we will just pop one up as a mailto/wa.me link or alert since we are client side.
             alert(`Message Ready to Send to IDs: ${reminderUserIds}\n\n${message}\n\n(In a full backend setup this triggers the WhatsApp cloud API)`);
           }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-xl transition mt-2 text-xs">
             Generate &amp; Send Notifications
