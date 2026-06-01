@@ -48,46 +48,41 @@ export default function AdminRegistryTable({ students, setStudents }: { students
 
 
 
- const handleActivate = async (ids: string[]) => {
-    try {
-      let activatedRecords: any[] = [];
+ const handleActivate = async (e: React.MouseEvent, ids: string[]) => {
+  e.preventDefault(); // පේජ් එක රීලෝඩ් වීම වළක්වයි
+  try {
+    // 1. Loop කරන්නේ නැතුව සියලුම IDs එක පාර Supabase එකේ Update කරමු (.in එකෙන්)
+    const { data, error } = await supabase
+      .from('students')
+      .update({ 
+        is_approved: true,
+        is_paid: true 
+      })
+      .in('id', ids) // IDs Array එක කෙලින්ම pass කරනවා
+      .select();
 
-      for (const id of ids) {
-        const { data, error } = await supabase
-          .from('students')
-          .update({ 
-            is_approved: true,
-            is_paid: true 
-          })
-          .eq('id', id)
-          .select();
-
-        if (error) {
-          console.error("Supabase Error:", error);
-          alert('සමාවෙන්න, ගිණුම සක්‍රිය කිරීමේදී දෝෂයක් මතු විය!');
-          continue; 
-        }
-
-        if (data && data.length > 0) {
-          activatedRecords.push(data[0]);
-        }
-      }
-
-      setStudents((prev: any) => 
-        prev.map((s: any) => {
-          const updatedStudent = activatedRecords.find((act: any) => act.id === s.id);
-          return updatedStudent ? updatedStudent : s;
-        })
-      );
-      
-      setSelectedPending([]);
-      alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
-
-    } catch (err) {
-      console.error(err);
-      alert('පද්ධතියේ දෝෂයක් ඇත!');
+    if (error) {
+      console.error("Supabase Update Error:", error);
+      alert('දෝෂයක් සිදුවිය: ' + error.message);
+      return;
     }
-  };
+
+    console.log("Supabase එකෙන් ලැබුණු අලුත් දත්ත:", data);
+
+    // 2. පේජ් එක රීලෝඩ් කරන්නේ නැතුව React එකෙන් සිසුවාව Active සෙක්ෂන් එකට මාරු කරමු
+    setStudents((prev: any) => 
+      prev.map((s: any) => 
+        ids.includes(s.id) ? { ...s, is_approved: true, is_paid: true } : s
+      )
+    );
+
+    alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
+
+  } catch (err) {
+    console.error(err);
+    alert('පද්ධතියේ දෝෂයක් ඇත!');
+  }
+};
 
 
 
