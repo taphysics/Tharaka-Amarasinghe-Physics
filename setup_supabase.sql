@@ -100,9 +100,9 @@ alter publication supabase_realtime add table calendar_events;
 alter publication supabase_realtime add table announcements;
 alter publication supabase_realtime add table scheduled_lives;
 alter publication supabase_realtime add table class_resources;
-alter publication supabase_realtime add table site_config;
+alter publication publication_supabase_realtime add table site_config;
 
--- Insert or Update site config with exact data from screenshot
+-- Insert or Update site config with exact data and images
 INSERT INTO site_config (
   id, 
   alert_text, 
@@ -134,7 +134,10 @@ VALUES (
   'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස් ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.',
   '/teacher.png',
   '0719152128',
-  '', '', '', ''
+  '/image1.jpg', -- 👈 මෙතනට හිස් තැන් වෙනුවට නිවැරදි ඉමේජ් පථයන් ලබා දුන්නා
+  '/image2.png', 
+  '/image3.avif', 
+  '/image4.jpg'
 )
 ON CONFLICT (id) DO UPDATE SET
   hero_title = EXCLUDED.hero_title,
@@ -147,6 +150,10 @@ ON CONFLICT (id) DO UPDATE SET
   director_quote = EXCLUDED.director_quote,
   director_image = EXCLUDED.director_image,
   contact_phone = EXCLUDED.contact_phone,
+  hero_image1 = EXCLUDED.hero_image1, -- 👈 ON CONFLICT එකේදී ඉමේජ් ටිකත් අප්ඩේට් වෙන්න කෝඩ් එක හැදුවා
+  hero_image2 = EXCLUDED.hero_image2,
+  hero_image3 = EXCLUDED.hero_image3,
+  hero_image4 = EXCLUDED.hero_image4,
   updated_at = now();
 
 -- Disable RLS for development
