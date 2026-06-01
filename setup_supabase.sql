@@ -102,12 +102,54 @@ alter publication supabase_realtime add table scheduled_lives;
 alter publication supabase_realtime add table class_resources;
 alter publication supabase_realtime add table site_config;
 
--- Insert default site config if not exists
-INSERT INTO site_config (id, alert_text, hero_title, contact_phone)
-VALUES (1, 'Welcome to the platform', 'TA Physics Online', '0719152128')
-ON CONFLICT (id) DO NOTHING;
+-- Insert or Update site config with exact data from screenshot
+INSERT INTO site_config (
+  id, 
+  alert_text, 
+  hero_title, 
+  hero_subtitle, 
+  header_title, 
+  header_subtitle,
+  logo_url, 
+  director_name, 
+  director_title, 
+  director_quote, 
+  director_image,
+  contact_phone,
+  hero_image1,
+  hero_image2,
+  hero_image3,
+  hero_image4
+)
+VALUES (
+  1,
+  'Welcome to the platform',
+  'තාරක අමරසිංහ',
+  'දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පංති',
+  'තාරක අමරසිංහ',
+  'PHYSICS ONLINE HUB',
+  '/logo.png',
+  'තාරක අමරසිංහ',
+  'B.SC (HON''S) UNIVERSITY OF PERADENIYA | PHYSICS TEACHER',
+  'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස් ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.',
+  '/teacher.png',
+  '0719152128',
+  '', '', '', ''
+)
+ON CONFLICT (id) DO UPDATE SET
+  hero_title = EXCLUDED.hero_title,
+  hero_subtitle = EXCLUDED.hero_subtitle,
+  header_title = EXCLUDED.header_title,
+  header_subtitle = EXCLUDED.header_subtitle,
+  logo_url = EXCLUDED.logo_url,
+  director_name = EXCLUDED.director_name,
+  director_title = EXCLUDED.director_title,
+  director_quote = EXCLUDED.director_quote,
+  director_image = EXCLUDED.director_image,
+  contact_phone = EXCLUDED.contact_phone,
+  updated_at = now();
 
--- Disable RLS for development (Ensure to configure secure policies in production)
+-- Disable RLS for development
 ALTER TABLE students DISABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 ALTER TABLE announcements DISABLE ROW LEVEL SECURITY;
