@@ -23,28 +23,45 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const pendingStudents = filteredStudents.filter(s => !s.is_approved).sort((a,b) => new Date(b.joined_at).getTime() - new Date(a.joined_at).getTime());
   const activeStudents = filteredStudents.filter(s => s.is_approved).sort((a,b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
 
-  const handleActivate = async (ids: string[]) => {
-    // Generate simple credentials for newly approved
-    for (const id of ids) {
-      const student = pendingStudents.find(s => s.id === id);
-      if (!student) continue;
+const handleActivate = async (ids: string[]) => {
+    try {
+      let activatedRecords: any[] = [];
 
-      const firstPrefix = student.first_name?.slice(0, 2).toUpperCase() || 'XX';
-      const lastPrefix = student.last_name?.slice(0, 2).toUpperCase() || 'XX';
-      const nicSuffix = student.nic?.slice(-2) || '00';
-      const waSuffix = student.whatsapp?.slice(-2) || '00';
-      const finalUsername = `${firstPrefix}${lastPrefix}${nicSuffix}${waSuffix}`;
+      for (const id of ids) {
+        const { data, error } = await supabase
+          .from('students')
+          .update({ 
+            is_approved: true,
+            is_paid: true 
+          })
+          .eq('id', id)
+          .select();
 
-      await supabase.from('students').update({ 
-        is_approved: true, 
-        username: finalUsername,
-        password: student.nic // Temporary initial password
-      }).eq('id', id);
+        if (error) {
+          console.error("Supabase Error:", error);
+          alert('සමාවෙන්න, ගිණුම සක්‍රිය කිරීමේදී දෝෂයක් මතු විය!');
+          continue; 
+        }
+
+        if (data && data.length > 0) {
+          activatedRecords.push(data[0]);
+        }
+      }
+
+      setStudents((prev: any) => 
+        prev.map((s: any) => {
+          const updatedStudent = activatedRecords.find((act: any) => act.id === s.id);
+          return updatedStudent ? updatedStudent : s;
+        })
+      );
+      
+      setSelectedPending([]);
+      alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
+
+    } catch (err) {
+      console.error(err);
+      alert('පද්ධතියේ දෝෂයක් ඇත!');
     }
-    // Update local state temporarily, useSupabaseSync will catch up
-    setStudents((prev: any) => prev.map((s: any) => ids.includes(s.id) ? { ...s, is_approved: true } : s));
-    setSelectedPending([]);
-    alert('ගිණුම් වහාම සක්‍රිය කරන ලදී!');
   };
 
   const handleDeletePending = async (ids: string[]) => {
