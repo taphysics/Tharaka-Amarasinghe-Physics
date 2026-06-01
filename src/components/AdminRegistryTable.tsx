@@ -24,45 +24,34 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const activeStudents = filteredStudents.filter(s => s.is_approved).sort((a,b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
 
 const handleActivate = async (ids: string[]) => {
-    try {
-      let activatedRecords: any[] = [];
-
-      for (const id of ids) {
-        const { data, error } = await supabase
-          .from('students')
-          .update({ 
-            is_approved: true,
-            is_paid: true 
-          })
-          .eq('id', id)
-          .select();
-
-        if (error) {
-          console.error("Supabase Error:", error);
-          alert('සමාවෙන්න, ගිණුම සක්‍රිය කිරීමේදී දෝෂයක් මතු විය!');
-          continue; 
-        }
-
-        if (data && data.length > 0) {
-          activatedRecords.push(data[0]);
-        }
-      }
-
-      setStudents((prev: any) => 
-        prev.map((s: any) => {
-          const updatedStudent = activatedRecords.find((act: any) => act.id === s.id);
-          return updatedStudent ? updatedStudent : s;
+  try {
+    for (const id of ids) {
+      // 1. මුලින්ම පරණ එක Delete කරන්නේ නැතුව Update පමණක් කරමු
+      const { data, error } = await supabase
+        .from('students')
+        .update({ 
+          is_approved: true,
+          is_paid: true 
         })
-      );
-      
-      setSelectedPending([]);
-      alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
+        .eq('id', id)
+        .select(); // මේකෙන් අලුතින් හැදුණු record එක ලැබෙනවා
 
-    } catch (err) {
-      console.error(err);
-      alert('පද්ධතියේ දෝෂයක් ඇත!');
+      if (error) {
+        console.error("Supabase Update Error:", error);
+        alert('දෝෂයක් සිදුවිය: ' + error.message);
+        continue;
+      }
     }
-  };
+
+    // 2. අන්තිමට එක පාරක් Refresh කරමු
+    alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
+    window.location.reload(); // Hard refresh දෙන එක තමයි දැනට හොඳම දේ
+
+  } catch (err) {
+    console.error(err);
+    alert('පද්ධතියේ දෝෂයක් ඇත!');
+  }
+};
 
   const handleDeletePending = async (ids: string[]) => {
     if (!confirm('මෙම පෙන්ඩින් දත්ත මැකීමට අවශ්‍යද?')) return;
