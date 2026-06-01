@@ -48,18 +48,24 @@ export default function AdminRegistryTable({ students, setStudents }: { students
 
 
 
- const handleActivate = async (e: React.MouseEvent, ids: string[]) => {
-  e.preventDefault(); // පේජ් එක රීලෝඩ් වීම වළක්වයි
+const handleActivate = async (studentIdOrIds: string | string[]) => {
   try {
-    // 1. Loop කරන්නේ නැතුව සියලුම IDs එක පාර Supabase එකේ Update කරමු (.in එකෙන්)
+    // 1. තනි ID එකක් ආවත් ඒක Array එකක් බවට හරවා ගන්නවා (.in එකට ගැළපෙන්න)
+    const idsToUpdate = Array.isArray(studentIdOrIds) ? studentIdOrIds : [studentIdOrIds];
+
+    if (idsToUpdate.length === 0) {
+      alert("කරුණාකර අවම වශයෙන් එක් සිසුවෙක්වත් තෝරන්න!");
+      return;
+    }
+
+    // 2. Supabase එකේ දත්ත Update කිරීම
     const { data, error } = await supabase
       .from('students')
       .update({ 
         is_approved: true,
         is_paid: true 
       })
-      .in('id', ids) // IDs Array එක කෙලින්ම pass කරනවා
-      .select();
+      .in('id', idsToUpdate);
 
     if (error) {
       console.error("Supabase Update Error:", error);
@@ -67,20 +73,18 @@ export default function AdminRegistryTable({ students, setStudents }: { students
       return;
     }
 
-    console.log("Supabase එකෙන් ලැබුණු අලුත් දත්ත:", data);
-
-    // 2. පේජ් එක රීලෝඩ් කරන්නේ නැතුව React එකෙන් සිසුවාව Active සෙක්ෂන් එකට මාරු කරමු
+    // 3. පේජ් එක රීලෝඩ් නොකර React State එක අප්ඩේට් කිරීම
     setStudents((prev: any) => 
       prev.map((s: any) => 
-        ids.includes(s.id) ? { ...s, is_approved: true, is_paid: true } : s
+        idsToUpdate.includes(s.id) ? { ...s, is_approved: true, is_paid: true } : s
       )
     );
 
     alert('ගිණුම් සාර්ථකව සක්‍රිය කරන ලදී!');
 
   } catch (err) {
-    console.error(err);
-    alert('පද්ධතියේ දෝෂයක් ඇත!');
+    console.error("Catch Block Error:", err);
+    alert('පද්ධතියේ දෝෂයක් ඇත! Console එක පරික්ෂා කරන්න.');
   }
 };
 
