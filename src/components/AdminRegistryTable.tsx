@@ -40,6 +40,8 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     if (!confirm(`මෙම සිසුන් ${idsToActivate.length} දෙනාගේ ගිණුම් සක්‍රීය (Activate) කිරීමට අවශ්‍යද?`)) return;
 
     try {
+      const successfulUpdates: any[] = []; // සාර්ථකව Active වූ සිසුන්ගේ දත්ත තාවකාලිකව තබාගැනීමට
+
       for (const id of idsToActivate) {
         // අදාළ සිසුවාව සොයා ගැනීම
         const student = students.find(s => s.id === id);
@@ -71,11 +73,31 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         if (error) {
           console.error(`Error activating student ${id}:`, error.message);
           alert(`සිසුවා (ID: ${id}) සක්‍රීය කිරීමේදී දෝෂයක්: ` + error.message);
+        } else {
+          // සාර්ථක වූ දත්ත Array එකට එකතු කිරීම
+          successfulUpdates.push({ id, username, password });
         }
       }
 
+      // ✅ Page එක Refresh කරන්නේ නැතිව React State එක මගින් දත්ත අලුත් කිරීම
+      setStudents((prev: any) => 
+        prev.map((student: any) => {
+          const updatedInfo = successfulUpdates.find(u => u.id === student.id);
+          if (updatedInfo) {
+            return { 
+              ...student, 
+              is_approved: true, 
+              is_paid: true, 
+              username: updatedInfo.username, 
+              password: updatedInfo.password 
+            };
+          }
+          return student;
+        })
+      );
+
+      setSelectedPending([]); // Select කරපු Checkboxes ටික හිස් කිරීම
       alert("සාර්ථකව ඇක්ටිව් කරන ලදී!");
-      window.location.reload(); // දත්ත අලුත් කර පෙන්වීමට Reload කිරීම
 
     } catch (err) {
       console.error("Activation crashed:", err);
@@ -220,8 +242,8 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                       <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
                         {st.name} <span className="bg-slate-950 text-blue-400 px-2 py-0.5 rounded text-[10px] border border-blue-500/20">{st.username}</span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.isPaid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
-                        {st.isPaid ? 'PAID' : 'UNPAID current month'}
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.isPaid || st.is_paid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
+                        {st.isPaid || st.is_paid ? 'PAID' : 'UNPAID current month'}
                       </span>
                     </div>
                     <div className="text-[9px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1 mt-1 font-mono">
