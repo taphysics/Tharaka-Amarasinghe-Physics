@@ -392,7 +392,7 @@ export default function App() {
     setForgotNIC('');
   };
 
-  // NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
+// NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
   const checkNICExists = async (nicValue: string) => {
     if (!nicValue) return false;
     
@@ -400,7 +400,7 @@ export default function App() {
       .from('students')
       .select('nic')
       .eq('nic', nicValue)
-      .single(); 
+      .maybeSingle(); // .single() වෙනුවට .maybeSingle() යොදා ඇත
 
     if (data) {
       alert("මෙම NIC අංකයෙන් දැනටමත් ගිණුමක් ලියාපදිංචි කර ඇත!");
@@ -419,7 +419,6 @@ export default function App() {
     if (isDuplicate) {
       return; // Duplicate නම් මෙතැනින් නවතිනවා. පහළ කේතය වැඩ කරන්නේ නෑ.
     }
-    
     // Validate fields strictly
     const errors: { [key: string]: boolean } = {};
     let firstInvalidRef: React.RefObject<HTMLDivElement | null> | null = null;
@@ -493,7 +492,7 @@ export default function App() {
       mobile: regMobile,
       is_paid: false,
       is_approved: false,
-      activeMonths: [],
+      active_months: [], // මෙතැන activeMonths යන්න active_months ලෙස නිවැරදි කර ඇත
       joined_at: new Date().toISOString()
     }]).then(({ error }) => {
       if (error) {
@@ -501,7 +500,6 @@ export default function App() {
         alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
       }
     });
-
     // Reset fields
     setRegFirst('');
     setRegLast('');
