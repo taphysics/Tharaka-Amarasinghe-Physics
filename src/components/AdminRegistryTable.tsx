@@ -166,10 +166,12 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     <div className="space-y-6">
       {/* Search Bar */}
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm">
-        <label className="text-xs text-slate-400 font-bold mb-2 block flex items-center gap-2">
+        <label htmlFor="searchStudent" className="text-xs text-slate-400 font-bold mb-2 block flex items-center gap-2">
           <Search size={14}/> NIC හෝ WhatsApp අංකයෙන් සොයන්න
         </label>
         <input
+          id="searchStudent"
+          name="searchStudent"
           type="text"
           placeholder="e.g. 200...V or 071..."
           className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition"
@@ -199,7 +201,15 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
             {pendingStudents.map(st => (
               <div key={st.id} className="bg-slate-950/40 p-3 flex gap-3 border border-slate-800/50 rounded-xl">
-                 <input type="checkbox" checked={selectedPending.includes(st.id)} onChange={() => toggleSelection(st.id, true)} className="mt-1" />
+                 <input 
+                   type="checkbox" 
+                   id={`pending-${st.id}`} 
+                   name={`pending-${st.id}`} 
+                   aria-label={`Select pending student ${st.name}`}
+                   checked={selectedPending.includes(st.id)} 
+                   onChange={() => toggleSelection(st.id, true)} 
+                   className="mt-1" 
+                 />
                  <div className="flex-1 space-y-1">
                     <div className="font-bold text-amber-100 text-sm">{st.name}</div>
                     <div className="text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
@@ -236,7 +246,15 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
             {activeStudents.map(st => (
               <div key={st.id} className="bg-slate-900/60 p-3 flex gap-3 border border-slate-800/80 rounded-xl group hover:border-emerald-500/30 transition">
-                 <input type="checkbox" checked={selectedActive.includes(st.id)} onChange={() => toggleSelection(st.id, false)} className="mt-1" />
+                 <input 
+                   type="checkbox" 
+                   id={`active-${st.id}`} 
+                   name={`active-${st.id}`} 
+                   aria-label={`Select active student ${st.name}`}
+                   checked={selectedActive.includes(st.id)} 
+                   onChange={() => toggleSelection(st.id, false)} 
+                   className="mt-1" 
+                 />
                  <div className="flex-1 space-y-1">
                     <div className="flex justify-between items-start">
                       <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
@@ -281,7 +299,23 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                    <div className="font-bold text-slate-200 text-sm">{st.name} <span className="text-rose-400 text-[10px] ml-2 font-mono">[{st.username}]</span></div>
                    <div className="text-[10px] text-slate-400 mt-1">Class: {st.class_types?.join(', ')} | WA: {st.whatsapp}</div>
                  </div>
-                 <button onClick={() => setReminderUserIds(prev => prev.includes(st.username) ? prev : [...prev.split(',').map(s => s.trim()).filter(Boolean), st.username].join(', '))} className="text-[10px] bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-2 py-1 rounded-md cursor-pointer hover:bg-indigo-600 hover:text-white transition">Select</button>
+                 <div className="flex gap-2">
+                   {/* සිසුවාගේ Username & Password පමණක් WhatsApp යවන නව බටන් එක */}
+                   <button 
+                     onClick={() => {
+                       const message = `*TA Physics Online Hub*\n\nYour Login Credentials:\nUsername: *${st.username}*\nPassword: *${st.password}*`;
+                       // ලංකාවේ අංක වල මුලට 94 එකතු කිරීම (0 හැර)
+                       const formattedNumber = st.whatsapp.startsWith('0') ? `94${st.whatsapp.slice(1)}` : st.whatsapp;
+                       const cleanNumber = formattedNumber.replace(/[^0-9]/g, '');
+                       window.open(`https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`, '_blank');
+                     }} 
+                     className="text-[10px] bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-md cursor-pointer hover:bg-emerald-600 hover:text-white transition flex items-center gap-1"
+                   >
+                     Send Creds 🔑
+                   </button>
+
+                   <button onClick={() => setReminderUserIds(prev => prev.includes(st.username) ? prev : [...prev.split(',').map(s => s.trim()).filter(Boolean), st.username].join(', '))} className="text-[10px] bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-2 py-1 rounded-md cursor-pointer hover:bg-indigo-600 hover:text-white transition">Select</button>
+                 </div>
                </div>
              ))}
           </div>
@@ -290,6 +324,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         <div className="flex-1 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5"><Send size={14} className="text-blue-400" /> Send WhatsApp Reminder</h3>
           <input
+            id="reminderUserIds"
+            name="reminderUserIds"
+            aria-label="User IDs"
             type="text"
             placeholder="User IDs (e.g. NUAM2507, SAMA1234)"
             value={reminderUserIds}
@@ -297,6 +334,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
           />
           <input
+            id="reminderFees"
+            name="reminderFees"
+            aria-label="Class Fee"
             type="text"
             placeholder="Class Fee (e.g. Physics 2026: 2500, Chemistry: 2000)"
             value={reminderFees}
@@ -304,6 +344,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
           />
           <input
+            id="reminderTotal"
+            name="reminderTotal"
+            aria-label="Total Amount"
             type="number"
             placeholder="Total Amount (e.g. 4500)"
             value={reminderTotal}
@@ -311,6 +354,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
           />
           <select
+            id="reminderMonth"
+            name="reminderMonth"
+            aria-label="Reminder Month"
             value={reminderMonth}
             onChange={(e) => setReminderMonth(e.target.value)}
             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 transition"
