@@ -38,6 +38,7 @@ export interface Student {
   activeMonths: string[]; // e.g. ["2026-05", "2026-06"]
   payments?: MonthlyPayment[];
   joinedAt: string;
+  freeMonths?: string[];
 }
 
 export interface CalendarEvent {

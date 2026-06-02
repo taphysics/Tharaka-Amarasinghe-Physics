@@ -217,7 +217,7 @@ export default function App() {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'live_classes'>('registry');
+  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'live_classes' | 'resets' | 'global_configs'>('registry');
 
   // Manual Profile Code generator inside cockpit
   const [manFirst, setManFirst] = useState('');
@@ -310,7 +310,7 @@ export default function App() {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes") => {
+  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes" | "resets" | "global_configs") => {
     setActiveAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1587,10 +1587,10 @@ export default function App() {
               <div className="lg:col-span-3 bg-slate-800/40 border border-slate-700/50 p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px]">
                 
                 {/* Status Sticker */}
-                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
-                  {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
-                  {!isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
-                  {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
+                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
+                  {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
+                  {!isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
+                  {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
                 </div>
 
                 <div 
@@ -1651,7 +1651,7 @@ export default function App() {
                 )}
 
                 {/* Unpaid Warning block banner */}
-                {!isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) && (
+                {!isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && (
                   <div className="bg-gradient-to-r from-amber-950/25 to-slate-900 border border-amber-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-pulse">
                     <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5">
                       <AlertTriangle size={16} />
@@ -1667,8 +1667,8 @@ export default function App() {
 
                 {/* Status indicator strip blocks */}
                 <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    Access: {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    Access: {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
                   </span>
                   <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
                     ID: {currentStudent.username}
@@ -1689,8 +1689,8 @@ export default function App() {
                     <div className="absolute inset-0 bg-gradient-to-b from-rose-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
                     {/* Visual Sticker Badges */}
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Live Open' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Live Open' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-450 text-3xl group-hover:scale-110 group-hover:rotate-6 transition duration-300 my-4 shadow-inner z-10">
@@ -1711,8 +1711,8 @@ export default function App() {
                   >
                     <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Notes Open' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Notes Open' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-450 text-3xl group-hover:scale-110 group-hover:-translate-y-1 transition duration-300 my-4 shadow-inner z-10">
@@ -1733,8 +1733,8 @@ export default function App() {
                   >
                     <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                     
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.active_months || currentStudent.activeMonths) ? 'Recs Available' : 'Locked'}
+                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
+                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Recs Available' : 'Locked'}
                     </span>
                     
                     <div className="relative w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-450 text-3xl group-hover:scale-110 group-hover:-rotate-3 transition duration-300 my-4 shadow-inner z-10">
@@ -1832,7 +1832,7 @@ export default function App() {
                       </div>
 
                       <div className="space-y-3.5 pt-4">
-                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map(s => s.trim()).includes(currentStudent.username.toLowerCase()))).map((not) => (
+                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map((s: any) => s.trim()).includes(currentStudent.username.toLowerCase()))).map((not) => (
                           <div key={not.id} className={`p-4 bg-gradient-to-r ${not.type === 'private' ? 'from-red-950/40 to-slate-900/60 border-l-red-500' : 'from-blue-950/40 to-slate-900/60 border-l-blue-500'} border border-slate-800 border-l-4 rounded-r-2xl space-y-1.5 animate-fade-in shadow-md`}>
                             <div className="flex justify-between items-center gap-4">
                               <h4 className={`font-extrabold text-sm flex items-center gap-1.5 ${not.type === 'private' ? 'text-red-400' : 'text-blue-400'}`}>
@@ -1846,7 +1846,7 @@ export default function App() {
                           </div>
                         ))}
 
-                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map(s => s.trim()).includes(currentStudent.username.toLowerCase()))).length === 0 && (
+                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map((s: any) => s.trim()).includes(currentStudent.username.toLowerCase()))).length === 0 && (
                           <p className="text-xs text-slate-500 italic font-sans py-2">ඔබගේ ගිණුමට අදාළ විශේෂ පෞද්ගලික හෝ පොදු ඇලර්ට් නිවේදන කිසිවක් දැනට නොමැත.</p>
                         )}
                       </div>
@@ -1869,9 +1869,9 @@ export default function App() {
                       {(() => {
                         const now = new Date();
                         const validLives = scheduledLives.filter(sl => {
-                           if (sl.visibility === 'free' && (!currentStudent.free_months || currentStudent.free_months.length === 0)) return false;
+                           if (sl.visibility === 'free' && (!currentStudent.freeMonths || currentStudent.freeMonths.length === 0)) return false;
                            // Simplified classes check
-                           const stClasses = currentStudent.class_types || currentStudent.classTypes || [];
+                           const stClasses = currentStudent.classTypes || currentStudent.classTypes || [];
                            const hasClass = sl.target_classes?.some((c: string) => stClasses.includes(c));
                            if (!hasClass) return false;
                            
@@ -1985,7 +1985,7 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        {resourceLinks.filter(r => r.type === 'tute' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.active_months?.includes(r.target_month) || currentStudent.free_months?.includes(r.target_month);
+                         const hasAccess = currentStudent.activeMonths?.includes(r.target_month) || currentStudent.freeMonths?.includes(r.target_month);
                          return (
                            <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-amber-500/20 hover:border-amber-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
                              <div>
@@ -2031,7 +2031,7 @@ export default function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        {resourceLinks.filter(r => r.type === 'recording' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.active_months?.includes(r.target_month) || currentStudent.free_months?.includes(r.target_month);
+                         const hasAccess = currentStudent.activeMonths?.includes(r.target_month) || currentStudent.freeMonths?.includes(r.target_month);
                          return (
                            <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-purple-500/20 hover:border-purple-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
                              <div>
