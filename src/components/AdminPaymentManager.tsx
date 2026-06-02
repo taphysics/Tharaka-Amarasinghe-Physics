@@ -1,441 +1,286 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { Search, Calendar, MessageSquare, Plus, Trash2, CheckCircle, AlertCircle, ShieldAlert, BookOpen } from 'lucide-react';
+import { Bell, MessageSquare, Check, X, AlertTriangle } from 'lucide-react';
 
-interface Student {
-  id: string;
-  name: string;
-  username: string;
-  nic?: string;
-  whatsapp?: string;
-  is_approved: boolean;
-  isApproved?: boolean;
-  registered_classes?: string[];
-  active_months?: string[];
-  free_months?: string[];
-}
+export default function AdminPaymentManager() {
+  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<any[]>([]);
+  const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+  const [paymentRecords, setPaymentRecords] = useState<any>({}); // Sync records by studentId_month
+  const [activePopup, setActivePopup] = useState<{ studentId: string; monthId: string } | null>(null);
+  
+  const popupRef = useRef<HTMLDivElement>(null);
+  const currentYear = "2026";
 
-interface CalendarEvent {
-  class_name: string;
-  month_key: string; // YYYY-MM
-  last_class_date: string; // YYYY-MM-DD
-}
-
-export default function AdminPaymentManager({ students, setStudents }: { students: Student[], setStudents: any }) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [globalClasses, setGlobalClasses] = useState<string[]>([]);
-  const [classFees, setClassFees] = useState<{ [key: string]: number }>({});
-  const [selectedYear, setSelectedYear] = useState<string>('2026');
-  const [calendarPlanner, setCalendarPlanner] = useState<CalendarEvent[]>([]);
-  const [newClassInput, setNewClassInput] = useState<{ [studentId: string]: string }>({});
-
-  const monthsArray = [
-    { id: '01', name: 'Jan', si: 'ජනවාරි' },
-    { id: '02', name: 'Feb', si: 'පෙබරවාරි' },
-    { id: '03', name: 'Mar', si: 'මාර්තු' },
-    { id: '04', name: 'Apr', si: 'අප්‍රේල්' },
-    { id: '05', name: 'May', si: 'මැයි' },
-    { id: '06', name: 'Jun', si: 'ජූනි' },
-    { id: '07', name: 'Jul', si: 'ජූලි' },
-    { id: '08', name: 'Aug', si: 'අගෝස්තු' },
-    { id: '09', name: 'Sep', si: 'සැප්තැම්බර්' },
-    { id: '10', name: 'Oct', si: 'ඔක්තෝබර්' },
-    { id: '11', name: 'Nov', si: 'නොවැම්බර්' },
-    { id: '12', name: 'Dec', si: 'දෙසැම්බර්' }
+  const months = [
+    { id: '01', name: 'ජනවාරි' }, { id: '02', name: 'පෙබරවාරි' }, { id: '03', name: 'මාර්තු' },
+    { id: '04', name: 'අප්‍රේල්' }, { id: '05', name: 'මැයි' }, { id: '06', name: 'ජූනි' },
+    { id: '07', name: 'ජූලි' }, { id: '08', name: 'අගෝස්තු' }, { id: '09', name: 'සැප්තැම්බර්' },
+    { id: '10', name: 'ඔක්තෝබර්' }, { id: '11', name: 'නොවැම්බර්' }, { id: '12', name: 'දෙසැම්බර්' }
   ];
 
-  // 1. Global Configuration සහ Class Calendar Planner දත්ත ලබා ගැනීම
   useEffect(() => {
-    const fetchInitialData = async () => {
-      // Rates ලබාගැනීම
-      const { data: configData, error: configError } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
-      if (!configError && configData?.class_rates_text) {
-        const feesMap: { [key: string]: number } = {};
-        const classes = configData.class_rates_text.split(',').map((item: string) => {
-          const parts = item.split(':');
-          const className = parts[0].trim();
-          const fee = parts[1] ? parseInt(parts[1].trim()) : 0;
-          feesMap[className] = fee;
-          return className;
-        });
-        setGlobalClasses(classes);
-        setClassFees(feesMap);
-      }
-
-      // Class Calendar Planner දත්ත ලබාගැනීම
-      const { data: calendarData, error: calendarError } = await supabase.from('class_calendar').select('*');
-      if (!calendarError && calendarData) {
-        setCalendarPlanner(calendarData);
-      }
-    };
-
     fetchInitialData();
 
-    // රියල් ටයිම් අප්ඩේට් සවන්දීම
-    const configSub = supabase.channel('public:site_config').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'site_config' }, () => { fetchInitialData(); }).subscribe();
-    const calendarSub = supabase.channel('public:class_calendar').on('postgres_changes', { event: '*', schema: 'public', table: 'class_calendar' }, () => { fetchInitialData(); }).subscribe();
-
-    return () => {
-      supabase.removeChannel(configSub);
-      supabase.removeChannel(calendarSub);
-    };
+    // Click outside to close implementation
+    function handleClickOutside(event: MouseEvent) {
+      if (popupRef.current && !popupRef.current.contains(event.target as Node)) {
+        setActivePopup(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // සෙවුම් පෙරහන (Search Filter)
-  const activeStudents = students.filter(s => {
-    const isApproved = s.is_approved || s.isApproved;
-    if (!isApproved) return false;
-    return (
-      s.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.nic?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.username?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  });
+  const fetchInitialData = async () => {
+    setLoading(true);
+    try {
+      // 1. Fetch Students
+      const { data: studentData } = await supabase
+        .from('students')
+        .select('id, name, nic, username, class_types, whatsapp');
+      
+      // 2. Fetch Config and Parse JSON Safely
+      const { data: configData } = await supabase
+        .from('site_config')
+        .select('class_rates_text')
+        .eq('id', 1)
+        .single();
 
-  // 2. ශිෂ්‍යයෙකුගේ පන්ති එකතු කිරීම සහ ඉවත් කිරීම (Add / Remove Classes)
-  const handleAddClass = async (studentId: string) => {
-    const classToAdd = newClassInput[studentId];
-    if (!classToAdd) return;
+      // 3. Fetch all 2026 payment records to map state
+      const { data: payData } = await supabase
+        .from('payments')
+        .select('*');
 
-    const student = students.find(s => s.id === studentId);
-    if (!student) return;
-
-    const currentClasses = student.registered_classes || [];
-    if (currentClasses.includes(classToAdd)) {
-      alert('මෙම පන්තිය දැනටමත් ඇතුළත් කර ඇත.');
-      return;
-    }
-
-    const updatedClasses = [...currentClasses, classToAdd];
-
-    const { error } = await supabase.from('students').update({ registered_classes: updatedClasses }).eq('id', studentId);
-    if (!error) {
-      setStudents((prev: any) => prev.map((s: any) => s.id === studentId ? { ...s, registered_classes: updatedClasses } : s));
-      setNewClassInput(prev => ({ ...prev, [studentId]: '' }));
-    } else {
-      alert('පන්තිය ඇතුළත් කිරීම අසාර්ථකයි: ' + error.message);
-    }
-  };
-
-  const handleRemoveClass = async (studentId: string, className: string) => {
-    if (!window.confirm(`මෙම සිසුවා ${className} පන්තියෙන් ඉවත් කිරීමට අවශ්‍යද?`)) return;
-
-    const student = students.find(s => s.id === studentId);
-    if (!student) return;
-
-    const updatedClasses = (student.registered_classes || []).filter(c => c !== className);
-
-    const { error } = await supabase.from('students').update({ registered_classes: updatedClasses }).eq('id', studentId);
-    if (!error) {
-      setStudents((prev: any) => prev.map((s: any) => s.id === studentId ? { ...s, registered_classes: updatedClasses } : s));
-    } else {
-      alert('පන්තිය ඉවත් කිරීම අසාර්ථකයි: ' + error.message);
-    }
-  };
-
-  // 3. පේමන්ට් ස්ටේටස් වෙනස් කිරීම
-  const handleStatusChange = async (studentId: string, className: string, monthKey: string, newStatus: string) => {
-    const student = students.find(s => s.id === studentId);
-    if (!student) return;
-
-    let currentPaid = [...(student.active_months || [])];
-    let currentFree = [...(student.free_months || [])];
-    const paymentKey = `${className}:${monthKey}`;
-
-    currentPaid = currentPaid.filter(m => m !== paymentKey);
-    currentFree = currentFree.filter(m => m !== paymentKey);
-
-    if (newStatus === 'paid') currentPaid.push(paymentKey);
-    if (newStatus === 'free') currentFree.push(paymentKey);
-
-    const { error } = await supabase.from('students').update({ active_months: currentPaid, free_months: currentFree }).eq('id', studentId);
-
-    if (!error) {
-      setStudents((prev: any) => prev.map((s: any) => s.id === studentId ? { ...s, active_months: currentPaid, free_months: currentFree } : s));
-    } else {
-      alert("දත්ත යාවත්කාලීන කිරීම අසාර්ථකයි: " + error.message);
-    }
-  };
-
-  // 4. දින දර්ශනය අනුව වත්මන් හෝ ඉදිරි මාසයේ බිල්පත් තත්ත්වය ස්වයංක්‍රීයව හඳුනාගැනීම
-  const getAutomatedBillingDetails = (studentClasses: string[]) => {
-    const today = new Date();
-    const currentYearNum = today.getFullYear();
-    const currentMonthNum = today.getMonth() + 1; // 1 - 12
-    const currentMonthKey = `${currentYearNum}-${String(currentMonthNum).padStart(2, '0')}`;
-    
-    // ඊළඟ මාසය ගණනය කිරීම
-    const nextMonthObj = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-    const nextMonthKey = `${nextMonthObj.getFullYear()}-${String(nextMonthObj.getMonth() + 1).padStart(2, '0')}`;
-
-    let isAdvanceBilling = false;
-
-    // ශිෂ්‍යයා ලියාපදිංචි වී ඇති පන්තිවලින් අවසන් පන්ති දිනය පරීක්ෂා කිරීම
-    studentClasses.forEach(className => {
-      const planner = calendarPlanner.find(p => p.class_name === className && p.month_key === currentMonthKey);
-      if (planner?.last_class_date) {
-        const lastClassDate = new Date(planner.last_class_date);
-        // අද දිනය අවසන් පන්ති දිනය හෝ ඊට පසුව නම් ඉදිරි මාසයේ බිල සක්‍රීය වේ
-        if (today >= lastClassDate) {
-          isAdvanceBilling = true;
+      if (configData?.class_rates_text) {
+        try {
+          // JSON එකක් නම් parse කරයි, නැතහොත් කොමා වලින් වෙන් කර ඇත්නම් ඒ අනුව සකසයි
+          if (configData.class_rates_text.trim().startsWith('{') || configData.class_rates_text.trim().startsWith('[')) {
+            const parsed = JSON.parse(configData.class_rates_text);
+            const classes = parsed.classes?.map((c: any) => c.name) || Object.keys(parsed);
+            setAvailableClasses(classes);
+          } else {
+            const classes = configData.class_rates_text.split(',').map((item: string) => item.split(':')[0].trim());
+            setAvailableClasses(classes);
+          }
+        } catch (e) {
+          console.error("Error parsing class_rates_text JSON:", e);
         }
       }
-    });
 
-    const targetMonthKey = isAdvanceBilling ? nextMonthKey : currentMonthKey;
-    const targetMonthText = monthsArray.find(m => `${currentYearNum}-${m.id}` === targetMonthKey || `${nextMonthObj.getFullYear()}-${m.id}` === targetMonthKey)?.si || '';
-    const targetYear = targetMonthKey.split('-')[0];
+      if (studentData) setStudents(studentData);
+      
+      // Map payment rows into a fast lookup dictionary: mapping `studentId_month`
+      const lookup: any = {};
+      payData?.forEach(row => {
+        lookup[`${row.student_id}_${row.month}`] = row;
+      });
+      setPaymentRecords(lookup);
 
-    return {
-      targetMonthKey,
-      targetMonthText,
-      targetYear,
-      isAdvanceBilling
+    } catch (error) {
+      console.error(error);
+    }
+    setLoading(false);
+  };
+
+  // Update payment status dynamically
+  const updatePaymentStatus = async (studentId: string, monthId: string, newStatus: 'paid' | 'free' | 'unpaid') => {
+    const monthKey = `${currentYear}-${monthId}`;
+    const lookupKey = `${studentId}_${monthKey}`;
+    const currentRecord = paymentRecords[lookupKey] || {};
+
+    const updatedRow = {
+      student_id: studentId,
+      month: monthKey,
+      status: newStatus,
+      reminder_sent: currentRecord.reminder_sent || false,
+      whatsapp_count: currentRecord.whatsapp_count || 0
     };
+
+    const { error } = await supabase
+      .from('payments')
+      .upsert(updatedRow, { onConflict: 'student_id,month' });
+
+    if (!error) {
+      setPaymentRecords({ ...paymentRecords, [lookupKey]: updatedRow });
+    }
   };
 
-  // 5. ඒකාබද්ධ WhatsApp පණිවිඩයක් ජෙනරේට් කර යැවීම (Consolidated Bill)
-  const triggerWhatsAppBill = (student: Student) => {
-    const phone = student.whatsapp || '';
-    if (!phone) {
-      alert('මෙම සිසුවාට WhatsApp අංකයක් ඇතුළත් කර නැත.');
-      return;
+  // Push Payment Reminder
+  const pushReminder = async (studentId: string, monthId: string) => {
+    const monthKey = `${currentYear}-${monthId}`;
+    const lookupKey = `${studentId}_${monthKey}`;
+    const currentRecord = paymentRecords[lookupKey] || { status: 'unpaid', whatsapp_count: 0 };
+
+    const updatedRow = {
+      ...currentRecord,
+      student_id: studentId,
+      month: monthKey,
+      reminder_sent: true
+    };
+
+    const { error } = await supabase
+      .from('payments')
+      .upsert(updatedRow, { onConflict: 'student_id,month' });
+
+    if (!error) {
+      setPaymentRecords({ ...paymentRecords, [lookupKey]: updatedRow });
     }
-
-    const myClasses = student.registered_classes || [];
-    if (myClasses.length === 0) {
-      alert('මෙම සිසුවා තවමත් කිසිදු පන්තියකට ලියාපදිංචි වී නැත.');
-      return;
-    }
-
-    const { targetMonthText, targetYear, isAdvanceBilling } = getAutomatedBillingDetails(myClasses);
-
-    let totalBillAmount = 0;
-    let classBreakdownText = '';
-
-    myClasses.forEach(cName => {
-      const fee = classFees[cName] || 0;
-      totalBillAmount += fee;
-      classBreakdownText += `▪️ *${cName}:* ਰੁ. ${fee}/=\n`;
-    });
-
-    // පණිවිඩයේ වර්ගය ස්වයංක්‍රීයව වෙනස් වීම
-    const headerTitle = isAdvanceBilling 
-      ? `*🔔 ඉදිරි මාසය සඳහා පන්ති ගාස්තු කාරුණික මතක් කිරීමයි (Advance Bill)*` 
-      : `*⚠️ වත්මන් මාසයේ පන්ති ගාස්තු හිඟ මුදල් පිළිබඳ නිවේදනයයි (Overdue Bill)*`;
-
-    const noteText = isAdvanceBilling
-      ? `වත්මන් මාසයේ පන්ති කටයුතු අවසන් බැවින්, ඉදිරි මාසයේ පන්ති වීඩියෝ, ටියුට් සහ ප්‍රශ්න පත්‍ර කිසිදු බාධාවකින් තොරව ලබාගැනීමට පහත ගාස්තු ගෙවා පන්ති කාඩ්පත යාවත්කාලීන කරගන්න.`
-      : `ඔබ මෙතෙක් වත්මන් මාසයට අදාළ පන්ති ගාස්තු ගෙවා නොමැති නම්, කරුණාකර ඔබගේ ගෙවීම් කටයුතු කඩිනමින් සිදුකර පන්ති ප්‍රවේශය අඛණ්ඩව ලබාගන්න.`;
-
-    const message = `${headerTitle}\n\n` +
-      `👤 *සිසුවාගේ නම:* ${student.name}\n` +
-      `🆔 *NIC අංකය:* ${student.nic || 'ඇතුළත් කර නැත'}\n` +
-      `🔑 *යූසර්නේම් (Username):* @${student.username}\n` +
-      `📅 *අදාළ කාලසීමාව:* ${targetYear} ${targetMonthText}\n\n` +
-      `*💳 ලියාපදිංචි පන්ති සහ බිල්පත් විස්තර:*\n${classBreakdownText}\n` +
-      `💰 *ගෙවිය යුතු මුළු මුදල (Grand Total):* රු. ${totalBillAmount}/=\n\n` +
-      `${noteText}\n\nස්තූතියි!`;
-
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
   };
+
+  // Increment WhatsApp Pushed Counter
+  const pushWhatsAppMessage = async (studentId: string, monthId: string, whatsappNum: string) => {
+    const monthKey = `${currentYear}-${monthId}`;
+    const lookupKey = `${studentId}_${monthKey}`;
+    const currentRecord = paymentRecords[lookupKey] || { status: 'unpaid', reminder_sent: false, whatsapp_count: 0 };
+
+    const updatedRow = {
+      ...currentRecord,
+      student_id: studentId,
+      month: monthKey,
+      whatsapp_count: (currentRecord.whatsapp_count || 0) + 1
+    };
+
+    // Open WhatsApp API Link with Invoice parameters
+    const invoiceLink = `${window.location.origin}/invoice?s=${studentId}&m=${monthKey}`;
+    const textMessage = `හෙලෝ, ඔබගේ ${currentYear} ${months.find(m => m.id === monthId)?.name} මාසය සඳහා පන්ති ගාස්තු ගෙවීමට පහත ලින්ක් එක භාවිතා කරන්න: ${invoiceLink}`;
+    window.open(`https://wa.me/${whatsappNum}?text=${encodeURIComponent(textMessage)}`, '_blank');
+
+    const { error } = await supabase
+      .from('payments')
+      .upsert(updatedRow, { onConflict: 'student_id,month' });
+
+    if (!error) {
+      setPaymentRecords({ ...paymentRecords, [lookupKey]: updatedRow });
+    }
+  };
+
+  if (loading) {
+    return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-xs font-mono text-slate-400">දත්ත පද්ධති යාවත්කාලීන වෙමින් පවතී...</div>;
+  }
 
   return (
-    <div className="space-y-8 text-slate-100">
-      {/* 🔍 සෙවුම් සහ වර්ෂ තේරීමේ තීරුව */}
-      <div className="bg-slate-900/80 p-5 rounded-3xl border border-slate-800 flex flex-col md:flex-row gap-4 items-center justify-between shadow-2xl backdrop-blur-md">
-        <div className="relative w-full md:w-96">
-          <Search className="absolute left-3 top-3 text-slate-500" size={18} />
-          <input
-            type="text"
-            placeholder="නම, යූසර්නේම් හෝ NIC මගින් සිසුන් සොයන්න..."
-            className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-10 pr-4 py-2.5 text-white text-xs focus:outline-none focus:border-blue-500 transition"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8 relative">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-blue-400">මාසික පන්ති කාඩ්පත් සහ ගෙවීම් පාලනය ({currentYear})</h1>
+          <p className="text-xs text-slate-500">සිසුන්ගේ මාසික දත්ත සහ පන්ති ගාස්තු කළමනාකරණය මෙතැනින් සිදු කරන්න.</p>
         </div>
-        <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
-          <Calendar size={16} className="text-blue-500" />
-          <span className="text-xs text-slate-400 font-medium">පෙන්වන වර්ෂය:</span>
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(e.target.value)}
-            className="bg-transparent border-none text-white text-xs font-bold focus:outline-none font-mono cursor-pointer"
-          >
-            <option value="2025" className="bg-slate-950">2025</option>
-            <option value="2026" className="bg-slate-950">2026</option>
-            <option value="2027" className="bg-slate-950">2027</option>
-          </select>
-        </div>
-      </div>
 
-      {/* 📊 ප්‍රධාන මාස්ටර් පැනලය */}
-      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden backdrop-blur-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-xs">
-            <thead>
-              <tr className="bg-slate-950 border-b border-slate-800 text-slate-300 font-bold uppercase tracking-wider">
-                <th className="p-4 text-left w-[25%]">සිසුවා සහ ලියාපදිංචි පන්ති</th>
-                <th className="p-4 text-left w-[75%]">මාසික පන්ති කාඩ්පත් සහ ගෙවීම් පාලනය ({selectedYear})</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {activeStudents.map(st => {
-                const myClasses = st.registered_classes || [];
-                const paidMonths = st.active_months || [];
-                const freeMonths = st.free_months || [];
-                const billingInfo = getAutomatedBillingDetails(myClasses);
+        <div className="space-y-4">
+          {students.map((student) => (
+            <div key={student.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 grid grid-cols-1 md:grid-cols-3 gap-6 items-center relative">
+              
+              {/* 👤 Student Summary */}
+              <div className="space-y-2">
+                <div>
+                  <h3 className="font-bold text-white text-sm">{student.name}</h3>
+                  <div className="flex gap-2 mt-1">
+                    <span className="text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-md font-mono">@{student.username}</span>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono">NIC: {student.nic || 'N/A'}</span>
+                  </div>
+                </div>
 
-                return (
-                  <tr key={st.id} className="hover:bg-slate-900/30 transition duration-150">
-                    {/* 👤 සිසුවාගේ විස්තර සහ පන්ති කළමනාකරණය */}
-                    <td className="p-4 space-y-3 bg-slate-950/20 valign-top">
-                      <div>
-                        <div className="font-bold text-white text-sm">{st.name}</div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          <span className="bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-lg text-[10px] border border-blue-500/20 font-mono">@{st.username}</span>
-                          <span className="text-slate-500 text-[10px] bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">NIC: {st.nic || 'N/A'}</span>
-                        </div>
-                      </div>
+                {/* Registered Classes Badges */}
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-500 block font-bold">ලියාපදිංචි පන්ති වර්ග:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {student.class_types && student.class_types.length > 0 ? (
+                      student.class_types.map((c: string, idx: number) => (
+                        <span key={idx} className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                          {c}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-amber-500 flex items-center gap-1">
+                        <AlertTriangle size={12} /> පන්ති කිසිවක් ඇතුළත් කර නැත.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
 
-                      {/* පන්ති එකතු කිරීම සහ ඉවත් කිරීමේ UI කොටස */}
-                      <div className="border-t border-slate-800/80 pt-2 space-y-2">
-                        <span className="text-[10px] text-slate-400 font-bold block">ලියාපදිංචි පන්ති වර්ග:</span>
-                        {myClasses.length === 0 ? (
-                          <div className="text-[10px] text-amber-500 italic flex items-center gap-1">
-                            <AlertCircle size={12} /> පන්ති කිසිවක් ඇතුළත් කර නැත.
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {myClasses.map(c => (
-                              <span key={c} className="bg-slate-950 text-slate-300 pl-2 pr-1 py-1 rounded-xl border border-slate-800 flex items-center gap-1 text-[10px]">
-                                {c}
-                                <button 
-                                  onClick={() => handleRemoveClass(st.id, c)}
-                                  className="text-red-400 hover:text-red-300 p-0.5 rounded transition"
-                                >
-                                  <Trash2 size={10} />
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        )}
+              {/* 📅 Months Grid */}
+              <div className="md:col-span-2 space-y-2">
+                <span className="text-[10px] text-slate-500 block font-bold">මාසික ගෙවීම් තත්ත්වය (ක්ලික් කරන්න):</span>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                  {months.map((m) => {
+                    const mKey = `${student.id}_${currentYear}-${m.id}`;
+                    const record = paymentRecords[mKey];
+                    const status = record?.status || 'unpaid';
+                    
+                    let bgClass = "bg-slate-950 border-slate-800 text-slate-400";
+                    if (status === 'paid') bgClass = "bg-emerald-600/20 border-emerald-500 text-emerald-400 font-bold";
+                    if (status === 'free') bgClass = "bg-blue-600/20 border-blue-500 text-blue-400 font-bold";
+                    
+                    const isSelected = activePopup?.studentId === student.id && activePopup?.monthId === m.id;
 
-                        {/* අලුතින් පන්ති ඇතුළත් කිරීමේ Dropdown එක */}
-                        <div className="flex gap-1.5 mt-2">
-                          <select
-                            value={newClassInput[st.id] || ''}
-                            onChange={(e) => setNewClassInput(prev => ({ ...prev, [st.id]: e.target.value }))}
-                            className="bg-slate-950 border border-slate-800 text-[10px] rounded-xl px-2 py-1 text-slate-300 focus:outline-none w-full"
-                          >
-                            <option value="">-- පන්තියක් තෝරන්න --</option>
-                            {globalClasses.map(gc => (
-                              <option key={gc} value={gc}>{gc}</option>
-                            ))}
-                          </select>
-                          <button
-                            onClick={() => handleAddClass(st.id)}
-                            className="bg-blue-600 hover:bg-blue-500 text-white p-1 rounded-xl transition flex items-center justify-center shrink-0"
-                            title="පන්තිය ඇතුළත් කරන්න"
-                          >
-                            <Plus size={14} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* ස්වයංක්‍රීය WhatsApp බිල්පත් බටනය */}
-                      <div className="pt-1">
+                    return (
+                      <div key={m.id} className="relative">
                         <button
-                          onClick={() => triggerWhatsAppBill(st)}
-                          className="w-full bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/30 text-emerald-400 hover:text-white rounded-xl py-1.5 px-3 font-bold transition flex items-center justify-center gap-1.5 text-[10px]"
+                          onClick={() => setActivePopup({ studentId: student.id, monthId: m.id })}
+                          className={`w-full text-center py-2 text-[11px] rounded-xl border transition-all cursor-pointer hover:scale-105 ${bgClass} ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
                         >
-                          <MessageSquare size={12} />
-                          WhatsApp බිල්පත (Auto Month)
+                          {m.name}
                         </button>
-                        <div className="text-[9px] text-slate-500 mt-1 text-center font-mono">
-                          Next Action: {billingInfo.isAdvanceBilling ? `Advance (${billingInfo.targetMonthText})` : `Overdue (${billingInfo.targetMonthText})`}
-                        </div>
-                      </div>
-                    </td>
 
-                    {/* 🎫 ලොග් කාඩ්පත (සිසුවාගේ පන්ති අනුව පමණක් කාඩ්පත් නිර්මාණය වේ) */}
-                    <td className="p-4 space-y-3 bg-slate-900/10">
-                      {myClasses.length === 0 ? (
-                        <div className="text-slate-600 italic text-[11px] py-4 text-center bg-slate-950/20 rounded-2xl border border-dashed border-slate-800">
-                          කාඩ්පත් දර්ශනය වීමට සිසුවා පන්තියකට ලියාපදිංචි කරන්න.
-                        </div>
-                      ) : (
-                        myClasses.map((studentClass: string) => {
-                          const today = new Date();
-                          const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+                        {/* 🔘 Local Action Popup View */}
+                        {isSelected && (
+                          <div 
+                            ref={popupRef}
+                            className="absolute top-11 left-1/2 -translate-x-1/2 md:translate-x-0 md:left-auto md:right-0 bg-slate-900 border border-slate-700 p-4 rounded-2xl shadow-2xl z-40 w-56 space-y-3 animate-fade-in text-xs"
+                          >
+                            <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                              <span className="font-bold text-white text-[11px]">{m.name} කළමනාකරණය</span>
+                              <button onClick={() => setActivePopup(null)} className="text-slate-500 hover:text-white"><X size={14} /></button>
+                            </div>
 
-                          return (
-                            <div key={studentClass} className="bg-slate-950/50 p-3 rounded-2xl border border-slate-800/80 flex flex-col xl:flex-row items-start xl:items-center gap-3 justify-between">
-                              <div className="min-w-[140px] max-w-[180px]">
-                                <span className="text-slate-300 font-bold text-[11px] block truncate">{studentClass}</span>
-                                <span className="text-[10px] text-slate-500 font-mono">රු. {classFees[studentClass] || 0}/=</span>
-                              </div>
-                              
-                              <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-12 gap-1.5 w-full">
-                                {monthsArray.map(m => {
-                                  const monthKey = `${selectedYear}-${m.id}`;
-                                  const paymentKey = `${studentClass}:${monthKey}`;
-                                  
-                                  let status = 'unpaid';
-                                  if (paidMonths.includes(paymentKey)) status = 'paid';
-                                  else if (freeMonths.includes(paymentKey)) status = 'free';
-
-                                  // වත්මන් මාසය සඳහා වන ප්‍රවේශ නීති පරීක්ෂාව
-                                  const isCurrentMonth = monthKey === currentMonthKey;
-                                  const isRestricted = isCurrentMonth && status === 'unpaid';
-
-                                  return (
-                                    <div 
-                                      key={m.id} 
-                                      className={`flex flex-col items-center justify-between p-1.5 rounded-xl border transition-all ${
-                                        status === 'paid' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                                        status === 'free' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' :
-                                        isRestricted ? 'bg-rose-500/10 border-rose-500/40 text-rose-400 animate-pulse' :
-                                        'bg-slate-950 border-slate-800/80 text-slate-500'
-                                      }`}
-                                    >
-                                      <span className="font-bold text-[9px] uppercase font-mono">{m.name}</span>
-                                      
-                                      <select
-                                        value={status}
-                                        onChange={(e) => handleStatusChange(st.id, studentClass, monthKey, e.target.value)}
-                                        className={`mt-1.5 text-[9px] font-bold bg-transparent border-none focus:outline-none w-full text-center cursor-pointer ${
-                                          status === 'paid' ? 'text-emerald-400' : status === 'free' ? 'text-blue-400' : 'text-rose-400/80'
-                                        }`}
-                                      >
-                                        <option value="unpaid" className="bg-slate-950 text-red-400">Unpaid</option>
-                                        <option value="paid" className="bg-slate-950 text-emerald-400">Paid</option>
-                                        <option value="free" className="bg-slate-950 text-blue-400">Free</option>
-                                      </select>
-
-                                      {/* සිසුවාට පෙනෙන ඇක්සස් ස්ටේටස් එක ඇඩ්මින්ට මෙහි පෙන්වයි */}
-                                      <div className="mt-1 w-full text-center border-t border-slate-800/40 pt-1 text-[8px] font-medium">
-                                        {status === 'paid' || status === 'free' ? (
-                                          <span className="text-emerald-500 flex items-center justify-center gap-0.5"><BookOpen size={8} /> Full</span>
-                                        ) : (
-                                          <span className="text-amber-500 flex items-center justify-center gap-0.5" title="ගෙවූ මාසවල ටියුට්/වීඩියෝ පමණක් ඇක්ටිව් වේ"><ShieldAlert size={8} /> Restr.</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
+                            {/* Status Selectors */}
+                            <div className="space-y-1">
+                              <span className="text-[10px] text-slate-500 block">තත්ත්වය වෙනස් කරන්න:</span>
+                              <div className="grid grid-cols-3 gap-1">
+                                <button onClick={() => updatePaymentStatus(student.id, m.id, 'paid')} className={`py-1 rounded text-[10px] font-bold ${status === 'paid' ? 'bg-emerald-600 text-white' : 'bg-slate-950 text-slate-400'}`}>Paid</button>
+                                <button onClick={() => updatePaymentStatus(student.id, m.id, 'free')} className={`py-1 rounded text-[10px] font-bold ${status === 'free' ? 'bg-blue-600 text-white' : 'bg-slate-950 text-slate-400'}`}>Free</button>
+                                <button onClick={() => updatePaymentStatus(student.id, m.id, 'unpaid')} className={`py-1 rounded text-[10px] font-bold ${status === 'unpaid' ? 'bg-red-600/20 text-red-400 border border-red-500/30' : 'bg-slate-950 text-slate-400'}`}>Unpaid</button>
                               </div>
                             </div>
-                          );
-                        })
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+
+                            {/* Action Buttons */}
+                            <div className="space-y-1.5 pt-1">
+                              <button 
+                                onClick={() => pushReminder(student.id, m.id)}
+                                disabled={record?.reminder_sent}
+                                className={`w-full py-1.5 px-2 rounded-lg flex items-center justify-center gap-1.5 font-medium transition ${
+                                  record?.reminder_sent 
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50' 
+                                    : 'bg-amber-600/10 hover:bg-amber-600/20 text-amber-400 border border-amber-500/20 cursor-pointer'
+                                }`}
+                              >
+                                <Bell size={12} />
+                                <span>{record?.reminder_sent ? 'Reminder Pushed' : 'Push Reminder'}</span>
+                              </button>
+
+                              <button 
+                                onClick={() => pushWhatsAppMessage(student.id, m.id, student.whatsapp)}
+                                className="w-full py-1.5 px-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 rounded-lg flex items-center justify-center gap-1.5 font-medium cursor-pointer"
+                              >
+                                <MessageSquare size={12} />
+                                <span>WhatsApp Message</span>
+                                <span className="ml-auto bg-emerald-500 text-slate-950 text-[9px] font-bold px-1.5 py-0.2 rounded-full">
+                                  {record?.whatsapp_count || 0}
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+          ))}
         </div>
       </div>
     </div>
