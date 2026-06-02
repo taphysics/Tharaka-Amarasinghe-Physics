@@ -26,7 +26,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     s.username?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // is_approved මත පදනම්ව සිසුන් වෙන් කිරීම (Logic Fix)
+  // is_approved මත පදනම්ව සිසුන් වෙන් කිරීම
   const pendingStudents = filteredStudents
     .filter(s => !s.is_approved)
     .sort((a, b) => new Date(b.joined_at || b.created_at).getTime() - new Date(a.joined_at || a.created_at).getTime());
@@ -317,51 +317,64 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           </div>
         </div>
 
-        {/* WhatsApp Reminder Box */}
+        {/* WhatsApp Reminder Box (Label Issue Fixed Here) */}
         <div className="flex-1 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5"><Send size={14} className="text-blue-400" /> Send WhatsApp Reminder</h3>
-          <input
-            id="reminderUserIds"
-            name="reminderUserIds"
-            aria-label="User IDs"
-            type="text"
-            placeholder="User IDs (e.g. NUAM2507, SAMA1234)"
-            value={reminderUserIds}
-            onChange={(e) => setReminderUserIds(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
-          />
-          <input
-            id="reminderFees"
-            name="reminderFees"
-            aria-label="Class Fee"
-            type="text"
-            placeholder="Class Fee (e.g. Physics 2026: 2500, Chemistry: 2000)"
-            value={reminderFees}
-            onChange={(e) => setReminderFees(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
-          />
-          <input
-            id="reminderTotal"
-            name="reminderTotal"
-            aria-label="Total Amount"
-            type="number"
-            placeholder="Total Amount (e.g. 4500)"
-            value={reminderTotal}
-            onChange={(e) => setReminderTotal(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
-          />
-          <select
-            id="reminderMonth"
-            name="reminderMonth"
-            aria-label="Reminder Month"
-            value={reminderMonth}
-            onChange={(e) => setReminderMonth(e.target.value)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 transition"
-          >
-            {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
+          
+          <div>
+            <label htmlFor="reminderUserIds" className="text-[11px] text-slate-400 font-bold mb-1 block">Student User IDs</label>
+            <input
+              id="reminderUserIds"
+              name="reminderUserIds"
+              type="text"
+              placeholder="User IDs (e.g. NUAM2507, SAMA1234)"
+              value={reminderUserIds}
+              onChange={(e) => setReminderUserIds(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="reminderFees" className="text-[11px] text-slate-400 font-bold mb-1 block">Class Fee Breakdown</label>
+            <input
+              id="reminderFees"
+              name="reminderFees"
+              type="text"
+              placeholder="Class Fee (e.g. Physics 2026: 2500, Chemistry: 2000)"
+              value={reminderFees}
+              onChange={(e) => setReminderFees(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="reminderTotal" className="text-[11px] text-slate-400 font-bold mb-1 block">Total Amount Due</label>
+            <input
+              id="reminderTotal"
+              name="reminderTotal"
+              type="number"
+              placeholder="Total Amount (e.g. 4500)"
+              value={reminderTotal}
+              onChange={(e) => setReminderTotal(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500 transition"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="reminderMonth" className="text-[11px] text-slate-400 font-bold mb-1 block">Select Month</label>
+            <select
+              id="reminderMonth"
+              name="reminderMonth"
+              value={reminderMonth}
+              onChange={(e) => setReminderMonth(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 transition"
+            >
+              {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+
           <button onClick={() => {
             if(!reminderUserIds) return;
             const message = `*TA Physics Online Hub - Payment Reminder*\n\nDear Student,\nYour payment for the month of *${reminderMonth}* is pending.\n\n*Fees Breakdown:*\n${reminderFees}\n*Total Due: Rs. ${reminderTotal}*\n\nPlease make the payment to restore your portal access. Thank you!`;
