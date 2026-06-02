@@ -17,7 +17,6 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
-  // 🎯 පියවර B සඳහා උපකාරක Function එක: JSON/String ගැටළු නිරාකරණය සහ හිස්තැන් (Spaces) ඉවත් කිරීම
   const parseStudentClasses = (classTypes: any): string[] => {
     if (!classTypes) return [];
     if (Array.isArray(classTypes)) return classTypes.map(c => c.trim());
@@ -36,7 +35,6 @@ export default function StudentPaymentInvoice() {
       const studentId = urlParams.get('s');
       const monthKey = urlParams.get('m'); 
       
-      // 🎯 පියවර A: URL එකෙන් එන Parameter එක Decode කර Trim කිරීම
       const rawSpecificClass = urlParams.get('c');
       const specificClass = rawSpecificClass ? decodeURIComponent(rawSpecificClass).trim() : null;
 
@@ -63,20 +61,33 @@ export default function StudentPaymentInvoice() {
       if (studentData && configData?.class_rates_text) {
         setStudent(studentData);
 
-        // 🎯 පියවර C: පන්ති මිල ගණන් Map එක සෑදීමේදී Keys සහ Values නිවැරදිව Trim කිරීම
+        // 🎯 නව වෙනස: Admin panel එකෙන් එන JSON format දත්ත නිවැරදිව කියවීම
         const ratesMap: { [key: string]: number } = {};
-        configData.class_rates_text.split(',').forEach((item: string) => {
-          const parts = item.split(':');
-          if (parts.length >= 2) {
-            const className = parts[0].trim();
-            const classFee = parseInt(parts[1].trim());
-            if (className && !isNaN(classFee)) {
-              ratesMap[className] = classFee;
-            }
+        
+        try {
+          // JSON ලෙස කියවීමට උත්සාහ කිරීම (AdminGlobalConfig එකෙන් සේව් වන නිවැරදි ක්‍රමය)
+          const parsedConfig = JSON.parse(configData.class_rates_text);
+          if (parsedConfig && Array.isArray(parsedConfig.classes)) {
+            parsedConfig.classes.forEach((c: any) => {
+              if (c.name && c.fee !== undefined) {
+                ratesMap[c.name.trim()] = Number(c.fee);
+              }
+            });
           }
-        });
+        } catch (error) {
+          // යම් හෙයකින් පරණ format එකෙන් (String) තිබුණොත් ඒ සඳහා Fallback එකක්
+          configData.class_rates_text.split(',').forEach((item: string) => {
+            const parts = item.split(':');
+            if (parts.length >= 2) {
+              const className = parts[0].trim();
+              const classFee = parseInt(parts[1].trim());
+              if (className && !isNaN(classFee)) {
+                ratesMap[className] = classFee;
+              }
+            }
+          });
+        }
 
-        // 🎯 පියවර B: ශිෂ්‍යයාගේ පන්ති ලැයිස්තුව (class_types) නිවැරදිව ලබාගෙන Trim කිරීම
         let activeClasses: string[] = parseStudentClasses(studentData.class_types);
         
         if (specificClass) {
@@ -85,7 +96,7 @@ export default function StudentPaymentInvoice() {
 
         let total = 0;
         const calculatedClasses = activeClasses.map(cName => {
-          const fee = ratesMap[cName] || 0; // දැන් නම් දෙකම Trim වී ඇති බැවින් නිවැරදිව ගැලපේ
+          const fee = ratesMap[cName] || 0; 
           total += fee;
           return { name: cName, fee };
         });
