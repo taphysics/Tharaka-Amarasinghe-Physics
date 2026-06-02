@@ -66,9 +66,25 @@ export default function PaymentManager() {
 
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
+    const student = students.find(s => s.id === studentId);
     
-    // Status එක 'paid' හෝ 'free' නම් Dashboard Reminder එක Auto අයින් වෙන්න ඕන නිසා false කරනවා.
-    const reminderStatus = status === 'unpaid' ? true : false;
+    // කලින් තිබූ reminder එකේ state එක ලබා ගැනීම
+    const existingPayment = payments.find(p => p.record_id === recordId);
+    let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
+
+    // 🎯 පියවර B: Status එක 'paid' හෝ 'free' නම් Dashboard Reminder එක Auto අයින් කිරීම
+    if (status === 'paid' || status === 'free') {
+      reminderStatus = false;
+      
+      if (student?.username) {
+        // අදාල ශිෂ්‍යයාට යවා ඇති පෞද්ගලික සිහිකැඳවීම් announcements table එකෙන් මැකීම
+        await supabase
+          .from('announcements')
+          .delete()
+          .eq('target_user', student.username)
+          .eq('type', 'private');
+      }
+    }
 
     setPayments(prev => {
       const exists = prev.find(p => p.record_id === recordId);
@@ -82,13 +98,14 @@ export default function PaymentManager() {
       month: monthKey,
       class_name: className,
       status: status,
-      reminder_sent: reminderStatus // <-- මෙය update වීමෙන් dashboard එකෙන් ඉවත් වේ
+      reminder_sent: reminderStatus
     }, { onConflict: 'record_id' });
   };
 
   const sendDashboardReminder = async (studentId: string, monthKey: string, specificClass: string | null = null) => {
     const student = students.find(s => s.id === studentId);
     const classesToRemind = specificClass ? [specificClass] : (student?.class_types || []);
+    const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
     let sentCount = 0;
 
@@ -97,7 +114,10 @@ export default function PaymentManager() {
       const existing = payments.find(p => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
+      // ගෙවා නොමැති නම් පමණක් Reminder යවයි
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
+        
+        // 1. Payments table එක update කිරීම
         await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: studentId,
@@ -112,6 +132,19 @@ export default function PaymentManager() {
           if (exists) return prev.map(p => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
           return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: 'unpaid', reminder_sent: true }];
         });
+
+        // 2. Announcements table එකට Reminder එක ඇතුළත් කිරීම (සිසුවාගේ Dashboard එකට)
+        if (student?.username) {
+          const today = new Date().toISOString().split('T')[0];
+          await supabase.from('announcements').insert({
+            title: `පන්ති ගාස්තු සිහිකැඳවීමයි! (${monthName})`,
+            content: `ඔබගේ ${monthName} මාසයේ [${cName}] පන්තිය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ඉක්මනින් ගෙවීම් සිදු කරන්න.`,
+            date: today,
+            type: 'private',
+            target_user: student.username
+          });
+        }
+
         sentCount++;
       }
     }
@@ -123,7 +156,6 @@ export default function PaymentManager() {
     }
   };
 
-  // ... (updateStudentClasses, getMonthButtonStyle, sendWhatsApp functions remain the same as previous) ...
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
     setStudents(prev => prev.map(s => s.id === studentId ? { ...s, class_types: newClasses } : s));
     await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
@@ -265,13 +297,16 @@ export default function PaymentManager() {
                 const paymentInfo = payments.find(p => p.record_id === recordId);
                 const status = paymentInfo?.status || 'unpaid';
                 const isReminderSent = paymentInfo?.reminder_sent;
+                
+                // 🎯 පියවර A: ගෙවා ඇතිනම් (Paid/Free) බොත්තම් Disable කිරීම සඳහා Check එක
+                const isPaidOrFree = status === 'paid' || status === 'free';
 
                 return (
                   <div key={className} className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-bold text-slate-200">{className}</span>
                       {isReminderSent && status === 'unpaid' && (
-                        <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded-md">Reminder Sent</span>
+                        <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded-md animate-pulse">Reminder Sent</span>
                       )}
                     </div>
                     
@@ -282,27 +317,52 @@ export default function PaymentManager() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mt-2">
-                      <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border border-slate-700">
-                        <MessageCircle size={14} /> WhatsApp යවන්න
+                      {/* WhatsApp Button (Disable Logic Added) */}
+                      <button 
+                        onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} 
+                        disabled={isPaidOrFree}
+                        className={`w-full py-2 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                          isPaidOrFree 
+                            ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
+                            : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400'
+                        }`}
+                      >
+                        <MessageCircle size={14} /> WhatsApp {isPaidOrFree ? '(අක්‍රියයි)' : 'යවන්න'}
                       </button>
+
+                      {/* Dashboard Reminder Button (Disable Logic Added) */}
                       <button 
                         onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, className)} 
-                        className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border border-slate-700"
+                        disabled={isPaidOrFree || isReminderSent}
+                        className={`w-full py-2 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                          isPaidOrFree 
+                            ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
+                            : isReminderSent
+                              ? 'bg-amber-900/30 border-amber-900/50 text-amber-600 cursor-not-allowed'
+                              : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400'
+                        }`}
                       >
-                        <LayoutDashboard size={14} /> Dashboard යවන්න
+                        <LayoutDashboard size={14} /> {isPaidOrFree ? 'Dashboard (අක්‍රියයි)' : isReminderSent ? 'Reminder යවා ඇත' : 'Dashboard යවන්න'}
                       </button>
                     </div>
                   </div>
                 );
               })}
 
+              {/* සියලුම පන්ති සඳහා ඇති බොත්තම්ද ගෙවා ඇත්නම් අක්‍රිය වීම */}
               {(activeModal.student.class_types || []).length > 1 && (
                 <div className="mt-6 pt-4 border-t border-slate-800 space-y-2">
                   <span className="text-xs text-slate-500 mb-2 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
-                  <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-700">
+                  <button 
+                    onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} 
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-700"
+                  >
                     <MessageCircle size={16} /> සියලුම පන්ති වලට WhatsApp බිල්පත
                   </button>
-                  <button onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} className="w-full py-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-amber-500/30">
+                  <button 
+                    onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} 
+                    className="w-full py-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-amber-500/30"
+                  >
                     <Bell size={16} /> සියලුම පන්ති වලට Dashboard Reminder
                   </button>
                 </div>

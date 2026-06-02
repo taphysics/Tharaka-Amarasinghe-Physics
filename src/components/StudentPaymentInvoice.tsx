@@ -17,31 +17,43 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
+  // 🎯 පියවර B සඳහා උපකාරක Function එක: JSON/String ගැටළු නිරාකරණය සහ හිස්තැන් (Spaces) ඉවත් කිරීම
+  const parseStudentClasses = (classTypes: any): string[] => {
+    if (!classTypes) return [];
+    if (Array.isArray(classTypes)) return classTypes.map(c => c.trim());
+    try {
+      const parsed = JSON.parse(classTypes);
+      if (Array.isArray(parsed)) return parsed.map((c: any) => String(c).trim());
+      return [];
+    } catch (e) {
+      return typeof classTypes === 'string' ? classTypes.split(',').map(c => c.trim()) : [];
+    }
+  };
+
   useEffect(() => {
     const fetchInvoiceData = async () => {
-      // URL එකෙන් parameters ලබාගැනීම (?s=STUDENT_ID&m=YYYY-MM&c=CLASS_NAME)
       const urlParams = new URLSearchParams(window.location.search);
       const studentId = urlParams.get('s');
       const monthKey = urlParams.get('m'); 
-      const specificClass = urlParams.get('c'); // <-- අලුතින් එක් කළ කොටස
+      
+      // 🎯 පියවර A: URL එකෙන් එන Parameter එක Decode කර Trim කිරීම
+      const rawSpecificClass = urlParams.get('c');
+      const specificClass = rawSpecificClass ? decodeURIComponent(rawSpecificClass).trim() : null;
 
       if (!studentId || !monthKey) {
         setLoading(false);
         return;
       }
 
-      // මාසය සිංහලෙන් සකස් කිරීම
       const [year, monthPart] = monthKey.split('-');
       setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
 
-      // 1. ශිෂ්‍යයාගේ විස්තර ලබාගැනීම
       const { data: studentData } = await supabase
         .from('students')
         .select('id, name, nic, username, class_types')
         .eq('id', studentId)
         .single();
 
-      // 2. පන්ති ගාස්තු (Global Configuration) ලබාගැනීම
       const { data: configData } = await supabase
         .from('site_config')
         .select('class_rates_text')
@@ -51,25 +63,29 @@ export default function StudentPaymentInvoice() {
       if (studentData && configData?.class_rates_text) {
         setStudent(studentData);
 
-        // පන්ති මිල ගණන් Map එකක් සාදා ගැනීම
+        // 🎯 පියවර C: පන්ති මිල ගණන් Map එක සෑදීමේදී Keys සහ Values නිවැරදිව Trim කිරීම
         const ratesMap: { [key: string]: number } = {};
         configData.class_rates_text.split(',').forEach((item: string) => {
           const parts = item.split(':');
-          if (parts[0]) ratesMap[parts[0].trim()] = parts[1] ? parseInt(parts[1].trim()) : 0;
+          if (parts.length >= 2) {
+            const className = parts[0].trim();
+            const classFee = parseInt(parts[1].trim());
+            if (className && !isNaN(classFee)) {
+              ratesMap[className] = classFee;
+            }
+          }
         });
 
-        // සිසුවා සම්බන්ධ වී ඇති පන්ති (class_types)
-        let activeClasses: string[] = studentData.class_types || [];
+        // 🎯 පියවර B: ශිෂ්‍යයාගේ පන්ති ලැයිස්තුව (class_types) නිවැරදිව ලබාගෙන Trim කිරීම
+        let activeClasses: string[] = parseStudentClasses(studentData.class_types);
         
-        // 🎯 නිශ්චිත පන්තියක් සඳහා පමණක් ලින්ක් එක එවා ඇත්නම් එය පමණක් ෆිල්ටර් කිරීම
         if (specificClass) {
           activeClasses = activeClasses.filter(c => c === specificClass);
         }
 
-        // තෝරාගත් පන්තිවල මිල ගණන් එකතු කිරීම
         let total = 0;
         const calculatedClasses = activeClasses.map(cName => {
-          const fee = ratesMap[cName] || 0;
+          const fee = ratesMap[cName] || 0; // දැන් නම් දෙකම Trim වී ඇති බැවින් නිවැරදිව ගැලපේ
           total += fee;
           return { name: cName, fee };
         });
