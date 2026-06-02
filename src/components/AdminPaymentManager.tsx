@@ -1,6 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Search, X, Plus, MessageCircle, Bell, CheckCircle } from 'lucide-react';
+import { Search, X, Plus, MessageCircle, Bell, LayoutDashboard } from 'lucide-react';
+
+// JSON සහ Array ගැටළුව නිරාකරණය කරන Functions
+const parseStudentClasses = (classTypes: any): string[] => {
+  if (!classTypes) return [];
+  if (Array.isArray(classTypes)) return classTypes;
+  try {
+    return JSON.parse(classTypes);
+  } catch (e) {
+    return typeof classTypes === 'string' ? classTypes.split(',').map(c => c.trim()) : [];
+  }
+};
+
+const parseAllClassesConfig = (configText: string): string[] => {
+  if (!configText) return [];
+  try {
+    const parsed = JSON.parse(configText);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: any) => item.name || item.class_name || item).filter(Boolean);
+    } else if (parsed.classes && Array.isArray(parsed.classes)) {
+      return parsed.classes.map((item: any) => item.name || item.class_name).filter(Boolean);
+    }
+  } catch (e) {
+    return configText.split(',').map((c: string) => c.split(':')[0].trim()).filter(Boolean);
+  }
+  return [];
+};
 
 export default function PaymentManager() {
   const [students, setStudents] = useState<any[]>([]);
@@ -9,7 +35,6 @@ export default function PaymentManager() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedYear, setSelectedYear] = useState('2026');
   
-  // Modal States
   const [activeModal, setActiveModal] = useState<{ student: any, month: string } | null>(null);
   const [showClassDropdown, setShowClassDropdown] = useState<string | null>(null);
 
@@ -21,85 +46,113 @@ export default function PaymentManager() {
   }, []);
 
   const fetchData = async () => {
-    // 1. සිසුන්ගේ දත්ත
     const { data: stdData } = await supabase.from('students').select('*').order('name');
-    if (stdData) setStudents(stdData);
+    if (stdData) {
+      const formattedStudents = stdData.map(s => ({
+        ...s,
+        class_types: parseStudentClasses(s.class_types)
+      }));
+      setStudents(formattedStudents);
+    }
 
-    // 2. ගෙවීම් දත්ත
     const { data: payData } = await supabase.from('payments').select('*');
     if (payData) setPayments(payData);
 
-    // 3. පවතින සියලුම පන්ති වර්ග (Site Config එකෙන් හෝ වෙනම) ලබා ගැනීම
     const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
     if (config?.class_rates_text) {
-      const classes = config.class_rates_text.split(',').map((c: string) => c.split(':')[0].trim()).filter(Boolean);
-      setAllClasses(classes);
+      setAllClasses(parseAllClassesConfig(config.class_rates_text));
     }
   };
 
-  // 🔄 ගෙවීම් යාවත්කාලීන කිරීම (Update Payment Status)
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
     
-    // UI එක එසැණින් Update කිරීම (Optimistic Update)
+    // Status එක 'paid' හෝ 'free' නම් Dashboard Reminder එක Auto අයින් වෙන්න ඕන නිසා false කරනවා.
+    const reminderStatus = status === 'unpaid' ? true : false;
+
     setPayments(prev => {
       const exists = prev.find(p => p.record_id === recordId);
-      if (exists) return prev.map(p => p.record_id === recordId ? { ...p, status } : p);
-      return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: className, status }];
+      if (exists) return prev.map(p => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus } : p);
+      return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: className, status, reminder_sent: reminderStatus }];
     });
 
-    // Database එක Update කිරීම
     await supabase.from('payments').upsert({
       record_id: recordId,
       student_id: studentId,
       month: monthKey,
       class_name: className,
-      status: status
+      status: status,
+      reminder_sent: reminderStatus // <-- මෙය update වීමෙන් dashboard එකෙන් ඉවත් වේ
     }, { onConflict: 'record_id' });
   };
 
-  // ➕ පන්ති එකතු කිරීම සහ ඉවත් කිරීම
+  const sendDashboardReminder = async (studentId: string, monthKey: string, specificClass: string | null = null) => {
+    const student = students.find(s => s.id === studentId);
+    const classesToRemind = specificClass ? [specificClass] : (student?.class_types || []);
+    
+    let sentCount = 0;
+
+    for (const cName of classesToRemind) {
+      const recordId = `${studentId}_${monthKey}_${cName}`;
+      const existing = payments.find(p => p.record_id === recordId);
+      const currentStatus = existing ? existing.status : 'unpaid';
+
+      if (currentStatus !== 'paid' && currentStatus !== 'free') {
+        await supabase.from('payments').upsert({
+          record_id: recordId,
+          student_id: studentId,
+          month: monthKey,
+          class_name: cName,
+          status: 'unpaid',
+          reminder_sent: true
+        }, { onConflict: 'record_id' });
+
+        setPayments(prev => {
+          const exists = prev.find(p => p.record_id === recordId);
+          if (exists) return prev.map(p => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
+          return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: 'unpaid', reminder_sent: true }];
+        });
+        sentCount++;
+      }
+    }
+
+    if (sentCount > 0) {
+      alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
+    } else {
+      alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත.');
+    }
+  };
+
+  // ... (updateStudentClasses, getMonthButtonStyle, sendWhatsApp functions remain the same as previous) ...
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
     setStudents(prev => prev.map(s => s.id === studentId ? { ...s, class_types: newClasses } : s));
     await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
   };
 
-  // 🎨 බොත්තම් වල වර්ණ සෑදීම (Fractional Gradients)
   const getMonthButtonStyle = (student: any, monthKey: string) => {
     const studentClasses = student.class_types || [];
-    if (studentClasses.length === 0) return { backgroundColor: '#1e293b' }; // No classes
-
+    if (studentClasses.length === 0) return { backgroundColor: '#1e293b' }; 
     const colors = studentClasses.map((cName: string) => {
-      const recordId = `${student.id}_${monthKey}_${cName}`;
-      const payment = payments.find(p => p.record_id === recordId);
-      const status = payment ? payment.status : 'unpaid';
-      
-      if (status === 'paid') return '#10b981'; // Green
-      if (status === 'free') return '#3b82f6'; // Blue
-      return '#ef4444'; // Red
+      const status = payments.find(p => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
+      if (status === 'paid') return '#10b981'; 
+      if (status === 'free') return '#3b82f6'; 
+      return '#ef4444'; 
     });
-
     if (colors.length === 1) return { backgroundColor: colors[0] };
-
-    // පන්ති කිහිපයක් ඇත්නම් Gradient එකක් සෑදීම
     const percentage = 100 / colors.length;
     const gradientStops = colors.map((col: string, i: number) => `${col} ${i * percentage}%, ${col} ${(i + 1) * percentage}%`).join(', ');
     return { background: `linear-gradient(to right, ${gradientStops})` };
   };
 
-  // 📱 WhatsApp මැසේජ් යැවීම
   const sendWhatsApp = (student: any, monthKey: string, specificClass: string | null = null) => {
-    const baseUrl = window.location.origin; // e.g., https://tharaka-amarasinghe-physics.vercel.app
+    const baseUrl = window.location.origin; 
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
-    
     let link = `${baseUrl}/invoice?s=${student.id}&m=${monthKey}`;
     let message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසය සඳහා පන්ති ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
-
     if (specificClass) {
       link += `&c=${encodeURIComponent(specificClass)}`;
       message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසයේ [${specificClass}] පන්තිය සඳහා ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
     }
-
     message += `\n🔗 Link: ${link}\n\nස්තූතියි!`;
     const whatsappUrl = `https://wa.me/94${student.whatsapp?.substring(1)}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
@@ -114,7 +167,6 @@ export default function PaymentManager() {
   return (
     <div className="p-4 md:p-8 space-y-6">
       
-      {/* Search Bar */}
       <div className="flex gap-4 items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
         <Search className="text-slate-500" />
         <input 
@@ -126,12 +178,9 @@ export default function PaymentManager() {
         />
       </div>
 
-      {/* Student List */}
       <div className="space-y-4">
         {filteredStudents.map(student => (
           <div key={student.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col xl:flex-row gap-6">
-            
-            {/* Student Info Area */}
             <div className="xl:w-1/3 space-y-3">
               <div>
                 <h3 className="text-white font-bold text-lg">{student.name}</h3>
@@ -141,10 +190,11 @@ export default function PaymentManager() {
                 </div>
               </div>
 
-              {/* Class Tags Management */}
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 relative">
                 <span className="text-xs text-slate-500 block mb-2">ලියාපදිංචි පන්ති:</span>
                 <div className="flex flex-wrap gap-2">
+                  {(student.class_types || []).length === 0 && <span className="text-xs text-amber-500">පන්ති කිසිවක් ඇතුළත් කර නැත.</span>}
+                  
                   {(student.class_types || []).map((cls: string) => (
                     <span key={cls} className="bg-slate-800 text-slate-300 text-[11px] px-2 py-1 rounded-md flex items-center gap-1 border border-slate-700">
                       {cls}
@@ -152,7 +202,6 @@ export default function PaymentManager() {
                     </span>
                   ))}
                   
-                  {/* Add Class Button */}
                   <button 
                     onClick={() => setShowClassDropdown(showClassDropdown === student.id ? null : student.id)}
                     className="bg-blue-600/20 text-blue-400 text-[11px] px-2 py-1 rounded-md flex items-center gap-1 hover:bg-blue-600/40 border border-blue-500/30"
@@ -161,13 +210,9 @@ export default function PaymentManager() {
                   </button>
                 </div>
 
-                {/* Dropdown for new classes */}
                 {showClassDropdown === student.id && (
-                  <div className="absolute top-full left-0 mt-2 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-10 p-2 flex flex-col gap-1">
-                    {allClasses.filter(c => !(student.class_types || []).includes(c)).length === 0 ? (
-                      <span className="text-xs text-slate-400 p-2">සියලුම පන්ති තෝරා ඇත.</span>
-                    ) : (
-                      allClasses.filter(c => !(student.class_types || []).includes(c)).map(c => (
+                  <div className="absolute top-full left-0 mt-2 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-10 p-2 flex flex-col gap-1 max-h-48 overflow-y-auto">
+                    {allClasses.filter(c => !(student.class_types || []).includes(c)).map(c => (
                         <button 
                           key={c}
                           onClick={() => {
@@ -178,14 +223,12 @@ export default function PaymentManager() {
                         >
                           + {c}
                         </button>
-                      ))
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Months Grid */}
             <div className="xl:w-2/3 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
               {months.map((m, idx) => {
                 const monthKey = `${selectedYear}-${m}`;
@@ -205,7 +248,6 @@ export default function PaymentManager() {
         ))}
       </div>
 
-      {/* 🎛️ Payment Control Modal */}
       {activeModal && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setActiveModal(null)}>
           <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -217,45 +259,52 @@ export default function PaymentManager() {
               <button onClick={() => setActiveModal(null)} className="text-slate-500 hover:text-white"><X /></button>
             </div>
 
-            <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
               {(activeModal.student.class_types || []).map((className: string) => {
                 const recordId = `${activeModal.student.id}_${activeModal.month}_${className}`;
-                const status = payments.find(p => p.record_id === recordId)?.status || 'unpaid';
+                const paymentInfo = payments.find(p => p.record_id === recordId);
+                const status = paymentInfo?.status || 'unpaid';
+                const isReminderSent = paymentInfo?.reminder_sent;
 
                 return (
                   <div key={className} className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-bold text-slate-200">{className}</span>
+                      {isReminderSent && status === 'unpaid' && (
+                        <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded-md">Reminder Sent</span>
+                      )}
                     </div>
                     
-                    {/* Status Buttons */}
                     <div className="grid grid-cols-3 gap-2">
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'paid')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'paid' ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Paid</button>
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'free')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'free' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Free</button>
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'unpaid')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'unpaid' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Unpaid</button>
                     </div>
 
-                    {/* Individual WhatsApp Button */}
-                    <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg flex items-center justify-center gap-2 border border-slate-700">
-                      <MessageCircle size={14} className="text-green-400"/> මෙම පන්තියට පමණක් බිල්පත යවන්න
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border border-slate-700">
+                        <MessageCircle size={14} /> WhatsApp යවන්න
+                      </button>
+                      <button 
+                        onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, className)} 
+                        className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border border-slate-700"
+                      >
+                        <LayoutDashboard size={14} /> Dashboard යවන්න
+                      </button>
+                    </div>
                   </div>
                 );
               })}
 
-              {/* Global Buttons (Only visible if enrolled in more than 1 class) */}
               {(activeModal.student.class_types || []).length > 1 && (
                 <div className="mt-6 pt-4 border-t border-slate-800 space-y-2">
                   <span className="text-xs text-slate-500 mb-2 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
-                  <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} className="w-full py-2.5 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-blue-500/30">
-                    <Bell size={16} /> සියලුම පන්ති වල එකතුව සහිතව බිල්පත යවන්න
+                  <button onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-700">
+                    <MessageCircle size={16} /> සියලුම පන්ති වලට WhatsApp බිල්පත
                   </button>
-                </div>
-              )}
-              
-              {(activeModal.student.class_types || []).length === 0 && (
-                <div className="text-center py-6 text-slate-500 text-xs">
-                  මෙම සිසුවා කිසිදු පන්තියක් සඳහා ලියාපදිංචි වී නොමැත.
+                  <button onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} className="w-full py-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-amber-500/30">
+                    <Bell size={16} /> සියලුම පන්ති වලට Dashboard Reminder
+                  </button>
                 </div>
               )}
             </div>

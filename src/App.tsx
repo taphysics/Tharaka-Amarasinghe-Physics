@@ -49,6 +49,7 @@ import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
 import AdminPasswordReset from './components/AdminPasswordReset';
 import { useSupabaseConfig } from './hooks/useSupabaseConfig';
 import AdminAttentionLogs from './components/AdminAttentionLogs';
+import StudentPaymentInvoice from './components/StudentPaymentInvoice';
 
 export default function App() {
   // Helper for current month payment check
@@ -153,6 +154,9 @@ export default function App() {
   // Dashboard inner tabs
   const [dashboardTab, setDashboardTab] = useState<'overview' | 'live' | 'tutes' | 'recordings'>('overview');
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
+  const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
+    alert.type === 'public' || (alert.type === 'private' && alert.target_user === currentStudent.username)
+  ) : [];
   
   // Attention Check states
   const [attentionCheckTime, setAttentionCheckTime] = useState<number>(0);
@@ -876,6 +880,9 @@ export default function App() {
   const openPublicAlertsModal = () => {
     window.open('https://taphysics.blogspot.com/p/public-alert.html', '_blank');
   };
+  if (window.location.pathname === '/invoice') {
+    return <StudentPaymentInvoice />;
+  }
 
   // Build high contrast, clean interactive calendar cells for May 2026
   const cellsOffset = 5; // Starts on Friday
@@ -1577,6 +1584,28 @@ export default function App() {
         {/* VIEW 5: ACTIVE STUDENTS INTERACTIVE DASHBOARD */}
         {currentView === 'dashboard' && currentStudent && (
           <div className="space-y-6 animate-fade-in w-full">
+            {/* 🎯 Dashboard Reminder / Announcements UI */}
+{currentView === 'dashboard' && studentAlerts.length > 0 && (
+  <div className="mb-6 space-y-3">
+    {studentAlerts.map((alert: any, index: number) => (
+      <div 
+        key={index} 
+        className={`p-4 rounded-lg border flex items-start gap-3 ${
+          alert.type === 'private' 
+            ? 'bg-red-500/10 border-red-500/30 text-red-100' // Private පණිවිඩ සඳහා රතු පැහැය (උදා: ගෙවීම් සිහිකැඳවීම්)
+            : 'bg-blue-500/10 border-blue-500/30 text-blue-100' // Public පණිවිඩ සඳහා නිල් පැහැය
+        }`}
+      >
+        <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
+        <div>
+          <h4 className="font-semibold text-lg">{alert.title}</h4>
+          <p className="text-sm mt-1 opacity-90">{alert.content}</p>
+          <span className="text-xs opacity-70 mt-2 block">{alert.date}</span>
+        </div>
+      </div>
+    ))}
+  </div>
+)}
             
             {/* Split Grid Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -2382,7 +2411,7 @@ export default function App() {
 
                   {activeAdminTab === 'payments' && (
                     <div className="lg:col-span-12">
-                       <AdminPaymentManager students={students} />
+                       <AdminPaymentManager />
                     </div>
                   )}
 
