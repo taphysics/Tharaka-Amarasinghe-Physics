@@ -26,12 +26,10 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   );
 
   const pendingStudents = filteredStudents
-    .filter(s => !s.is_approved)
-    .sort((a, b) => new Date(b.joined_at || b.created_at).getTime() - new Date(a.joined_at || a.created_at).getTime());
+  .filter(s => !s.is_approved && !s.isApproved)
 
   const activeStudents = filteredStudents
-    .filter(s => s.is_approved)
-    .sort((a, b) => new Date(a.joined_at || a.created_at).getTime() - new Date(b.joined_at || b.created_at).getTime());
+  .filter(s => s.is_approved || s.isApproved)
 
   // Activation Function with Unique Username Fix
   const handleActivate = async (idsToActivate: string[]) => {
