@@ -4,7 +4,6 @@ import { UserCheck, Trash2, Send, CheckCircle, Search, Clock, Save, Lock, AlertT
 
 export default function AdminRegistryTable({ students, setStudents }: { students: any[], setStudents: any }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [adminDelPass, setAdminDelPass] = useState('');
   const [selectedPending, setSelectedPending] = useState<string[]>([]);
   const [selectedActive, setSelectedActive] = useState<string[]>([]);
   const [reminderUserIds, setReminderUserIds] = useState('');
@@ -12,7 +11,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const [reminderTotal, setReminderTotal] = useState('');
   const [reminderMonth, setReminderMonth] = useState('May');
 
-  // Cross-browser safe date formatter to prevent "Invalid Date"
+  // Cross-browser safe date formatter
   const formatDate = (dateStr: string) => {
     if (!dateStr) return 'N/A';
     const fixedStr = dateStr.includes(' ') && !dateStr.includes('T') ? dateStr.replace(' ', 'T') : dateStr;
@@ -20,7 +19,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     return isNaN(d.getTime()) ? 'Invalid Date' : d.toLocaleString();
   };
 
-  // Basic filtering. For a real app, query supabase directly for better performance.
   const filteredStudents = students.filter(s =>
     s.nic?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.whatsapp?.includes(searchTerm) ||
@@ -36,33 +34,60 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     .filter(s => s.is_approved)
     .sort((a, b) => new Date(a.joined_at || a.created_at).getTime() - new Date(b.joined_at || b.created_at).getTime());
 
-  // Updated handleActivate to accept single ID string or Array of IDs
-const handleActivate = async (student: any) => {
-  // ස්ථිර යූසර්නේම් එකක් හදනවා (Reg No එක)
-  const username = `${student.first_name.charAt(0).toUpperCase()}${student.last_name.charAt(0).toUpperCase()}${student.nic.slice(-2)}${student.whatsapp.slice(-2)}`;
-  
-  const { data, error } = await supabase
-    .from('students')
-    .update({
-      is_approved: true,
-      is_paid: true,
-      username: username,      // මේකෙන් පෙන්ඩින් යූසර්නේම් එක ඉවර වෙනවා
-      password: student.nic    
-    })
-    .eq('id', student.id);
+  // ✅ එකවර කිහිප දෙනෙක් හෝ එක් අයෙක් Activate කිරීම සඳහා නිවැරදි කළ Function එක
+  const handleActivate = async (idsToActivate: string[]) => {
+    if (!idsToActivate || idsToActivate.length === 0) return;
+    if (!confirm(`මෙම සිසුන් ${idsToActivate.length} දෙනාගේ ගිණුම් සක්‍රීය (Activate) කිරීමට අවශ්‍යද?`)) return;
 
-  if (error) {
-    console.error("Error:", error);
-    alert("අවුලක් ආවා: " + error.message);
-  } else {
-    alert("සාර්ථකව ඇක්ටිව් කරන ලදී!");
-    // පේජ් එක රීලෝඩ් කරන්න
-    window.location.reload(); 
-  }
-};
+    try {
+      for (const id of idsToActivate) {
+        // අදාළ සිසුවාව සොයා ගැනීම
+        const student = students.find(s => s.id === id);
+        if (!student) continue;
 
+        // දත්ත (Null/Undefined) පරීක්ෂා කිරීම (Crash වීම වළක්වයි)
+        const safeName = student.name || 'Student';
+        const nameParts = safeName.split(' ');
+        const firstChar = (nameParts[0] || 'S').charAt(0).toUpperCase();
+        const lastChar = (nameParts[nameParts.length - 1] || 'T').charAt(0).toUpperCase();
+
+        const nicSuffix = (student.nic && student.nic.length >= 2) ? student.nic.slice(-2) : '00';
+        const waSuffix = (student.whatsapp && student.whatsapp.length >= 2) ? student.whatsapp.slice(-2) : '00';
+        
+        const username = `${firstChar}${lastChar}${nicSuffix}${waSuffix}`;
+        const password = student.nic || username; // NIC එක නැත්නම් Username එක Password එක වේ
+
+        // Database එකට යැවීම
+        const { error } = await supabase
+          .from('students')
+          .update({
+            is_approved: true,
+            is_paid: true,
+            username: username,
+            password: password
+          })
+          .eq('id', id);
+
+        if (error) {
+          console.error(`Error activating student ${id}:`, error.message);
+          alert(`සිසුවා (ID: ${id}) සක්‍රීය කිරීමේදී දෝෂයක්: ` + error.message);
+        }
+      }
+
+      alert("සාර්ථකව ඇක්ටිව් කරන ලදී!");
+      window.location.reload(); // දත්ත අලුත් කර පෙන්වීමට Reload කිරීම
+
+    } catch (err) {
+      console.error("Activation crashed:", err);
+      alert("පද්ධතියේ දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
+    }
+  };
+
+  // ✅ Pending සිසුන් එකවර හෝ තනි තනිව මැකීම (Delete)
   const handleDeletePending = async (ids: string[]) => {
-    if (!confirm('මෙම පෙන්ඩින් දත්ත මැකීමට අවශ්‍යද?')) return;
+    if (!ids || ids.length === 0) return;
+    if (!confirm(`මෙම පෙන්ඩින් දත්ත ${ids.length}ක් මැකීමට අවශ්‍යද?`)) return;
+    
     for (const id of ids) {
       await supabase.from('students').delete().eq('id', id);
     }
@@ -70,13 +95,18 @@ const handleActivate = async (student: any) => {
     setSelectedPending([]);
   };
 
+  // ✅ Active සිසුන් මුරපදය සහිතව මැකීම (Admin Password Required)
   const handleDeleteActive = async (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    
     const pass = prompt('ඇඩ්මින් මුරපදය ඇතුලත් කරන්න (Admin Password Required):');
     if (pass !== 'admin123') {
       alert('මුරපදය වැරදියි!');
       return;
     }
+    
     if (!confirm(`මෙම ක්‍රියාකාරී ගිණුම් ${ids.length}ක් මැකීමට අවශ්‍යද?`)) return;
+    
     for (const id of ids) {
       await supabase.from('students').delete().eq('id', id);
     }
@@ -92,6 +122,7 @@ const handleActivate = async (student: any) => {
     setStudents((prev: any) => prev.map((s: any) => s.id === id ? { ...s, active_months: newMonths } : s));
   };
 
+  // Select/Deselect All Checkboxes
   const toggleSelectAll = (isPending: boolean) => {
     if (isPending) {
       setSelectedPending(prev => prev.length === pendingStudents.length ? [] : pendingStudents.map(s => s.id));
@@ -100,6 +131,7 @@ const handleActivate = async (student: any) => {
     }
   };
 
+  // Single Checkbox Selection
   const toggleSelection = (id: string, isPending: boolean) => {
     if (isPending) {
       setSelectedPending(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -219,7 +251,6 @@ const handleActivate = async (student: any) => {
              {activeStudents.filter(s => {
                 const now = new Date();
                 const currentMonthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-                // Fixed column name checks for both cases
                 const paidMonths = s.active_months || s.activeMonths || [];
                 return !paidMonths.includes(currentMonthStr);
              }).map(st => (
@@ -271,7 +302,7 @@ const handleActivate = async (student: any) => {
             const message = `*TA Physics Online Hub - Payment Reminder*\n\nDear Student,\nYour payment for the month of *${reminderMonth}* is pending.\n\n*Fees Breakdown:*\n${reminderFees}\n*Total Due: Rs. ${reminderTotal}*\n\nPlease make the payment to restore your portal access. Thank you!`;
             alert(`Message Ready to Send to IDs: ${reminderUserIds}\n\n${message}\n\n(In a full backend setup this triggers the WhatsApp cloud API)`);
           }} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-xl transition mt-2 text-xs">
-            Generate &amp; Send Notifications
+            Generate & Send Notifications
           </button>
         </div>
       </div>

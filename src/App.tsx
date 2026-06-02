@@ -310,7 +310,7 @@ export default function App() {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: string) => {
+  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes") => {
     setActiveAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -392,9 +392,33 @@ export default function App() {
     setForgotNIC('');
   };
 
+  // NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
+  const checkNICExists = async (nicValue: string) => {
+    if (!nicValue) return false;
+    
+    const { data, error } = await supabase
+      .from('students')
+      .select('nic')
+      .eq('nic', nicValue)
+      .single(); 
+
+    if (data) {
+      alert("මෙම NIC අංකයෙන් දැනටමත් ගිණුමක් ලියාපදිංචි කර ඇත!");
+      return true; 
+    }
+    return false; 
+  };
+
   // Student direct registration submission from student app view
-  const handleStudentRegistrationSubmit = (e: React.FormEvent) => {
+  const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 1. මුලින්ම NIC එක Database එකේ තියෙනවද බලනවා
+    const isDuplicate = await checkNICExists(regNIC); 
+    
+    if (isDuplicate) {
+      return; // Duplicate නම් මෙතැනින් නවතිනවා. පහළ කේතය වැඩ කරන්නේ නෑ.
+    }
     
     // Validate fields strictly
     const errors: { [key: string]: boolean } = {};
@@ -469,7 +493,7 @@ export default function App() {
       mobile: regMobile,
       is_paid: false,
       is_approved: false,
-      active_months: [],
+      activeMonths: [],
       joined_at: new Date().toISOString()
     }]).then(({ error }) => {
       if (error) {
@@ -698,7 +722,7 @@ export default function App() {
       mobile: manMobile,
       is_paid: true,
       is_approved: true, // Manual generations are auto-approved
-      active_months: initialMonths,
+      activeMonths: initialMonths,
       plan_type: manFreeToggle ? 'free' : 'paid',
       joined_at: new Date().toISOString()
     };
