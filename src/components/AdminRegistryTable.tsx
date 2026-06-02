@@ -26,6 +26,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     s.username?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // is_approved මත පදනම්ව සිසුන් වෙන් කිරීම (Logic Fix)
   const pendingStudents = filteredStudents
     .filter(s => !s.is_approved)
     .sort((a, b) => new Date(b.joined_at || b.created_at).getTime() - new Date(a.joined_at || a.created_at).getTime());
@@ -34,20 +35,18 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     .filter(s => s.is_approved)
     .sort((a, b) => new Date(a.joined_at || a.created_at).getTime() - new Date(b.joined_at || b.created_at).getTime());
 
-  // ✅ එකවර කිහිප දෙනෙක් හෝ එක් අයෙක් Activate කිරීම සඳහා නිවැරදි කළ Function එක
+  // එකවර කිහිප දෙනෙක් හෝ එක් අයෙක් Activate කිරීම සඳහා වූ Function එක
   const handleActivate = async (idsToActivate: string[]) => {
     if (!idsToActivate || idsToActivate.length === 0) return;
     if (!confirm(`මෙම සිසුන් ${idsToActivate.length} දෙනාගේ ගිණුම් සක්‍රීය (Activate) කිරීමට අවශ්‍යද?`)) return;
 
     try {
-      const successfulUpdates: any[] = []; // සාර්ථකව Active වූ සිසුන්ගේ දත්ත තාවකාලිකව තබාගැනීමට
+      const successfulUpdates: any[] = []; 
 
       for (const id of idsToActivate) {
-        // අදාළ සිසුවාව සොයා ගැනීම
         const student = students.find(s => s.id === id);
         if (!student) continue;
 
-        // දත්ත (Null/Undefined) පරීක්ෂා කිරීම (Crash වීම වළක්වයි)
         const safeName = student.name || 'Student';
         const nameParts = safeName.split(' ');
         const firstChar = (nameParts[0] || 'S').charAt(0).toUpperCase();
@@ -57,9 +56,8 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         const waSuffix = (student.whatsapp && student.whatsapp.length >= 2) ? student.whatsapp.slice(-2) : '00';
         
         const username = `${firstChar}${lastChar}${nicSuffix}${waSuffix}`;
-        const password = student.nic || username; // NIC එක නැත්නම් Username එක Password එක වේ
+        const password = student.nic || username; 
 
-        // Database එකට යැවීම
         const { error } = await supabase
           .from('students')
           .update({
@@ -74,12 +72,11 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           console.error(`Error activating student ${id}:`, error.message);
           alert(`සිසුවා (ID: ${id}) සක්‍රීය කිරීමේදී දෝෂයක්: ` + error.message);
         } else {
-          // සාර්ථක වූ දත්ත Array එකට එකතු කිරීම
           successfulUpdates.push({ id, username, password });
         }
       }
 
-      // ✅ Page එක Refresh කරන්නේ නැතිව React State එක මගින් දත්ත අලුත් කිරීම
+      // React State එක මගින් දත්ත අලුත් කර වහාම Active ලිස්ට් එකට මාරු කිරීම
       setStudents((prev: any) => 
         prev.map((student: any) => {
           const updatedInfo = successfulUpdates.find(u => u.id === student.id);
@@ -96,7 +93,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         })
       );
 
-      setSelectedPending([]); // Select කරපු Checkboxes ටික හිස් කිරීම
+      setSelectedPending([]); 
       alert("සාර්ථකව ඇක්ටිව් කරන ලදී!");
 
     } catch (err) {
@@ -105,7 +102,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     }
   };
 
-  // ✅ Pending සිසුන් එකවර හෝ තනි තනිව මැකීම (Delete)
+  // Pending සිසුන් මැකීම
   const handleDeletePending = async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
     if (!confirm(`මෙම පෙන්ඩින් දත්ත ${ids.length}ක් මැකීමට අවශ්‍යද?`)) return;
@@ -117,7 +114,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     setSelectedPending([]);
   };
 
-  // ✅ Active සිසුන් මුරපදය සහිතව මැකීම (Admin Password Required)
+  // Active සිසුන් මැකීම
   const handleDeleteActive = async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
     
@@ -144,7 +141,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     setStudents((prev: any) => prev.map((s: any) => s.id === id ? { ...s, active_months: newMonths } : s));
   };
 
-  // Select/Deselect All Checkboxes
+  // Checkboxes සියල්ල සිලෙක්ට් කිරීම
   const toggleSelectAll = (isPending: boolean) => {
     if (isPending) {
       setSelectedPending(prev => prev.length === pendingStudents.length ? [] : pendingStudents.map(s => s.id));
@@ -153,7 +150,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     }
   };
 
-  // Single Checkbox Selection
+  // Checkbox එක බැගින් සිලෙක්ට් කිරීම
   const toggleSelection = (id: string, isPending: boolean) => {
     if (isPending) {
       setSelectedPending(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -201,15 +198,16 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
             {pendingStudents.map(st => (
               <div key={st.id} className="bg-slate-950/40 p-3 flex gap-3 border border-slate-800/50 rounded-xl">
-                 <input 
-                   type="checkbox" 
-                   id={`pending-${st.id}`} 
-                   name={`pending-${st.id}`} 
-                   aria-label={`Select pending student ${st.name}`}
-                   checked={selectedPending.includes(st.id)} 
-                   onChange={() => toggleSelection(st.id, true)} 
-                   className="mt-1" 
-                 />
+                 <label htmlFor={`pending-${st.id}`} className="mt-1 cursor-pointer flex items-start">
+                   <input 
+                     type="checkbox" 
+                     id={`pending-${st.id}`} 
+                     name={`pending-${st.id}`} 
+                     checked={selectedPending.includes(st.id)} 
+                     onChange={() => toggleSelection(st.id, true)} 
+                     className="cursor-pointer mt-0.5" 
+                   />
+                 </label>
                  <div className="flex-1 space-y-1">
                     <div className="font-bold text-amber-100 text-sm">{st.name}</div>
                     <div className="text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
@@ -246,15 +244,16 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
             {activeStudents.map(st => (
               <div key={st.id} className="bg-slate-900/60 p-3 flex gap-3 border border-slate-800/80 rounded-xl group hover:border-emerald-500/30 transition">
-                 <input 
-                   type="checkbox" 
-                   id={`active-${st.id}`} 
-                   name={`active-${st.id}`} 
-                   aria-label={`Select active student ${st.name}`}
-                   checked={selectedActive.includes(st.id)} 
-                   onChange={() => toggleSelection(st.id, false)} 
-                   className="mt-1" 
-                 />
+                 <label htmlFor={`active-${st.id}`} className="mt-1 cursor-pointer flex items-start">
+                   <input 
+                     type="checkbox" 
+                     id={`active-${st.id}`} 
+                     name={`active-${st.id}`} 
+                     checked={selectedActive.includes(st.id)} 
+                     onChange={() => toggleSelection(st.id, false)} 
+                     className="cursor-pointer mt-0.5" 
+                   />
+                 </label>
                  <div className="flex-1 space-y-1">
                     <div className="flex justify-between items-start">
                       <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
@@ -300,11 +299,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                    <div className="text-[10px] text-slate-400 mt-1">Class: {st.class_types?.join(', ')} | WA: {st.whatsapp}</div>
                  </div>
                  <div className="flex gap-2">
-                   {/* සිසුවාගේ Username & Password පමණක් WhatsApp යවන නව බටන් එක */}
                    <button 
                      onClick={() => {
                        const message = `*TA Physics Online Hub*\n\nYour Login Credentials:\nUsername: *${st.username}*\nPassword: *${st.password}*`;
-                       // ලංකාවේ අංක වල මුලට 94 එකතු කිරීම (0 හැර)
                        const formattedNumber = st.whatsapp.startsWith('0') ? `94${st.whatsapp.slice(1)}` : st.whatsapp;
                        const cleanNumber = formattedNumber.replace(/[^0-9]/g, '');
                        window.open(`https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`, '_blank');
@@ -313,7 +310,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                    >
                      Send Creds 🔑
                    </button>
-
                    <button onClick={() => setReminderUserIds(prev => prev.includes(st.username) ? prev : [...prev.split(',').map(s => s.trim()).filter(Boolean), st.username].join(', '))} className="text-[10px] bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 px-2 py-1 rounded-md cursor-pointer hover:bg-indigo-600 hover:text-white transition">Select</button>
                  </div>
                </div>
@@ -321,6 +317,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           </div>
         </div>
 
+        {/* WhatsApp Reminder Box */}
         <div className="flex-1 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5"><Send size={14} className="text-blue-400" /> Send WhatsApp Reminder</h3>
           <input
