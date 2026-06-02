@@ -1,112 +1,115 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Check, X, Plus, Minus, Search } from 'lucide-react';
+import { Search, CheckCircle, Gift, Plus, Trash2, Layers } from 'lucide-react';
 
 export default function AdminPaymentManager({ students, setStudents }: { students: any[], setStudents: any }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedMonth, setSelectedMonth] = useState('2026-06'); // ස්ක්‍රීන්ෂොට් එකේ ඇති පරිදි Default ජුනි
-  const [selectedClass, setSelectedClass] = useState('All');
-  const [newClassInput, setNewClassInput] = useState('');
+  const [globalClasses, setGlobalClasses] = useState<string[]>([]);
+  const [inputMonth, setInputMonth] = useState('2026-06'); // Default Year-Month
+  const [inputStatus, setInputStatus] = useState<'paid' | 'free'>('paid');
 
-  // 1. ඇක්ටිව් (Approved) සිසුන් පමණක් පෙරීම සහ සෙවීම් සිදුකිරීම
+  // 1. Global Config එකෙන් පන්ති වර්ග ඔටෝ ලෝඩ් කරගැනීම
+  useEffect(() => {
+    const fetchGlobalConfig = async () => {
+      const { data, error } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
+      if (!error && data?.class_rates_text) {
+        const classes = data.class_rates_text.split(',').map((item: string) => item.split(':')[0].trim());
+        setGlobalClasses(classes);
+      } else {
+        setGlobalClasses(['2027 Theory', '2027 Revision']);
+      }
+    };
+    fetchGlobalConfig();
+  }, []); // <-- මෙතන තිබ්බ bracket එකේ අවුල දැන් සම්පූර්ණයෙන්ම හැදුවා!
+
+  // 2. ඇක්ටිව් (Approved) සිසුන් පමණක් ෆිල්ටර් කර ගැනීම
   const activeStudents = students.filter(s => {
     const isApproved = s.is_approved || s.isApproved;
     if (!isApproved) return false;
 
-    // සෙවුම් පද වලට ගැලපේදැයි බැලීම
-    const matchesSearch = 
+    return (
       s.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.nic?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       s.whatsapp?.includes(searchTerm) ||
-      s.username?.toLowerCase().includes(searchTerm.toLowerCase());
-
-    // පන්ති වර්ගය අනුව පෙරීම
-    const classes = s.class_types || s.classTypes || [];
-    const matchesClass = selectedClass === 'All' || classes.includes(selectedClass);
-
-    return matchesSearch && matchesClass;
+      s.username?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
   });
 
-  // 2. මාසික ගෙවීම් තත්ත්වය අනුව සිසුන් කොටස් 3කට වෙන් කිරීම (Logic)
-  const unpaidStudents = activeStudents.filter(s => {
-    const paidMonths = s.active_months || s.activeMonths || [];
-    const freeMonths = s.free_months || s.freeMonths || [];
-    return !paidMonths.includes(selectedMonth) && !freeMonths.includes(selectedMonth);
-  });
-
-  const paidStudents = activeStudents.filter(s => {
-    const paidMonths = s.active_months || s.activeMonths || [];
-    return paidMonths.includes(selectedMonth);
-  });
-
-  const freeStudents = activeStudents.filter(s => {
-    const freeMonths = s.free_months || s.freeMonths || [];
-    return freeMonths.includes(selectedMonth);
-  });
-
-  // 3. ගෙවීම් තත්ත්වයන් Database එකේ අප්ඩේට් කරන Function එක
-  const updatePaymentStatus = async (studentId: string, targetColumn: 'paid' | 'free' | 'unpaid') => {
+  // 3. කාඩ් එකක් මාක් කිරීමේ ප්‍රධාන Function එක (Mark Card Logic)
+  const handleMarkCard = async (studentId: string, className: string, monthStr: string, status: 'paid' | 'free') => {
+    if (!monthStr) return;
     const student = students.find(s => s.id === studentId);
     if (!student) return;
 
-    let currentPaidMonths = [...(student.active_months || student.activeMonths || [])];
-    let currentFreeMonths = [...(student.free_months || student.freeMonths || [])];
+    let currentPaid = [...(student.active_months || student.activeMonths || [])];
+    let currentFree = [...(student.free_months || student.freeMonths || [])];
 
-    // කලින් තිබුන තැන් වලින් අදාළ මාසය ඉවත් කිරීම
-    currentPaidMonths = currentPaidMonths.filter(m => m !== selectedMonth);
-    currentFreeMonths = currentFreeMonths.filter(m => m !== selectedMonth);
+    const paymentKey = `${className}:${monthStr}`;
 
-    // අලුත් තත්ත්වය අනුව මාසය ඇතුලත් කිරීම
-    if (targetColumn === 'paid') currentPaidMonths.push(selectedMonth);
-    if (targetColumn === 'free') currentFreeMonths.push(selectedMonth);
+    currentPaid = currentPaid.filter(m => m !== paymentKey);
+    currentFree = currentFree.filter(m => m !== paymentKey);
 
-    // Supabase අප්ඩේට් කිරීම (Snake case සහ Camel case දෙකටම ඔරොත්තු දෙන පරිදි)
+    if (status === 'paid') currentPaid.push(paymentKey);
+    if (status === 'free') currentFree.push(paymentKey);
+
     const { error } = await supabase
       .from('students')
       .update({
-        active_months: currentPaidMonths,
-        free_months: currentFreeMonths
+        active_months: currentPaid,
+        free_months: currentFree
       })
       .eq('id', studentId);
 
     if (error) {
-      alert("ගෙවීම් යාවත්කාලීන කිරීම අසාර්ථකයි: " + error.message);
+      alert("කාඩ්පත මාක් කිරීම අසාර්ථකයි: " + error.message);
     } else {
-      // Local State එක එවලේම අප්ඩේට් කිරීම (තිරය එවලේම මාරු වේ)
       setStudents((prev: any) => prev.map((s: any) => {
         if (s.id === studentId) {
-          return { ...s, active_months: currentPaidMonths, activeMonths: currentPaidMonths, free_months: currentFreeMonths, freeMonths: currentFreeMonths };
+          return { ...s, active_months: currentPaid, activeMonths: currentPaid, free_months: currentFree, freeMonths: currentFree };
         }
         return s;
       }));
     }
   };
 
-  // 4. මැනුවල් පන්ති ඇතුලත් කිරීම හෝ ඉවත් කිරීම (Class Management)
-  const handleClassManagement = async (studentId: string, action: 'add' | 'remove', className: string) => {
+  // 4. මාක් කරන ලද මාසයක් නැවත ඉවත් කිරීම (Unmark / Delete Month)
+  const handleRemoveMonth = async (studentId: string, paymentKey: string) => {
     const student = students.find(s => s.id === studentId);
     if (!student) return;
 
-    let currentClasses = [...(student.class_types || student.classTypes || [])];
+    const currentPaid = (student.active_months || student.activeMonths || []).filter((m: string) => m !== paymentKey);
+    const currentFree = (student.free_months || student.freeMonths || []).filter((m: string) => m !== paymentKey);
 
-    if (action === 'add') {
-      if (!className || currentClasses.includes(className)) return;
-      currentClasses.push(className);
+    const { error } = await supabase
+      .from('students')
+      .update({ active_months: currentPaid, free_months: currentFree })
+      .eq('id', studentId);
+
+    if (!error) {
+      setStudents((prev: any) => prev.map((s: any) => s.id === studentId ? { ...s, active_months: currentPaid, activeMonths: currentPaid, free_months: currentFree, freeMonths: currentFree } : s));
+    }
+  };
+
+  // 5. මැනුවල් ලෙස සිසුවෙකුගේ පන්ති (Class Types) ඇඩ්/රිමූව් කිරීම
+  const handleToggleStudentClass = async (studentId: string, className: string, currentClasses: string[]) => {
+    let updatedClasses = [...currentClasses];
+    if (updatedClasses.includes(className)) {
+      updatedClasses = updatedClasses.filter(c => c !== className);
     } else {
-      currentClasses = currentClasses.filter(c => c !== className);
+      updatedClasses.push(className);
     }
 
     const { error } = await supabase
       .from('students')
-      .update({ class_types: currentClasses })
+      .update({ class_types: updatedClasses })
       .eq('id', studentId);
 
     if (error) {
-      alert("පන්ති දත්ත වෙනස් කිරීමට නොහැකි විය: " + error.message);
+      alert("පන්ති යාවත්කාලීන කිරීමේ දෝෂයක්: " + error.message);
     } else {
       setStudents((prev: any) => prev.map((s: any) => {
         if (s.id === studentId) {
-          return { ...s, class_types: currentClasses, classTypes: currentClasses };
+          return { ...s, class_types: updatedClasses, classTypes: updatedClasses };
         }
         return s;
       }));
@@ -115,126 +118,150 @@ export default function AdminPaymentManager({ students, setStudents }: { student
 
   return (
     <div className="space-y-6">
-      {/* 🛠️ Filter Bar (ස්ක්‍රීන්ෂොට් එකේ පරිදි) */}
-      <div className="flex flex-col md:flex-row gap-4 bg-slate-900/60 p-4 rounded-2xl border border-slate-800">
-        <div className="flex-1">
+      {/* 🔍 සෙවුම් බාධකය */}
+      <div className="bg-slate-900/60 p-4 rounded-3xl border border-slate-800 flex flex-col md:flex-row gap-4 items-center justify-between shadow-xl">
+        <div className="relative w-full md:w-96">
+          <Search className="absolute left-3 top-2.5 text-slate-500" size={18} />
           <input
             type="text"
-            placeholder="Search by Username, NIC, Mobile..."
-            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-white text-sm"
+            placeholder="නම, යූසර්නේම්, NIC මගින් සොයන්න..."
+            className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <div className="flex gap-2">
-          <input 
-            type="month" 
-            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-          />
-          <select 
-            className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-sm"
-            value={selectedClass}
-            onChange={(e) => setSelectedClass(e.target.value)}
-          >
-            <option value="All">All Classes</option>
-            <option value="2027 Theory">2027 Theory</option>
-            <option value="2027 Revision">2027 Revision</option>
-          </select>
+        <div className="text-xs text-slate-400">
+          සක්‍රීය සිසුන් සංඛ්‍යාව: <span className="text-emerald-400 font-bold">{activeStudents.length}</span>
         </div>
       </div>
 
-      {/* 📊 ප්‍රධාන කොටස් 3 (Unpaid / Paid / Free) */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        
-        {/* 🔴 UNPAID COLUMN */}
-        <div className="bg-red-950/10 border border-red-900/20 rounded-3xl p-4 min-h-[400px]">
-          <h3 className="text-red-400 font-bold mb-4 flex justify-between">
-            <span>Unpaid ({selectedMonth})</span>
-            <span className="bg-red-500/10 px-2 rounded text-xs">{unpaidStudents.length}</span>
-          </h3>
-          <div className="space-y-3">
-            {unpaidStudents.map(st => (
-              <StudentCard key={st.id} student={st} onAction={(col) => updatePaymentStatus(st.id, col)} currentColumn="unpaid" onClassChange={handleClassManagement} />
-            ))}
-            {unpaidStudents.length === 0 && <p className="text-slate-600 text-xs text-center py-6">No unpaid students</p>}
-          </div>
-        </div>
+      {/* 📊 මාස්ටර් වගුව */}
+      <div className="bg-slate-900/40 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden backdrop-blur-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead>
+              <tr className="bg-slate-950 border-b border-slate-800 text-slate-300 font-bold">
+                <th className="p-4">සිසුවාගේ විස්තර (Student Details)</th>
+                <th className="p-4">පන්ති වර්ග (Enrolled Classes)</th>
+                <th className="p-4">කාඩ් පත් මාක් කිරීම (Mark Class Card)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {activeStudents.map(st => {
+                const studentClasses = st.class_types || st.classTypes || [];
+                const paidMonths = st.active_months || st.activeMonths || [];
+                const freeMonths = st.free_months || st.freeMonths || [];
 
-        {/* 🟢 PAID COLUMN */}
-        <div className="bg-emerald-950/10 border border-emerald-900/20 rounded-3xl p-4 min-h-[400px]">
-          <h3 className="text-emerald-400 font-bold mb-4 flex justify-between">
-            <span>Paid ({selectedMonth})</span>
-            <span className="bg-emerald-500/10 px-2 rounded text-xs">{paidStudents.length}</span>
-          </h3>
-          <div className="space-y-3">
-            {paidStudents.map(st => (
-              <StudentCard key={st.id} student={st} onAction={(col) => updatePaymentStatus(st.id, col)} currentColumn="paid" onClassChange={handleClassManagement} />
-            ))}
-            {paidStudents.length === 0 && <p className="text-slate-600 text-xs text-center py-6">No paid students found</p>}
-          </div>
-        </div>
+                return (
+                  <tr key={st.id} className="hover:bg-slate-900/40 transition">
+                    <td className="p-4 space-y-1 max-w-[220px]">
+                      <div className="font-bold text-white text-sm">{st.name}</div>
+                      <div className="flex gap-1.5 items-center">
+                        <span className="bg-slate-950 text-blue-400 px-2 py-0.5 rounded text-[10px] border border-blue-500/20 font-mono">{st.username}</span>
+                        <span className="text-slate-500 text-[10px]">NIC: {st.nic || 'N/A'}</span>
+                      </div>
+                    </td>
 
-        {/* 🔵 FREE CARD COLUMN */}
-        <div className="bg-blue-950/10 border border-blue-900/20 rounded-3xl p-4 min-h-[400px]">
-          <h3 className="text-blue-400 font-bold mb-4 flex justify-between">
-            <span>Free Card Students</span>
-            <span className="bg-blue-500/10 px-2 rounded text-xs">{freeStudents.length}</span>
-          </h3>
-          <div className="space-y-3">
-            {freeStudents.map(st => (
-              <StudentCard key={st.id} student={st} onAction={(col) => updatePaymentStatus(st.id, col)} currentColumn="free" onClassChange={handleClassManagement} />
-            ))}
-            {freeStudents.length === 0 && <p className="text-slate-600 text-xs text-center py-6">No free students</p>}
-          </div>
-        </div>
+                    <td className="p-4">
+                      <div className="flex flex-wrap gap-1.5 max-w-[250px]">
+                        {globalClasses.map(cls => {
+                          const isEnrolled = studentClasses.includes(cls);
+                          return (
+                            <button
+                              key={cls}
+                              onClick={() => handleToggleStudentClass(st.id, cls, studentClasses)}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-medium transition flex items-center gap-1 cursor-pointer border ${
+                                isEnrolled 
+                                  ? 'bg-blue-500/10 text-blue-400 border-blue-500/30 font-bold' 
+                                  : 'bg-slate-950 text-slate-600 border-transparent hover:border-slate-800'
+                              }`}
+                            >
+                              <Layers size={10} />
+                              {cls}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </td>
 
-      </div>
-    </div>
-  );
-}
+                    <td className="p-4 space-y-3">
+                      {studentClasses.length === 0 ? (
+                        <span className="text-slate-600 italic text-[11px]">කිසිදු පන්තියක් තෝරාගෙන නැත.</span>
+                      ) : (
+                        studentClasses.map((studentClass: string) => {
+                          const classPaidMonths = paidMonths.filter((m: string) => m.startsWith(`${studentClass}:`));
+                          const classFreeMonths = freeMonths.filter((m: string) => m.startsWith(`${studentClass}:`));
 
-// 📇 සිසුවාගේ කාඩ්පත සහ පන්ති කළමනාකරණ Component එක
-function StudentCard({ student, onAction, currentColumn, onClassChange }: { student: any, onAction: (col: any) => void, currentColumn: string, onClassChange: (id: string, act: 'add' | 'remove', name: string) => void }) {
-  const classes = student.class_types || student.classTypes || [];
-  
-  return (
-    <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl space-y-2 text-xs">
-      <div className="flex justify-between items-start">
-        <div>
-          <h4 className="font-bold text-white">{student.name}</h4>
-          <p className="text-[10px] text-slate-500">ID: {student.username || 'N/A'}</p>
-        </div>
-        
-        {/* Quick Action Buttons */}
-        <div className="flex gap-1">
-          {currentColumn !== 'paid' && <button onClick={() => onAction('paid')} className="bg-emerald-600/20 text-emerald-400 px-1.5 py-0.5 rounded text-[10px] hover:bg-emerald-600 hover:text-white transition cursor-pointer">Set Paid</button>}
-          {currentColumn !== 'free' && <button onClick={() => onAction('free')} className="bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded text-[10px] hover:bg-blue-600 hover:text-white transition cursor-pointer">Set Free</button>}
-          {currentColumn !== 'unpaid' && <button onClick={() => onAction('unpaid')} className="bg-red-600/20 text-red-400 px-1.5 py-0.5 rounded text-[10px] hover:bg-red-600 hover:text-white transition cursor-pointer">Unpaid</button>}
-        </div>
-      </div>
+                          return (
+                            <div key={studentClass} className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+                              <div className="space-y-1.5">
+                                <span className="text-slate-300 font-bold text-[11px] block">{studentClass}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {classPaidMonths.length === 0 && classFreeMonths.length === 0 && (
+                                    <span className="bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded text-[9px] font-bold">UNPAID (මුලික අවස්ථාව)</span>
+                                  )}
+                                  
+                                  {classPaidMonths.map((m: string) => {
+                                    const monthVal = m.split(':')[1];
+                                    return (
+                                      <span key={m} className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold flex items-center gap-1">
+                                        <CheckCircle size={10} /> Paid ({monthVal})
+                                        <Trash2 size={10} className="text-red-400 hover:text-red-500 cursor-pointer ml-1" onClick={() => handleRemoveMonth(st.id, m)} />
+                                      </span>
+                                    );
+                                  })}
 
-      {/* 📚 සිසුවාගේ පන්ති පෙන්වීම සහ ඉවත් කිරීම */}
-      <div className="flex flex-wrap gap-1 items-center">
-        <span className="text-[10px] text-slate-400">Classes:</span>
-        {classes.map((cls: string) => (
-          <span key={cls} className="bg-slate-950 text-slate-300 px-1.5 py-0.5 rounded-md flex items-center gap-1 border border-slate-800">
-            {cls}
-            <X size={10} className="text-red-400 cursor-pointer hover:text-red-600" onClick={() => onClassChange(student.id, 'remove', cls)} />
-          </span>
-        ))}
-        
-        {/* ➕ පන්තියක් මැනුවල් ඇඩ් කිරීමේ බොත්තම */}
-        <button 
-          onClick={() => {
-            const newCls = prompt("ඇතුලත් කිරීමට අවශ්‍ය පන්තියේ නම (e.g. 2027 Theory):");
-            if(newCls) onClassChange(student.id, 'add', newCls);
-          }}
-          className="bg-slate-800 text-slate-400 p-0.5 rounded hover:bg-slate-700 text-[10px]"
-        >
-          <Plus size={10} />
-        </button>
+                                  {classFreeMonths.map((m: string) => {
+                                    const monthVal = m.split(':')[1];
+                                    return (
+                                      <span key={m} className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold flex items-center gap-1">
+                                        <Gift size={10} /> Free ({monthVal})
+                                        <Trash2 size={10} className="text-red-400 hover:text-red-500 cursor-pointer ml-1" onClick={() => handleRemoveMonth(st.id, m)} />
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 self-end sm:self-center bg-slate-950 p-1 rounded-lg border border-slate-800">
+                                <input
+                                  type="month"
+                                  className="bg-transparent border-none text-white text-[11px] focus:outline-none font-mono"
+                                  defaultValue={inputMonth}
+                                  onChange={(e) => setInputMonth(e.target.value || '2026-06')}
+                                />
+                                <select
+                                  className="bg-slate-900 border border-slate-800 text-slate-300 rounded text-[10px] p-0.5 focus:outline-none"
+                                  defaultValue={inputStatus}
+                                  onChange={(e) => setInputStatus(e.target.value as any)}
+                                >
+                                  <option value="paid">Paid</option>
+                                  <option value="free">Free</option>
+                                </select>
+                                <button
+                                  onClick={() => handleMarkCard(st.id, studentClass, inputMonth, inputStatus)}
+                                  className="bg-blue-600 hover:bg-blue-500 text-white p-1 rounded transition cursor-pointer"
+                                  title="කාඩ්පත මාක් කරන්න"
+                                >
+                                  <Plus size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {activeStudents.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="p-8 text-center text-slate-500 italic">කිසිදු සක්‍රීය සිසුවෙකු හමු නොවීය.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
