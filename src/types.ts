@@ -70,4 +70,6 @@ export interface SiteConfig {
   contactPhone: string;
   classRatesText?: string;
   classScheduleText?: string;
+  directorImage: string;
+  directorTitle: string;
 }
