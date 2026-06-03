@@ -45,7 +45,8 @@ export default function PaymentManager() {
   }, []);
 
   const fetchData = async () => {
-    const { data: stdData } = await supabase.from('students').select('*').order('name');
+    const { data: stdData, error: stdError } = await supabase.from('students').select('*').order('name');
+    if (stdError) console.error("Error fetching students:", stdError);
     if (stdData) {
       const formattedStudents = stdData.map((s: any) => ({
         ...s,
@@ -54,7 +55,8 @@ export default function PaymentManager() {
       setStudents(formattedStudents);
     }
 
-    const { data: payData } = await supabase.from('payments').select('*');
+    const { data: payData, error: payError } = await supabase.from('payments').select('*');
+    if (payError) console.error("Error fetching payments:", payError);
     if (payData) setPayments(payData);
 
     const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
@@ -85,13 +87,15 @@ export default function PaymentManager() {
       }
     }
 
+    // Optimistic UI Update
     setPayments(prev => {
       const exists = prev.find((p: any) => p.record_id === recordId);
       if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
       return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
     });
 
-    await supabase.from('payments').upsert({
+    // Database Update with Error Handling
+    const { error } = await supabase.from('payments').upsert({
       record_id: recordId,
       student_id: studentId,
       month: monthKey,
@@ -100,6 +104,11 @@ export default function PaymentManager() {
       reminder_sent: reminderStatus,
       whatsapp_sent: whatsappStatus
     }, { onConflict: 'record_id' });
+
+    if (error) {
+      console.error("Payment status save failed:", error);
+      alert("දත්ත සුරැකීමේදී දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
+    }
   };
 
   const sendDashboardReminder = async (studentId: string, monthKey: string, specificClass: string | null = null) => {
@@ -108,6 +117,7 @@ export default function PaymentManager() {
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
     let sentCount = 0;
+    let hasError = false;
 
     for (const cName of classesToRemind) {
       const recordId = `${studentId}_${monthKey}_${cName}`;
@@ -115,7 +125,7 @@ export default function PaymentManager() {
       const currentStatus = existing ? existing.status : 'unpaid';
 
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
-        await supabase.from('payments').upsert({
+        const { error } = await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: studentId,
           month: monthKey,
@@ -124,27 +134,33 @@ export default function PaymentManager() {
           reminder_sent: true
         }, { onConflict: 'record_id' });
 
-        setPayments(prev => {
-          const exists = prev.find((p: any) => p.record_id === recordId);
-          if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
-          return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: currentStatus, reminder_sent: true }];
-        });
-
-        if (student?.username) {
-          const today = new Date().toISOString().split('T')[0];
-          await supabase.from('announcements').insert({
-            title: `පන්ති ගාස්තු සිහිකැඳවීමයි! (${monthName})`,
-            content: `ඔබගේ ${monthName} මාසයේ [${cName}] පන්තිය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ඉක්මනින් ගෙවීම් සිදු කරන්න.`,
-            date: today,
-            type: 'private',
-            target_user: student.username
+        if (error) {
+          console.error("Dashboard Reminder save failed:", error);
+          hasError = true;
+        } else {
+          setPayments(prev => {
+            const exists = prev.find((p: any) => p.record_id === recordId);
+            if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
+            return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: currentStatus, reminder_sent: true }];
           });
+
+          if (student?.username) {
+            const today = new Date().toISOString().split('T')[0];
+            await supabase.from('announcements').insert({
+              title: `පන්ති ගාස්තු සිහිකැඳවීමයි! (${monthName})`,
+              content: `ඔබගේ ${monthName} මාසයේ [${cName}] පන්තිය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ඉක්මනින් ගෙවීම් සිදු කරන්න.`,
+              date: today,
+              type: 'private',
+              target_user: student.username
+            });
+          }
+          sentCount++;
         }
-        sentCount++;
       }
     }
 
-    if (sentCount > 0) alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
+    if (hasError) alert('සමහර සිහිකැඳවීම් Save වීමේදී ගැටළුවක් ඇති විය.');
+    else if (sentCount > 0) alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
     else alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත හෝ Reminder යවා ඇත.');
   };
 
@@ -158,7 +174,7 @@ export default function PaymentManager() {
       const currentStatus = existing ? existing.status : 'unpaid';
 
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
-        await supabase.from('payments').upsert({
+        const { error } = await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: student.id,
           month: monthKey,
@@ -167,11 +183,16 @@ export default function PaymentManager() {
           whatsapp_sent: true
         }, { onConflict: 'record_id' });
 
-        setPayments(prev => {
-          const exists = prev.find((p: any) => p.record_id === recordId);
-          if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
-          return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_name: cName, status: currentStatus, whatsapp_sent: true }];
-        });
+        if (error) {
+          console.error("WhatsApp status save failed:", error);
+          alert("WhatsApp තත්වය Save කිරීම අසාර්ථක විය!");
+        } else {
+          setPayments(prev => {
+            const exists = prev.find((p: any) => p.record_id === recordId);
+            if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
+            return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_name: cName, status: currentStatus, whatsapp_sent: true }];
+          });
+        }
       }
     }
 
@@ -189,7 +210,8 @@ export default function PaymentManager() {
 
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
     setStudents(prev => prev.map((s: any) => s.id === studentId ? { ...s, class_types: newClasses } : s));
-    await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
+    const { error } = await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
+    if (error) console.error("Error updating student classes:", error);
   };
 
   const getMonthButtonStyle = (student: any, monthKey: string) => {
@@ -301,7 +323,6 @@ export default function PaymentManager() {
               {months.map((m, idx) => {
                 const monthKey = `${selectedYear}-${m}`;
                 
-                // 🎯 අදාළ මාසයේ පන්ති දත්ත විමර්ශනය කිරීම
                 const studentClasses = student.class_types || [];
                 let reminderCount = 0;
                 let whatsappCount = 0;
@@ -311,7 +332,6 @@ export default function PaymentManager() {
                   const paymentInfo = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`);
                   const status = paymentInfo?.status || 'unpaid';
                   
-                  // සලකා බලන්නේ ගෙවා නැති (Unpaid) පන්ති පමණි
                   if (status !== 'paid' && status !== 'free') {
                     unpaidCount++;
                     if (paymentInfo?.reminder_sent) reminderCount++;
@@ -319,7 +339,6 @@ export default function PaymentManager() {
                   }
                 });
 
-                // 🎯 1/2/3 හෝ සියල්ලම නම් 'A' ලෙස පෙන්වීමේ ලොජික් එක
                 const showReminder = reminderCount > 0;
                 const reminderText = (reminderCount === unpaidCount && unpaidCount > 0) ? 'A' : reminderCount.toString();
                 
