@@ -35,7 +35,8 @@ export default function PaymentManager() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedYear, setSelectedYear] = useState('2026');
   
-  const [activeModal, setActiveModal] = useState<{ student: any, month: string } | null>(null);
+  // Modal position සඳහා x, y coordinates ද ඇතුළත් කර ඇත
+  const [activeModal, setActiveModal] = useState<{ student: any, month: string, x: number, y: number } | null>(null);
   const [showClassDropdown, setShowClassDropdown] = useState<string | null>(null);
 
   const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
@@ -68,21 +69,20 @@ export default function PaymentManager() {
     const recordId = `${studentId}_${monthKey}_${className}`;
     const student = students.find(s => s.id === studentId);
     
-    // කලින් තිබූ reminder එකේ state එක ලබා ගැනීම
     const existingPayment = payments.find(p => p.record_id === recordId);
     let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
 
-    // 🎯 පියවර B: Status එක 'paid' හෝ 'free' නම් Dashboard Reminder එක Auto අයින් කිරීම
+    // 🎯 අදාළ පන්තියට පමණක් ගෙවූ විට එම පන්තියේ රිමයින්ඩරය පමණක් මැකීම (Fix)
     if (status === 'paid' || status === 'free') {
       reminderStatus = false;
       
       if (student?.username) {
-        // අදාල ශිෂ්‍යයාට යවා ඇති පෞද්ගලික සිහිකැඳවීම් announcements table එකෙන් මැකීම
         await supabase
           .from('announcements')
           .delete()
           .eq('target_user', student.username)
-          .eq('type', 'private');
+          .eq('type', 'private')
+          .ilike('content', `%[${className}]%`); // අදාළ පන්තියේ නම ඇති මැසේජ් එක පමණක් මකා දමයි
       }
     }
 
@@ -114,10 +114,7 @@ export default function PaymentManager() {
       const existing = payments.find(p => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
-      // ගෙවා නොමැති නම් පමණක් Reminder යවයි
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
-        
-        // 1. Payments table එක update කිරීම
         await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: studentId,
@@ -133,7 +130,6 @@ export default function PaymentManager() {
           return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: 'unpaid', reminder_sent: true }];
         });
 
-        // 2. Announcements table එකට Reminder එක ඇතුළත් කිරීම (සිසුවාගේ Dashboard එකට)
         if (student?.username) {
           const today = new Date().toISOString().split('T')[0];
           await supabase.from('announcements').insert({
@@ -144,16 +140,12 @@ export default function PaymentManager() {
             target_user: student.username
           });
         }
-
         sentCount++;
       }
     }
 
-    if (sentCount > 0) {
-      alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
-    } else {
-      alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත.');
-    }
+    if (sentCount > 0) alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
+    else alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත හෝ Reminder යවා ඇත.');
   };
 
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
@@ -195,6 +187,22 @@ export default function PaymentManager() {
     s.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.nic?.includes(searchTerm)
   );
+
+  // 🎯 Modal එක මතුවන ස්ථානය ගණනය කිරීම
+  const handleMonthClick = (e: React.MouseEvent, student: any, monthKey: string) => {
+    // තිරයෙන් පිටතට නොයාමට x, y ඛණ්ඩාංක පාලනය කිරීම (වින්ඩෝවේ පළල ~380px, උස ~400px ලෙස සලකා)
+    const modalWidth = 380;
+    const modalHeight = 450;
+    let x = e.clientX;
+    let y = e.clientY;
+
+    if (x + modalWidth > window.innerWidth) x = window.innerWidth - modalWidth - 20;
+    if (y + modalHeight > window.innerHeight) y = window.innerHeight - modalHeight - 20;
+    if (x < 10) x = 10;
+    if (y < 10) y = 10;
+
+    setActiveModal({ student, month: monthKey, x, y });
+  };
 
   return (
     <div className="p-4 md:p-8 space-y-6">
@@ -267,7 +275,7 @@ export default function PaymentManager() {
                 return (
                   <button
                     key={m}
-                    onClick={() => setActiveModal({ student, month: monthKey })}
+                    onClick={(e) => handleMonthClick(e, student, monthKey)}
                     style={getMonthButtonStyle(student, monthKey)}
                     className="h-10 rounded-xl text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 active:scale-95 flex items-center justify-center opacity-90 hover:opacity-100"
                   >
@@ -281,28 +289,31 @@ export default function PaymentManager() {
       </div>
 
       {activeModal && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setActiveModal(null)}>
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+        <div className="fixed inset-0 z-50 bg-transparent" onClick={() => setActiveModal(null)}>
+          {/* 🎯 ටච් කළ ස්ථානයේම මතුවන කුඩා Modal එක */}
+          <div 
+            className="fixed bg-slate-900 border border-slate-700 rounded-2xl w-[360px] p-5 shadow-[0_0_40px_rgba(0,0,0,0.8)]" 
+            style={{ top: activeModal.y, left: activeModal.x }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
               <div>
-                <h3 className="text-white font-bold text-lg">{activeModal.student.name}</h3>
-                <p className="text-slate-400 text-xs">{activeModal.month} මාසයේ ගෙවීම් පාලනය</p>
+                <h3 className="text-white font-bold text-base">{activeModal.student.name}</h3>
+                <p className="text-slate-400 text-[11px]">{activeModal.month} මාසයේ ගෙවීම් පාලනය</p>
               </div>
-              <button onClick={() => setActiveModal(null)} className="text-slate-500 hover:text-white"><X /></button>
+              <button onClick={() => setActiveModal(null)} className="text-slate-500 hover:text-white"><X size={18} /></button>
             </div>
 
-            <div className="space-y-5 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
               {(activeModal.student.class_types || []).map((className: string) => {
                 const recordId = `${activeModal.student.id}_${activeModal.month}_${className}`;
                 const paymentInfo = payments.find(p => p.record_id === recordId);
                 const status = paymentInfo?.status || 'unpaid';
                 const isReminderSent = paymentInfo?.reminder_sent;
-                
-                // 🎯 පියවර A: ගෙවා ඇතිනම් (Paid/Free) බොත්තම් Disable කිරීම සඳහා Check එක
                 const isPaidOrFree = status === 'paid' || status === 'free';
 
                 return (
-                  <div key={className} className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+                  <div key={className} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-3">
                     <div className="flex justify-between items-center">
                       <span className="text-sm font-bold text-slate-200">{className}</span>
                       {isReminderSent && status === 'unpaid' && (
@@ -317,24 +328,22 @@ export default function PaymentManager() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mt-2">
-                      {/* WhatsApp Button (Disable Logic Added) */}
                       <button 
                         onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} 
                         disabled={isPaidOrFree}
-                        className={`w-full py-2 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                        className={`w-full py-2 text-[10px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
                           isPaidOrFree 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400'
                         }`}
                       >
-                        <MessageCircle size={14} /> WhatsApp {isPaidOrFree ? '(අක්‍රියයි)' : 'යවන්න'}
+                        <MessageCircle size={12} /> WhatsApp {isPaidOrFree ? '(අක්‍රියයි)' : 'යවන්න'}
                       </button>
 
-                      {/* Dashboard Reminder Button (Disable Logic Added) */}
                       <button 
                         onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, className)} 
                         disabled={isPaidOrFree || isReminderSent}
-                        className={`w-full py-2 text-[11px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                        className={`w-full py-2 text-[10px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
                           isPaidOrFree 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : isReminderSent
@@ -342,36 +351,62 @@ export default function PaymentManager() {
                               : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400'
                         }`}
                       >
-                        <LayoutDashboard size={14} /> {isPaidOrFree ? 'Dashboard (අක්‍රියයි)' : isReminderSent ? 'Reminder යවා ඇත' : 'Dashboard යවන්න'}
+                        <LayoutDashboard size={12} /> {isPaidOrFree ? 'Dashboard (අක්‍රියයි)' : isReminderSent ? 'Reminder යවා ඇත' : 'Dashboard යවන්න'}
                       </button>
                     </div>
                   </div>
                 );
               })}
 
-              {/* සියලුම පන්ති සඳහා ඇති බොත්තම්ද ගෙවා ඇත්නම් අක්‍රිය වීම */}
-              {(activeModal.student.class_types || []).length > 1 && (
-                <div className="mt-6 pt-4 border-t border-slate-800 space-y-2">
-                  <span className="text-xs text-slate-500 mb-2 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
-                  <button 
-                    onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} 
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-700"
-                  >
-                    <MessageCircle size={16} /> සියලුම පන්ති වලට WhatsApp බිල්පත
-                  </button>
-                  <button 
-                    onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} 
-                    className="w-full py-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-amber-500/30"
-                  >
-                    <Bell size={16} /> සියලුම පන්ති වලට Dashboard Reminder
-                  </button>
-                </div>
-              )}
+              {/* 🎯 සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග (Fully Paid/Reminder Sent Check) */}
+              {(activeModal.student.class_types || []).length > 1 && (() => {
+                // සිසුවාගේ සියලුම පන්ති වල status පරික්ෂා කිරීම
+                const studentClasses = activeModal.student.class_types || [];
+                const unpaidClasses = studentClasses.filter((c: string) => {
+                  const status = payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.status;
+                  return status !== 'paid' && status !== 'free';
+                });
+                
+                // සියල්ලම ගෙවා ඇත්නම් (Disable All WA & Dashboard Buttons)
+                const isFullyPaid = unpaidClasses.length === 0;
+
+                // ගෙවා නැති සියලුම ඒවට දැනටමත් රිමයින්ඩර් යවා ඇත්නම් (Disable Main Dashboard Reminder Button)
+                const isAllRemindersSent = unpaidClasses.every((c: string) => {
+                  return payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.reminder_sent;
+                });
+
+                return (
+                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                    <span className="text-[11px] text-slate-500 mb-2 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
+                    <button 
+                      onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} 
+                      disabled={isFullyPaid}
+                      className={`w-full py-2 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border ${
+                        isFullyPaid 
+                          ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
+                          : 'bg-slate-800 hover:bg-slate-700 text-green-400 border-slate-700'
+                      }`}
+                    >
+                      <MessageCircle size={14} /> සියලුම පන්ති වලට WhatsApp බිල්පත
+                    </button>
+                    <button 
+                      onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} 
+                      disabled={isFullyPaid || isAllRemindersSent}
+                      className={`w-full py-2 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border ${
+                        isFullyPaid || isAllRemindersSent
+                          ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
+                          : 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border-amber-500/30'
+                      }`}
+                    >
+                      <Bell size={14} /> සියලුම පන්ති වලට Dashboard Reminder
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }
