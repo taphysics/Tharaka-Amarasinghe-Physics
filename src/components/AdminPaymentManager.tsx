@@ -35,8 +35,8 @@ export default function PaymentManager() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedYear, setSelectedYear] = useState('2026');
   
-  // Modal position සඳහා x, y coordinates ද ඇතුළත් කර ඇත
-  const [activeModal, setActiveModal] = useState<{ student: any, month: string, x: number, y: number } | null>(null);
+  // 🎯 Modal එකෙහි නිවැරදි ස්ථානය තබා ගැනීමට top සහ left coordinates භාවිතා කරයි
+  const [activeModal, setActiveModal] = useState<{ student: any, month: string, top: number, left: number } | null>(null);
   const [showClassDropdown, setShowClassDropdown] = useState<string | null>(null);
 
   const months = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
@@ -72,7 +72,6 @@ export default function PaymentManager() {
     const existingPayment = payments.find(p => p.record_id === recordId);
     let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
 
-    // 🎯 අදාළ පන්තියට පමණක් ගෙවූ විට එම පන්තියේ රිමයින්ඩරය පමණක් මැකීම (Fix)
     if (status === 'paid' || status === 'free') {
       reminderStatus = false;
       
@@ -82,7 +81,7 @@ export default function PaymentManager() {
           .delete()
           .eq('target_user', student.username)
           .eq('type', 'private')
-          .ilike('content', `%[${className}]%`); // අදාළ පන්තියේ නම ඇති මැසේජ් එක පමණක් මකා දමයි
+          .ilike('content', `%[${className}]%`);
       }
     }
 
@@ -188,24 +187,31 @@ export default function PaymentManager() {
     s.nic?.includes(searchTerm)
   );
 
-  // 🎯 Modal එක මතුවන ස්ථානය ගණනය කිරීම
+  // 🎯 ටච් කළ බොත්තමට සාපේක්ෂව කෝඩිනේට්ස් ගණනය කිරීමේ නව ක්‍රමවේදය
   const handleMonthClick = (e: React.MouseEvent, student: any, monthKey: string) => {
-    // තිරයෙන් පිටතට නොයාමට x, y ඛණ්ඩාංක පාලනය කිරීම (වින්ඩෝවේ පළල ~380px, උස ~400px ලෙස සලකා)
-    const modalWidth = 380;
-    const modalHeight = 450;
-    let x = e.clientX;
-    let y = e.clientY;
+    const buttonRect = e.currentTarget.getBoundingClientRect();
+    const rootElement = document.getElementById('payment-manager-container');
+    
+    if (!rootElement) return;
+    const rootRect = rootElement.getBoundingClientRect();
 
-    if (x + modalWidth > window.innerWidth) x = window.innerWidth - modalWidth - 20;
-    if (y + modalHeight > window.innerHeight) y = window.innerHeight - modalHeight - 20;
-    if (x < 10) x = 10;
-    if (y < 10) y = 10;
+    // මුළු ලිස්ට් එකේ top එකට සාපේක්ෂව බොත්තම පිහිටි දුර ගණනය කිරීම (Scroll ගැටළු මගහරවයි)
+    let modalTop = buttonRect.bottom - rootRect.top + 6; // බොත්තමට 6px ක් යටින් පෙන්වීමට
+    let modalLeft = buttonRect.left - rootRect.left;
 
-    setActiveModal({ student, month: monthKey, x, y });
+    // වින්ඩෝ එක දකුණු කෙළවරින් පිටතට යාම වැළැක්වීම (Width = 340px)
+    const modalWidth = 340;
+    if (modalLeft + modalWidth > rootElement.clientWidth) {
+      modalLeft = buttonRect.right - rootRect.left - modalWidth;
+    }
+    if (modalLeft < 10) modalLeft = 10;
+
+    setActiveModal({ student, month: monthKey, top: modalTop, left: modalLeft });
   };
 
   return (
-    <div className="p-4 md:p-8 space-y-6">
+    // 🎯 relative ක්ලාස් එක සහ id එක මෙහිදී අනිවාර්ය වේ
+    <div id="payment-manager-container" className="p-4 md:p-8 space-y-6 relative">
       
       <div className="flex gap-4 items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
         <Search className="text-slate-500" />
@@ -289,22 +295,23 @@ export default function PaymentManager() {
       </div>
 
       {activeModal && (
-        <div className="fixed inset-0 z-50 bg-transparent" onClick={() => setActiveModal(null)}>
-          {/* 🎯 ටච් කළ ස්ථානයේම මතුවන කුඩා Modal එක */}
+        // 🎯 මුළු පිටුවම ආවරණය වන පරිදි absolute යොදා ඇති නිසා ඕනෑම තැනක ක්ලික් කිරීමෙන් modal එක වැසී යයි
+        <div className="absolute inset-0 z-50 bg-black/10 backdrop-blur-[1px]" onClick={() => setActiveModal(null)}>
+          {/* 🎯 අදාළ මාසයේ බොත්තමට සාපේක්ෂව ස්ථානගත වන කුඩා වින්ඩෝව */}
           <div 
-            className="fixed bg-slate-900 border border-slate-700 rounded-2xl w-[360px] p-5 shadow-[0_0_40px_rgba(0,0,0,0.8)]" 
-            style={{ top: activeModal.y, left: activeModal.x }}
+            className="absolute bg-slate-900 border border-slate-700 rounded-2xl w-[340px] p-4 shadow-[0_10px_40px_rgba(0,0,0,0.7)] z-50" 
+            style={{ top: activeModal.top, left: activeModal.left }}
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
+            <div className="flex justify-between items-center mb-3 border-b border-slate-800 pb-2">
               <div>
-                <h3 className="text-white font-bold text-base">{activeModal.student.name}</h3>
-                <p className="text-slate-400 text-[11px]">{activeModal.month} මාසයේ ගෙවීම් පාලනය</p>
+                <h3 className="text-white font-bold text-sm truncate max-w-[260px]">{activeModal.student.name}</h3>
+                <p className="text-slate-400 text-[10px]">{activeModal.month} මාසයේ ගෙවීම් පාලනය</p>
               </div>
-              <button onClick={() => setActiveModal(null)} className="text-slate-500 hover:text-white"><X size={18} /></button>
+              <button onClick={() => setActiveModal(null)} className="text-slate-500 hover:text-white"><X size={16} /></button>
             </div>
 
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
               {(activeModal.student.class_types || []).map((className: string) => {
                 const recordId = `${activeModal.student.id}_${activeModal.month}_${className}`;
                 const paymentInfo = payments.find(p => p.record_id === recordId);
@@ -313,25 +320,25 @@ export default function PaymentManager() {
                 const isPaidOrFree = status === 'paid' || status === 'free';
 
                 return (
-                  <div key={className} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-3">
+                  <div key={className} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-2">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-bold text-slate-200">{className}</span>
+                      <span className="text-xs font-bold text-slate-200">{className}</span>
                       {isReminderSent && status === 'unpaid' && (
-                        <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded-md animate-pulse">Reminder Sent</span>
+                        <span className="text-[9px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded animate-pulse">Reminder Sent</span>
                       )}
                     </div>
                     
-                    <div className="grid grid-cols-3 gap-2">
-                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'paid')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'paid' ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Paid</button>
-                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'free')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'free' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Free</button>
-                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'unpaid')} className={`py-1.5 rounded-lg text-xs font-bold transition-all ${status === 'unpaid' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Unpaid</button>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'paid')} className={`py-1 rounded-md text-[11px] font-bold transition-all ${status === 'paid' ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Paid</button>
+                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'free')} className={`py-1 rounded-md text-[11px] font-bold transition-all ${status === 'free' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Free</button>
+                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'unpaid')} className={`py-1 rounded-md text-[11px] font-bold transition-all ${status === 'unpaid' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Unpaid</button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div className="grid grid-cols-2 gap-1.5 mt-1">
                       <button 
                         onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} 
                         disabled={isPaidOrFree}
-                        className={`w-full py-2 text-[10px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                        className={`w-full py-1.5 text-[10px] rounded-md flex flex-col items-center justify-center gap-0.5 border transition-all ${
                           isPaidOrFree 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400'
@@ -343,7 +350,7 @@ export default function PaymentManager() {
                       <button 
                         onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, className)} 
                         disabled={isPaidOrFree || isReminderSent}
-                        className={`w-full py-2 text-[10px] rounded-lg flex flex-col items-center justify-center gap-1 border transition-all ${
+                        className={`w-full py-1.5 text-[10px] rounded-md flex flex-col items-center justify-center gap-0.5 border transition-all ${
                           isPaidOrFree 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : isReminderSent
@@ -358,47 +365,43 @@ export default function PaymentManager() {
                 );
               })}
 
-              {/* 🎯 සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග (Fully Paid/Reminder Sent Check) */}
+              {/* සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග (Main Buttons Disable Logic) */}
               {(activeModal.student.class_types || []).length > 1 && (() => {
-                // සිසුවාගේ සියලුම පන්ති වල status පරික්ෂා කිරීම
                 const studentClasses = activeModal.student.class_types || [];
                 const unpaidClasses = studentClasses.filter((c: string) => {
                   const status = payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.status;
                   return status !== 'paid' && status !== 'free';
                 });
                 
-                // සියල්ලම ගෙවා ඇත්නම් (Disable All WA & Dashboard Buttons)
                 const isFullyPaid = unpaidClasses.length === 0;
-
-                // ගෙවා නැති සියලුම ඒවට දැනටමත් රිමයින්ඩර් යවා ඇත්නම් (Disable Main Dashboard Reminder Button)
                 const isAllRemindersSent = unpaidClasses.every((c: string) => {
                   return payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.reminder_sent;
                 });
 
                 return (
-                  <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
-                    <span className="text-[11px] text-slate-500 mb-2 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
+                  <div className="mt-3 pt-3 border-t border-slate-800 space-y-1.5">
+                    <span className="text-[10px] text-slate-500 mb-1 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
                     <button 
                       onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} 
                       disabled={isFullyPaid}
-                      className={`w-full py-2 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border ${
+                      className={`w-full py-1.5 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 border ${
                         isFullyPaid 
                           ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                           : 'bg-slate-800 hover:bg-slate-700 text-green-400 border-slate-700'
                       }`}
                     >
-                      <MessageCircle size={14} /> සියලුම පන්ති වලට WhatsApp බිල්පත
+                      <MessageCircle size={13} /> සියලුම පන්ති වලට WhatsApp බිල්පත
                     </button>
                     <button 
                       onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} 
                       disabled={isFullyPaid || isAllRemindersSent}
-                      className={`w-full py-2 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border ${
+                      className={`w-full py-1.5 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 border ${
                         isFullyPaid || isAllRemindersSent
                           ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                           : 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border-amber-500/30'
                       }`}
                     >
-                      <Bell size={14} /> සියලුම පන්ති වලට Dashboard Reminder
+                      <Bell size={13} /> සියලුම පන්ති වලට Dashboard Reminder
                     </button>
                   </div>
                 );
