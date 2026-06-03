@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Search, X, Plus, MessageCircle, Bell, LayoutDashboard } from 'lucide-react';
 
-// JSON සහ Array ගැටළුව නිරාකරණය කරන Functions
 const parseStudentClasses = (classTypes: any): string[] => {
   if (!classTypes) return [];
   if (Array.isArray(classTypes)) return classTypes;
@@ -48,7 +47,7 @@ export default function PaymentManager() {
   const fetchData = async () => {
     const { data: stdData } = await supabase.from('students').select('*').order('name');
     if (stdData) {
-      const formattedStudents = stdData.map(s => ({
+      const formattedStudents = stdData.map((s: any) => ({
         ...s,
         class_types: parseStudentClasses(s.class_types)
       }));
@@ -66,13 +65,12 @@ export default function PaymentManager() {
 
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
-    const student = students.find(s => s.id === studentId);
+    const student = students.find((s: any) => s.id === studentId);
     
-    const existingPayment = payments.find(p => p.record_id === recordId);
+    const existingPayment = payments.find((p: any) => p.record_id === recordId);
     let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
     let whatsappStatus = existingPayment ? existingPayment.whatsapp_sent : false;
 
-    // ගෙවීම් සිදුකළ පසු Reminder සහ WhatsApp තත්ත්වයන් Reset වේ
     if (status === 'paid' || status === 'free') {
       reminderStatus = false;
       whatsappStatus = false;
@@ -88,8 +86,8 @@ export default function PaymentManager() {
     }
 
     setPayments(prev => {
-      const exists = prev.find(p => p.record_id === recordId);
-      if (exists) return prev.map(p => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
+      const exists = prev.find((p: any) => p.record_id === recordId);
+      if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
       return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
     });
 
@@ -105,7 +103,7 @@ export default function PaymentManager() {
   };
 
   const sendDashboardReminder = async (studentId: string, monthKey: string, specificClass: string | null = null) => {
-    const student = students.find(s => s.id === studentId);
+    const student = students.find((s: any) => s.id === studentId);
     const classesToRemind = specificClass ? [specificClass] : (student?.class_types || []);
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
@@ -113,7 +111,7 @@ export default function PaymentManager() {
 
     for (const cName of classesToRemind) {
       const recordId = `${studentId}_${monthKey}_${cName}`;
-      const existing = payments.find(p => p.record_id === recordId);
+      const existing = payments.find((p: any) => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
@@ -127,8 +125,8 @@ export default function PaymentManager() {
         }, { onConflict: 'record_id' });
 
         setPayments(prev => {
-          const exists = prev.find(p => p.record_id === recordId);
-          if (exists) return prev.map(p => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
+          const exists = prev.find((p: any) => p.record_id === recordId);
+          if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
           return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: currentStatus, reminder_sent: true }];
         });
 
@@ -150,14 +148,13 @@ export default function PaymentManager() {
     else alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත හෝ Reminder යවා ඇත.');
   };
 
-  // 🎯 WhatsApp තත්ත්වය දත්තගබඩාවේ ස්ථිරවම සුරකින නව සන්නිවේදන ක්‍රමවේදය
   const sendWhatsApp = async (student: any, monthKey: string, specificClass: string | null = null) => {
     const classesToSend = specificClass ? [specificClass] : (student.class_types || []);
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
     for (const cName of classesToSend) {
       const recordId = `${student.id}_${monthKey}_${cName}`;
-      const existing = payments.find(p => p.record_id === recordId);
+      const existing = payments.find((p: any) => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
       if (currentStatus !== 'paid' && currentStatus !== 'free') {
@@ -171,14 +168,13 @@ export default function PaymentManager() {
         }, { onConflict: 'record_id' });
 
         setPayments(prev => {
-          const exists = prev.find(p => p.record_id === recordId);
-          if (exists) return prev.map(p => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
+          const exists = prev.find((p: any) => p.record_id === recordId);
+          if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
           return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_name: cName, status: currentStatus, whatsapp_sent: true }];
         });
       }
     }
 
-    // WhatsApp Message එක සාදා Window එක Open කිරීම
     const baseUrl = window.location.origin; 
     let link = `${baseUrl}/invoice?s=${student.id}&m=${monthKey}`;
     let message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසය සඳහා පන්ති ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
@@ -192,7 +188,7 @@ export default function PaymentManager() {
   };
 
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
-    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, class_types: newClasses } : s));
+    setStudents(prev => prev.map((s: any) => s.id === studentId ? { ...s, class_types: newClasses } : s));
     await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
   };
 
@@ -200,7 +196,7 @@ export default function PaymentManager() {
     const studentClasses = student.class_types || [];
     if (studentClasses.length === 0) return { backgroundColor: '#1e293b' }; 
     const colors = studentClasses.map((cName: string) => {
-      const status = payments.find(p => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
+      const status = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
       if (status === 'paid') return '#10b981'; 
       if (status === 'free') return '#3b82f6'; 
       return '#ef4444'; 
@@ -211,7 +207,7 @@ export default function PaymentManager() {
     return { background: `linear-gradient(to right, ${gradientStops})` };
   };
 
-  const filteredStudents = students.filter(s => 
+  const filteredStudents = students.filter((s: any) => 
     s.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
     s.username?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.nic?.includes(searchTerm)
@@ -251,7 +247,7 @@ export default function PaymentManager() {
       </div>
 
       <div className="space-y-4">
-        {filteredStudents.map(student => (
+        {filteredStudents.map((student: any) => (
           <div key={student.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col xl:flex-row gap-6">
             <div className="xl:w-1/3 space-y-3">
               <div>
@@ -284,7 +280,7 @@ export default function PaymentManager() {
 
                 {showClassDropdown === student.id && (
                   <div className="absolute top-full left-0 mt-2 w-full bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-10 p-2 flex flex-col gap-1 max-h-48 overflow-y-auto">
-                    {allClasses.filter(c => !(student.class_types || []).includes(c)).map(c => (
+                    {allClasses.filter((c: string) => !(student.class_types || []).includes(c)).map((c: string) => (
                         <button 
                           key={c}
                           onClick={() => {
@@ -305,13 +301,30 @@ export default function PaymentManager() {
               {months.map((m, idx) => {
                 const monthKey = `${selectedYear}-${m}`;
                 
-                // 🎯 ප්‍රධාන කොටුව තුළ අයිකන පෙන්වීම සඳහා දත්ත පරීක්ෂාව
+                // 🎯 අදාළ මාසයේ පන්ති දත්ත විමර්ශනය කිරීම
                 const studentClasses = student.class_types || [];
-                const monthPayments = studentClasses.map((cName: string) => 
-                  payments.find(p => p.record_id === `${student.id}_${monthKey}_${cName}`)
-                );
-                const hasReminderSent = monthPayments.some((p: any) => p?.reminder_sent);
-                const hasWhatsAppSent = monthPayments.some((p: any) => p?.whatsapp_sent);
+                let reminderCount = 0;
+                let whatsappCount = 0;
+                let unpaidCount = 0;
+
+                studentClasses.forEach((cName: string) => {
+                  const paymentInfo = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`);
+                  const status = paymentInfo?.status || 'unpaid';
+                  
+                  // සලකා බලන්නේ ගෙවා නැති (Unpaid) පන්ති පමණි
+                  if (status !== 'paid' && status !== 'free') {
+                    unpaidCount++;
+                    if (paymentInfo?.reminder_sent) reminderCount++;
+                    if (paymentInfo?.whatsapp_sent) whatsappCount++;
+                  }
+                });
+
+                // 🎯 1/2/3 හෝ සියල්ලම නම් 'A' ලෙස පෙන්වීමේ ලොජික් එක
+                const showReminder = reminderCount > 0;
+                const reminderText = (reminderCount === unpaidCount && unpaidCount > 0) ? 'A' : reminderCount.toString();
+                
+                const showWhatsApp = whatsappCount > 0;
+                const whatsappText = (whatsappCount === unpaidCount && unpaidCount > 0) ? 'A' : whatsappCount.toString();
 
                 return (
                   <button
@@ -321,10 +334,20 @@ export default function PaymentManager() {
                     className="h-12 rounded-xl text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 active:scale-95 flex flex-col items-center justify-center gap-0.5 opacity-90 hover:opacity-100 relative p-1"
                   >
                     <span>{monthsNames[idx]}</span>
-                    {/* 🎯 යවන ලද පණිවිඩ සඳහා කුඩා සළකුණු (Indicators) */}
-                    <div className="flex gap-1 items-center justify-center h-3">
-                      {hasReminderSent && <Bell size={10} className="text-amber-200 fill-amber-200/20" />}
-                      {hasWhatsAppSent && <MessageCircle size={10} className="text-emerald-200 fill-emerald-200/20" />}
+                    
+                    <div className="flex gap-2 items-center justify-center h-3 mt-0.5">
+                      {showReminder && (
+                        <div className="flex items-center gap-0.5 text-amber-200">
+                          <Bell size={10} className="fill-amber-200/20" />
+                          <span className="text-[10px] font-extrabold">{reminderText}</span>
+                        </div>
+                      )}
+                      {showWhatsApp && (
+                        <div className="flex items-center gap-0.5 text-emerald-200">
+                          <MessageCircle size={10} className="fill-emerald-200/20" />
+                          <span className="text-[10px] font-extrabold">{whatsappText}</span>
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
@@ -352,7 +375,7 @@ export default function PaymentManager() {
             <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
               {(activeModal.student.class_types || []).map((className: string) => {
                 const recordId = `${activeModal.student.id}_${activeModal.month}_${className}`;
-                const paymentInfo = payments.find(p => p.record_id === recordId);
+                const paymentInfo = payments.find((p: any) => p.record_id === recordId);
                 const status = paymentInfo?.status || 'unpaid';
                 const isReminderSent = paymentInfo?.reminder_sent;
                 const isWhatsAppSent = paymentInfo?.whatsapp_sent;
@@ -411,18 +434,18 @@ export default function PaymentManager() {
               {(activeModal.student.class_types || []).length > 1 && (() => {
                 const studentClasses = activeModal.student.class_types || [];
                 const unpaidClasses = studentClasses.filter((c: string) => {
-                  const status = payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.status;
+                  const status = payments.find((p: any) => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.status;
                   return status !== 'paid' && status !== 'free';
                 });
                 
                 const isFullyPaid = unpaidClasses.length === 0;
                 
-                const isAllWhatsAppSent = unpaidClasses.every((c: string) => {
-                  return payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.whatsapp_sent;
+                const isAllWhatsAppSent = unpaidClasses.length > 0 && unpaidClasses.every((c: string) => {
+                  return payments.find((p: any) => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.whatsapp_sent;
                 });
 
-                const isAllRemindersSent = unpaidClasses.every((c: string) => {
-                  return payments.find(p => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.reminder_sent;
+                const isAllRemindersSent = unpaidClasses.length > 0 && unpaidClasses.every((c: string) => {
+                  return payments.find((p: any) => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.reminder_sent;
                 });
 
                 return (
