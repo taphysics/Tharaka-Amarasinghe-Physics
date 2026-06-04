@@ -31,7 +31,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const activeStudents = filteredStudents
     .filter(s => s.is_approved || s.isApproved)
 
-  // Activation Function with Unique Username Fix
   const handleActivate = async (idsToActivate: string[]) => {
     if (!idsToActivate || idsToActivate.length === 0) return;
     if (!confirm(`මෙම සිසුන් ${idsToActivate.length} දෙනාගේ ගිණුම් සක්‍රීය (Activate) කිරීමට අවශ්‍යද?`)) return;
@@ -48,7 +47,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         const firstChar = (nameParts[0] || 'S').charAt(0).toUpperCase();
         const lastChar = (nameParts[nameParts.length - 1] || 'T').charAt(0).toUpperCase();
 
-        // Generate a strict Unique Username to prevent Database Duplicate Key Errors
         const randomNum = Math.floor(1000 + Math.random() * 9000);
         const username = `${firstChar}${lastChar}${randomNum}`;
         const password = student.nic || student.whatsapp || username; 
@@ -98,12 +96,10 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     }
   };
 
-  // --- අලුතින් එකතු කල WhatsApp යැවීමේ Function එක ---
   const handleSendWhatsApp = async (student: any) => {
-    // 1. සිසුවාට යන මැසේජ් එක සකස් කිරීම
-    const message = `ආයුබෝවන් ${student.name},\n\nඔබගේ PHYSICS ONLINE HUB ගිණුම සාර්ථකව සක්‍රීය කර ඇත.\n\nවෙබ් අඩවියට ලොග් වීම සඳහා පහත තොරතුරු භාවිතා කරන්න:\n\n🔗 Website: https://tharaka-amarasinghe-physics.vercel.app\n👤 Username: ${student.username}\n🔑 Password: ${student.password}\n\nස්තූතියි!`;
+    // කළු කොටු නොපෙන්වීමට Emojis සහ බැඳි අකුරු ඉවත් කර සකස් කල මැසේජ් එක
+    const message = `ආයුබෝවන් ${student.name},\n\nඔබගේ PHYSICS ONLINE HUB ගිණුම සාර්ථකව Active කර ඇත.\n\nවෙබ් අඩවියට ලොග් වීම සඳහා පහත තොරතුරු භාවිතා කරන්න:\n\n- Website: https://tharaka-amarasinghe-physics.vercel.app\n- Username: ${student.username}\n- Password: ${student.password}\n\nස්තූතියි!`;
 
-    // 2. වට්ස්ඇප් නම්බර් එක (ලංකාවේ අංකයක් නම් 94 වලට හැරවීම)
     let formattedPhone = student.whatsapp ? student.whatsapp.toString().trim() : '';
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.substring(1);
@@ -114,28 +110,28 @@ export default function AdminRegistryTable({ students, setStudents }: { students
       return;
     }
 
-    // 3. WhatsApp Web/App එක open කිරීම
-    const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
-
-    // 4. Supabase එකේ credentials_sent එක TRUE කර සජීවීව බටන් එක අක්‍රීය කිරීම
+    // 1. Database එකේ credentials_sent = true කිරීම
     const { error } = await supabase
       .from('students')
       .update({ credentials_sent: true })
       .eq('id', student.id);
 
-    if (!error) {
-      // Live UI එක update කිරීම
-      setStudents((prev: any) =>
-        prev.map((s: any) =>
-          s.id === student.id ? { ...s, credentials_sent: true } : s
-        )
-      );
-    } else {
-      alert('දත්ත යාවත්කාලීන කිරීමේදී ගැටලුවක් ඇති විය: ' + error.message);
+    if (error) {
+      alert('දත්ත යාවත්කාලීන කිරීමේදී ගැටලුවක්: ' + error.message);
+      return;
     }
+
+    // 2. සජීවීව UI එක අප්ඩේට් කිරීම (බටන් එක එවෙලේම Disable වෙන්න)
+    setStudents((prev: any) =>
+      prev.map((s: any) =>
+        s.id === student.id ? { ...s, credentials_sent: true } : s
+      )
+    );
+
+    // 3. WhatsApp විවෘත කිරීම
+    const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
   };
-  // ----------------------------------------------------
 
   const handleDeletePending = async (ids: string[]) => {
     if (!ids || ids.length === 0) return;
@@ -160,14 +156,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     setSelectedActive([]);
   };
 
-  const handleAddPaidMonth = async (id: string, currentMonths: string[]) => {
-    const month = prompt('ගෙවීම් කළ මාසය ඇතුලත් කරන්න (e.g. 2026-05):');
-    if (!month) return;
-    const newMonths = [...(currentMonths || []), month];
-    await supabase.from('students').update({ active_months: newMonths }).eq('id', id);
-    setStudents((prev: any) => prev.map((s: any) => s.id === id ? { ...s, active_months: newMonths } : s));
-  };
-
   const toggleSelectAll = (isPending: boolean) => {
     if (isPending) {
       setSelectedPending(prev => prev.length === pendingStudents.length ? [] : pendingStudents.map(s => s.id));
@@ -186,7 +174,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
 
   return (
     <div className="space-y-6">
-      {/* Search Bar - Fixed A11y */}
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm">
         <label htmlFor="searchStudent" className="text-xs text-slate-400 font-bold mb-2 block flex items-center gap-2">
           <Search size={14}/> NIC හෝ WhatsApp අංකයෙන් සොයන්න
@@ -298,7 +285,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                    </div>
                  </div>
 
-                 {/* අලුතින් එකතු කල WhatsApp Button කොටස */}
+                 {/* WhatsApp Button කොටස */}
                  <div className="mt-3 pt-2 border-t border-slate-800/50 flex justify-end">
                     <button
                       onClick={() => handleSendWhatsApp(st)}
@@ -313,7 +300,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                       {st.credentials_sent ? 'Credentials Sent ✓' : 'Send Credentials via WA'}
                     </button>
                  </div>
-                 {/* -------------------------------------- */}
               </div>
             ))}
             {activeStudents.length === 0 && <div className="text-xs text-slate-500 text-center py-10">No active students found</div>}
@@ -321,7 +307,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         </div>
       </div>
 
-      {/* WhatsApp Reminder Box - Fixed A11y */}
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm mt-6 flex flex-col xl:flex-row gap-6">
         <div className="flex-1 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5"><Send size={14} className="text-blue-400" /> Send WhatsApp Reminder</h3>
