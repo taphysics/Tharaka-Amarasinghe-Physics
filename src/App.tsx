@@ -351,7 +351,7 @@ export default function App() {
     setTimeout(() => {
       const found = students.find(s => 
         s.username.toLowerCase() === loginUser.trim().toLowerCase() && 
-        (s.nic === loginPass || s.username === loginPass || (s as any).password === loginPass)
+        (s as any).password === loginPass
       );
 
       if (found) {
