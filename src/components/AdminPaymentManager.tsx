@@ -59,7 +59,7 @@ export default function PaymentManager() {
     if (payError) console.error("Error fetching payments:", payError);
     if (payData) setPayments(payData);
 
-    const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
+    const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).maybeSingle();
     if (config?.class_rates_text) {
       setAllClasses(parseAllClassesConfig(config.class_rates_text));
     }

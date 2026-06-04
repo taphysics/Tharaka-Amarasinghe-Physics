@@ -56,7 +56,7 @@ export default function StudentPaymentInvoice() {
         .from('site_config')
         .select('class_rates_text')
         .eq('id', 1)
-        .single();
+        .maybeSingle();
 
       if (studentData && configData?.class_rates_text) {
         setStudent(studentData);
