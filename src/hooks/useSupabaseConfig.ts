@@ -7,7 +7,7 @@ export function useSupabaseConfig() {
 
   useEffect(() => {
     const fetchConfig = async () => {
-      const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).maybeSingle();
+      const { data, error } = await supabase.from('site_config').select('*').eq('id', 1).single();
       if (!error && data) {
         setConfig(toCamelCase(data));
       }

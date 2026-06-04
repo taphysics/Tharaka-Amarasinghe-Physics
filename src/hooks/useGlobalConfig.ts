@@ -8,7 +8,7 @@ export function useGlobalConfig() {
 
   useEffect(() => {
     const fetchConfig = async () => {
-      const { data, error } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).maybeSingle();
+      const { data, error } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
       if (!error && data?.class_rates_text) {
         const feesMap: { [key: string]: string } = {};
         const classes = data.class_rates_text.split(',').map((item: string) => {
