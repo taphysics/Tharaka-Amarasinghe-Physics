@@ -342,6 +342,30 @@ export default function App() {
     }
   }, [currentStudent]);
 
+  // Refresh කළ විට Auto-login වීම සහ පැය 2 පරීක්ෂා කිරීම (අලුතින් එකතු කළ කොටස)
+  useEffect(() => {
+    const savedStudentUser = localStorage.getItem('physics_hub_current_student');
+    const expiryTimeStr = localStorage.getItem('physics_hub_login_expiry');
+
+    if (savedStudentUser && expiryTimeStr && students.length > 0 && !currentStudent) {
+      const now = new Date().getTime();
+      const expiryTime = parseInt(expiryTimeStr, 10);
+
+      if (now < expiryTime) {
+        // පැය 2ක කාලය අවසන් වී නැත්නම් ළමයාව සොයා ලොග් කරවන්න
+        const found = students.find(s => s.username === savedStudentUser);
+        if (found) {
+          setCurrentStudent(found);
+          setCurrentView('dashboard');
+        }
+      } else {
+        // පැය 2 අවසන් වී ඇත්නම්, පැරණි දත්ත මකා දමන්න (Auto logout)
+        localStorage.removeItem('physics_hub_current_student');
+        localStorage.removeItem('physics_hub_login_expiry');
+      }
+    }
+  }, [students]); 
+
   // Check login states on bootup
   const handleStudentLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -357,7 +381,12 @@ export default function App() {
       if (found) {
         setLoginAttempts(0);
         setCurrentStudent(found);
+        
+        // Username එක සහ පැය 2ක කල් ඉකුත්වීමේ වේලාව LocalStorage හි සේව් කිරීම
         localStorage.setItem('physics_hub_current_student', found.username);
+        const expiryTime = new Date().getTime() + (2 * 60 * 60 * 1000); 
+        localStorage.setItem('physics_hub_login_expiry', expiryTime.toString());
+
         setLoginUser('');
         setLoginPass('');
         setCurrentView('dashboard');
@@ -372,7 +401,9 @@ export default function App() {
 
   const handleStudentLogout = () => {
     setCurrentStudent(null);
+    // ලොග් අවුට් වන විට LocalStorage හි ඇති දත්ත සියල්ල මකා දැමීම
     localStorage.removeItem('physics_hub_current_student');
+    localStorage.removeItem('physics_hub_login_expiry');
     setCurrentView('home');
   };
 
