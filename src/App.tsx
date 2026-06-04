@@ -109,6 +109,10 @@ export default function App() {
       const expiryTime = parseInt(expiryStr, 10);
       if (now < expiryTime) {
         return 'dashboard';
+      } else {
+        // කාලය අවසන් වී ඇත්නම් (පැය 2කට වඩා බැහැරව සිටියා නම්) පැරණි දත්ත මකා දමන්න
+        localStorage.removeItem('physics_hub_current_student');
+        localStorage.removeItem('physics_hub_login_expiry');
       }
     }
     return 'home';
@@ -132,6 +136,25 @@ export default function App() {
     return null;
   });
 
+  // ළමයා වෙබ් අඩවියේ රැඳී සිටින තාක් කල් කල් ඉකුත්වීමේ කාලය අඛණ්ඩව පැය 2කින් ඉදිරියට ගෙන යාම (Heartbeat)
+  useEffect(() => {
+    if (currentStudent) {
+      const extendSessionTime = () => {
+        const newExpiryTime = new Date().getTime() + (2 * 60 * 60 * 1000);
+        localStorage.setItem('physics_hub_login_expiry', newExpiryTime.toString());
+      };
+
+      // මුලින්ම ආපු ගමන්ම Session එක පැය 2කින් Extend කරනවා
+      extendSessionTime();
+
+      // ඉන්පසු සෑම තත්පර 60කට වරක්ම කාලය දික් කරනවා
+      const intervalId = setInterval(extendSessionTime, 60000);
+
+      // වෙබ් අඩවියෙන් ඉවත් වූ විට (Tab එක Close කළ විට) මෙය නවතින අතර, එතැන් සිට පැය 2ක ගණන් කිරීම ඇරඹේ
+      return () => clearInterval(intervalId);
+    }
+  }, [currentStudent]);
+  
   // Slide index
   const [activeSlide, setActiveSlide] = useState(0);
   const slideImages = [
