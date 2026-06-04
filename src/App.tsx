@@ -99,13 +99,35 @@ export default function App() {
   const [resourceLinks, setResourceLinks] = useSupabaseSync<any>('class_resources', []);
   const [scheduledLives, setScheduledLives] = useSupabaseSync<any>('scheduled_lives', []);
 
-  const [currentView, setCurrentView] = useState<'home' | 'free-notes' | 'register' | 'login' | 'dashboard' | 'admin' | 'live' | 'tutes' | 'recordings'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'free-notes' | 'register' | 'login' | 'dashboard' | 'admin' | 'live' | 'tutes' | 'recordings'>(() => {
+    const cached = localStorage.getItem('physics_hub_current_student');
+    const expiryStr = localStorage.getItem('physics_hub_login_expiry');
+    
+    // ලොග් වී ඇත්නම් සහ පැය 2ක කාලය අවසන් වී නැත්නම් කෙලින්ම dashboard එකට යන්න
+    if (cached && expiryStr) {
+      const now = new Date().getTime();
+      const expiryTime = parseInt(expiryStr, 10);
+      if (now < expiryTime) {
+        return 'dashboard';
+      }
+    }
+    return 'home';
+  });
+
   const [currentStudent, setCurrentStudent] = useState<Student | null>(() => {
     const cached = localStorage.getItem('physics_hub_current_student');
-    if (cached) {
-      const saved = localStorage.getItem('physics_hub_students');
-      const list: Student[] = saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
-      return list.find(s => s.username === cached) || null;
+    const expiryStr = localStorage.getItem('physics_hub_login_expiry');
+
+    if (cached && expiryStr) {
+      const now = new Date().getTime();
+      const expiryTime = parseInt(expiryStr, 10);
+      
+      // කාලය ඉකුත් වී නැත්නම් පමණක් ළමයාගේ දත්ත ලබා ගන්න
+      if (now < expiryTime) {
+        const saved = localStorage.getItem('physics_hub_students');
+        const list: Student[] = saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
+        return list.find(s => s.username === cached) || null;
+      }
     }
     return null;
   });
