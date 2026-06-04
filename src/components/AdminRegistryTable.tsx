@@ -1,6 +1,83 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { UserCheck, Trash2, Send, CheckCircle, Search, Clock, Save, Lock, AlertTriangle } from 'lucide-react';
+import { UserCheck, Trash2, Send, CheckCircle, Search, Clock, Save, Lock, AlertTriangle, KeyRound, Copy, Check } from 'lucide-react'; // KeyRound, Copy, Check අලුතින් එක් කරන ලදී
+
+// --- නව කොටස: Password Reset Button Component ---
+// මෙය එක් එක් සිසුවා සඳහා වෙන් වෙන්ව ක්‍රියා කරයි
+function PasswordResetSection({ studentId, studentPhone }: { studentId: string, studentPhone: string }) {
+  const [resetLink, setResetLink] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const generateResetLink = async () => {
+    setLoading(true);
+    const token = crypto.randomUUID(); 
+    const expires = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); 
+
+    const { error } = await supabase
+      .from('students')
+      .update({ reset_token: token, reset_expires: expires })
+      .eq('id', studentId);
+
+    if (!error) {
+      const link = `${window.location.origin}/reset-password?token=${token}`;
+      setResetLink(link);
+    } else {
+      alert("Error generating link!");
+    }
+    setLoading(false);
+  };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(resetLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // WhatsApp අංකය නිවැරදි ෆෝමැට් එකට හැරවීම
+  let formattedPhone = studentPhone ? studentPhone.toString().trim() : '';
+  if (formattedPhone.startsWith('0')) {
+    formattedPhone = '94' + formattedPhone.substring(1);
+  }
+
+  return (
+    <div className="mt-2 pt-2 border-t border-slate-800/50">
+      {!resetLink ? (
+        <button 
+          onClick={generateResetLink}
+          disabled={loading}
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold bg-blue-900/30 text-blue-400 hover:bg-blue-800/50 border border-blue-500/20 transition-all w-full"
+        >
+          <KeyRound size={12} />
+          {loading ? 'Generating...' : 'Password Reset ලින්ක් එක සාදන්න'}
+        </button>
+      ) : (
+        <div className="space-y-2 bg-slate-950/50 p-2 rounded-lg border border-slate-800">
+          <input 
+            type="text" 
+            readOnly 
+            value={resetLink} 
+            className="w-full bg-slate-900 text-slate-400 text-[9px] p-1.5 rounded border border-slate-700 outline-none"
+          />
+          <div className="flex gap-2">
+            <button onClick={copyToClipboard} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] p-1.5 rounded flex items-center justify-center gap-1 transition">
+              {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? 'Copied' : 'Copy'}
+            </button>
+            <a 
+              href={`https://wa.me/${formattedPhone}?text=ඔබගේ Password එක මාරු කිරීම සඳහා මෙම ලින්ක් එක මත ක්ලික් කරන්න (මෙය එක් වරක් පමණක් ක්‍රියා කරයි): ${resetLink}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex-1 bg-[#25D366] hover:bg-[#1DA851] text-white text-[10px] p-1.5 rounded flex items-center justify-center gap-1 transition"
+            >
+              <Send size={10} /> Send WA
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+// ------------------------------------------------
 
 export default function AdminRegistryTable({ students, setStudents }: { students: any[], setStudents: any }) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -11,7 +88,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const [reminderTotal, setReminderTotal] = useState('');
   const [reminderMonth, setReminderMonth] = useState('May');
 
-  // සජීවීව යවන මැසේජ් ක්ෂණිකව මේ පේජ් එක තුල Lock කර තබා ගැනීමට ලෝකල් ස්ටේට් එකක්
   const [localSentIds, setLocalSentIds] = useState<string[]>([]);
 
   const formatDate = (dateStr: string) => {
@@ -28,11 +104,8 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     s.username?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const pendingStudents = filteredStudents
-    .filter(s => !s.is_approved && !s.isApproved)
-
-  const activeStudents = filteredStudents
-    .filter(s => s.is_approved || s.isApproved)
+  const pendingStudents = filteredStudents.filter(s => !s.is_approved && !s.isApproved);
+  const activeStudents = filteredStudents.filter(s => s.is_approved || s.isApproved);
 
   const handleActivate = async (idsToActivate: string[]) => {
     if (!idsToActivate || idsToActivate.length === 0) return;
@@ -112,10 +185,8 @@ export default function AdminRegistryTable({ students, setStudents }: { students
       return;
     }
 
-    // 1. මුලින්ම මේ පේජ් එකේ බටන් එක Lock කරන්න ID එක ලිස්ට් එකට දානවා
     setLocalSentIds(prev => [...prev, student.id]);
 
-    // 2. සර්වර් එකේ (Database) දත්ත යාවත්කාලීන කිරීම
     const { error } = await supabase
       .from('students')
       .update({ credentials_sent: true })
@@ -125,7 +196,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
       console.error('Database update error:', error.message);
     }
 
-    // 3. WhatsApp එක විවෘත කිරීම
     const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
   };
@@ -251,7 +321,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
             {activeStudents.map(st => {
-              // Database එකෙන් හෝ මේ Session එකේ ලෝකල් එකෙන් හරි මැසේජ් එක යවලා තියෙනවාදැයි බැලීම
               const isAlreadySent = st.credentials_sent === true || localSentIds.includes(st.id);
 
               return (
@@ -294,13 +363,17 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold transition-all ${
                           isAlreadySent 
                             ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50' 
-                            : 'bg-[#25D366] hover:bg-[#1DA851] text-white shadow-lg shadow-[#25D366]/20'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                         }`}
                       >
                         <Send size={12} />
                         {isAlreadySent ? 'Credentials Sent ✓' : 'Send Credentials via WA'}
                       </button>
                    </div>
+
+                   {/* --- නව කොටස: Password Reset Section එක මෙතනට ඇතුලත් කර ඇත --- */}
+                   <PasswordResetSection studentId={st.id} studentPhone={st.whatsapp} />
+
                 </div>
               );
             })}
@@ -309,6 +382,7 @@ export default function AdminRegistryTable({ students, setStudents }: { students
         </div>
       </div>
 
+      {/* Reminder Box කොටස (වෙනස් කර නැත) */}
       <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm mt-6 flex flex-col xl:flex-row gap-6">
         <div className="flex-1 bg-slate-900/40 border border-slate-800 p-4 rounded-2xl flex flex-col gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5"><Send size={14} className="text-blue-400" /> Send WhatsApp Reminder</h3>

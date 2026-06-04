@@ -50,8 +50,15 @@ import AdminPasswordReset from './components/AdminPasswordReset';
 import { useSupabaseConfig } from './hooks/useSupabaseConfig';
 import AdminAttentionLogs from './components/AdminAttentionLogs';
 import StudentPaymentInvoice from './components/StudentPaymentInvoice';
+import ResetPassword from './components/ResetPassword';
 
 export default function App() {
+
+// බ්‍රව්සර් එකේ ලින්ක් එක '/reset-password' නම් කෙලින්ම මේ පිටුව පෙන්වන්න
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPassword />;
+  }
+
   // Helper for current month payment check
   const isCurrentMonthPaid = (activeMonths?: string[]) => {
     if (!activeMonths || activeMonths.length === 0) return false;
