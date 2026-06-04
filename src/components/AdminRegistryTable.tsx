@@ -11,6 +11,9 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   const [reminderTotal, setReminderTotal] = useState('');
   const [reminderMonth, setReminderMonth] = useState('May');
 
+  // සජීවීව යවන මැසේජ් ක්ෂණිකව මේ පේජ් එක තුල Lock කර තබා ගැනීමට ලෝකල් ස්ටේට් එකක්
+  const [localSentIds, setLocalSentIds] = useState<string[]>([]);
+
   const formatDate = (dateStr: string) => {
     if (!dateStr) return 'N/A';
     const fixedStr = dateStr.includes(' ') && !dateStr.includes('T') ? dateStr.replace(' ', 'T') : dateStr;
@@ -97,7 +100,6 @@ export default function AdminRegistryTable({ students, setStudents }: { students
   };
 
   const handleSendWhatsApp = async (student: any) => {
-    // කළු කොටු නොපෙන්වීමට Emojis සහ බැඳි අකුරු ඉවත් කර සකස් කල මැසේජ් එක
     const message = `ආයුබෝවන් ${student.name},\n\nඔබගේ PHYSICS ONLINE HUB ගිණුම සාර්ථකව Active කර ඇත.\n\nවෙබ් අඩවියට ලොග් වීම සඳහා පහත තොරතුරු භාවිතා කරන්න:\n\n- Website: https://tharaka-amarasinghe-physics.vercel.app\n- Username: ${student.username}\n- Password: ${student.password}\n\nස්තූතියි!`;
 
     let formattedPhone = student.whatsapp ? student.whatsapp.toString().trim() : '';
@@ -110,25 +112,20 @@ export default function AdminRegistryTable({ students, setStudents }: { students
       return;
     }
 
-    // 1. Database එකේ credentials_sent = true කිරීම
+    // 1. මුලින්ම මේ පේජ් එකේ බටන් එක Lock කරන්න ID එක ලිස්ට් එකට දානවා
+    setLocalSentIds(prev => [...prev, student.id]);
+
+    // 2. සර්වර් එකේ (Database) දත්ත යාවත්කාලීන කිරීම
     const { error } = await supabase
       .from('students')
       .update({ credentials_sent: true })
       .eq('id', student.id);
 
     if (error) {
-      alert('දත්ත යාවත්කාලීන කිරීමේදී ගැටලුවක්: ' + error.message);
-      return;
+      console.error('Database update error:', error.message);
     }
 
-    // 2. සජීවීව UI එක අප්ඩේට් කිරීම (බටන් එක එවෙලේම Disable වෙන්න)
-    setStudents((prev: any) =>
-      prev.map((s: any) =>
-        s.id === student.id ? { ...s, credentials_sent: true } : s
-      )
-    );
-
-    // 3. WhatsApp විවෘත කිරීම
+    // 3. WhatsApp එක විවෘත කිරීම
     const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
   };
@@ -253,55 +250,60 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-3 scrollbar-thin scrollbar-thumb-slate-700">
-            {activeStudents.map(st => (
-              <div key={st.id} className="bg-slate-900/60 p-3 flex flex-col border border-slate-800/80 rounded-xl group hover:border-emerald-500/30 transition">
-                 <div className="flex gap-3">
-                   <div className="mt-1 flex items-start">
-                     <label htmlFor={`active-${st.id}`} className="sr-only">Select {st.name} for management</label>
-                     <input 
-                       type="checkbox" 
-                       id={`active-${st.id}`} 
-                       name={`active-${st.id}`} 
-                       checked={selectedActive.includes(st.id)} 
-                       onChange={() => toggleSelection(st.id, false)} 
-                       className="cursor-pointer mt-0.5" 
-                       aria-label={`Select active student ${st.name}`}
-                     />
-                   </div>
-                   <div className="flex-1 space-y-1">
-                      <div className="flex justify-between items-start">
-                        <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
-                          {st.name} <span className="bg-slate-950 text-blue-400 px-2 py-0.5 rounded text-[10px] border border-blue-500/20">{st.username}</span>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.isPaid || st.is_paid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
-                          {st.isPaid || st.is_paid ? 'PAID' : 'UNPAID'}
-                        </span>
-                      </div>
-                      <div className="text-[9px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1 mt-1 font-mono">
-                        <span><b className="text-slate-300">PW:</b> {st.password}</span>
-                        <span><b className="text-slate-300">NIC:</b> {st.nic}</span>
-                        <span><b className="text-slate-300">WA:</b> {st.whatsapp}</span>
-                      </div>
-                   </div>
-                 </div>
+            {activeStudents.map(st => {
+              // Database එකෙන් හෝ මේ Session එකේ ලෝකල් එකෙන් හරි මැසේජ් එක යවලා තියෙනවාදැයි බැලීම
+              const isAlreadySent = st.credentials_sent === true || localSentIds.includes(st.id);
 
-                 {/* WhatsApp Button කොටස */}
-                 <div className="mt-3 pt-2 border-t border-slate-800/50 flex justify-end">
-                    <button
-                      onClick={() => handleSendWhatsApp(st)}
-                      disabled={st.credentials_sent}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold transition-all ${
-                        st.credentials_sent 
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50' 
-                          : 'bg-[#25D366] hover:bg-[#1DA851] text-white shadow-lg shadow-[#25D366]/20'
-                      }`}
-                    >
-                      <Send size={12} />
-                      {st.credentials_sent ? 'Credentials Sent ✓' : 'Send Credentials via WA'}
-                    </button>
-                 </div>
-              </div>
-            ))}
+              return (
+                <div key={st.id} className="bg-slate-900/60 p-3 flex flex-col border border-slate-800/80 rounded-xl group hover:border-emerald-500/30 transition">
+                   <div className="flex gap-3">
+                     <div className="mt-1 flex items-start">
+                       <label htmlFor={`active-${st.id}`} className="sr-only">Select {st.name} for management</label>
+                       <input 
+                         type="checkbox" 
+                         id={`active-${st.id}`} 
+                         name={`active-${st.id}`} 
+                         checked={selectedActive.includes(st.id)} 
+                         onChange={() => toggleSelection(st.id, false)} 
+                         className="cursor-pointer mt-0.5" 
+                         aria-label={`Select active student ${st.name}`}
+                       />
+                     </div>
+                     <div className="flex-1 space-y-1">
+                        <div className="flex justify-between items-start">
+                          <div className="font-bold text-emerald-100 text-sm flex items-center gap-2">
+                            {st.name} <span className="bg-slate-950 text-blue-400 px-2 py-0.5 rounded text-[10px] border border-blue-500/20">{st.username}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${st.isPaid || st.is_paid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'}`}>
+                            {st.isPaid || st.is_paid ? 'PAID' : 'UNPAID'}
+                          </span>
+                        </div>
+                        <div className="text-[9px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1 mt-1 font-mono">
+                          <span><b className="text-slate-300">PW:</b> {st.password}</span>
+                          <span><b className="text-slate-300">NIC:</b> {st.nic}</span>
+                          <span><b className="text-slate-300">WA:</b> {st.whatsapp}</span>
+                        </div>
+                     </div>
+                   </div>
+
+                   {/* WhatsApp Button කොටස */}
+                   <div className="mt-3 pt-2 border-t border-slate-800/50 flex justify-end">
+                      <button
+                        onClick={() => handleSendWhatsApp(st)}
+                        disabled={isAlreadySent}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold transition-all ${
+                          isAlreadySent 
+                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50' 
+                            : 'bg-[#25D366] hover:bg-[#1DA851] text-white shadow-lg shadow-[#25D366]/20'
+                        }`}
+                      >
+                        <Send size={12} />
+                        {isAlreadySent ? 'Credentials Sent ✓' : 'Send Credentials via WA'}
+                      </button>
+                   </div>
+                </div>
+              );
+            })}
             {activeStudents.length === 0 && <div className="text-xs text-slate-500 text-center py-10">No active students found</div>}
           </div>
         </div>
