@@ -39,7 +39,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = (props) => {
   const [remindersCount, setRemindersCount] = useState<number>(0);
   const [reminderMessage, setReminderMessage] = useState<string>('');
   const [isPaidCurrentMonth, setIsPaidCurrentMonth] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exams'>('live');
+const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exams'>('live');
 
   const remindersSectionRef = useRef<HTMLDivElement>(null);
   const liveClassSectionRef = useRef<HTMLDivElement>(null);

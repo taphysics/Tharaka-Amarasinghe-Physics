@@ -82,11 +82,11 @@ export default function App() {
     } catch (e) {}
     return [
       { id: '1', name: '2027 Theory', fee: 3500 },
-      { id: '2', name: '2027 Revision', fee: 3000 },
-      { id: '3', name: '2027 Paper Class', fee: 2000 },
+      { id: '2', name: '2027 Revision', fee: 3500 },
+      { id: '3', name: '2027 Paper Class', fee: 3500 },
       { id: '4', name: '2028 Theory', fee: 3500 },
-      { id: '5', name: '2028 Revision', fee: 3000 },
-      { id: '6', name: '2028 Paper Class', fee: 2000 }
+      { id: '5', name: '2028 Revision', fee: 3500 },
+      { id: '6', name: '2028 Paper Class', fee: 3500 }
     ];
   })();
   const globalClassNames = (globalClasses || []).map(c => c?.name || '').filter(Boolean);
@@ -205,7 +205,7 @@ export default function App() {
   }, [students, currentStudent, currentView]);
 
   // Dashboard inner tabs
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'live' | 'tutes' | 'recordings'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams'>('live');
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
     alert.type === 'public' || (alert.type === 'private' && alert.target_user === currentStudent.username)
