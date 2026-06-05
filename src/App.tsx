@@ -1679,15 +1679,13 @@ export default function App() {
           <div className="space-y-6 animate-fade-in w-full">
             
             {/* 🎯 Dashboard Reminder / Announcements UI */}
-            {currentView === 'dashboard' && studentAlerts && studentAlerts.length > 0 && (
+            {studentAlerts && studentAlerts.length > 0 && (
               <div className="mb-6 space-y-3">
                 {studentAlerts.map((alert: any, index: number) => (
                   <div 
                     key={index} 
                     className={`p-4 rounded-lg border flex items-start gap-3 ${
-                      alert.type === 'private' 
-                        ? 'bg-red-500/10 border-red-500/30 text-red-100' // Private පණිවිඩ සඳහා රතු පැහැය (උදා: ගෙවීම් සිහිකැඳවීම්)
-                        : 'bg-blue-500/10 border-blue-500/30 text-blue-100' // Public පණිවිඩ සඳහා නිල් පැහැය
+                      alert.type === 'private' ? 'bg-red-500/10 border-red-500/30 text-red-100' : 'bg-blue-500/10 border-blue-500/30 text-blue-100' 
                     }`}
                   >
                     <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
@@ -1706,29 +1704,23 @@ export default function App() {
               
               {/* Left Column Profile Demographics overview card */}
               <div className={`lg:col-span-3 border p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px] transition-colors duration-500 ${
-                isCurrentMonthPaid(currentStudent.activeMonths) 
-                  ? 'bg-slate-800/40 border-slate-700/50' 
-                  : 'bg-red-950/20 border-red-500/30' // ⚡ ගෙවා නැත්නම් මුළු කාඩ් එකම ලාවට රතු පැහැ ගැන්වේ
+                (currentStudent as any).isFreeStudent ? 'border-blue-500/50 shadow-blue-900/20 bg-slate-800/40' :
+                isCurrentMonthPaid(currentStudent.activeMonths) ? 'border-amber-500/50 shadow-amber-900/20 bg-slate-800/40' :
+                'border-red-500/50 shadow-red-900/20 bg-red-950/20 animate-pulse'
               }`}>
                 
-                {/* ⚡ අලුතින් එක් කළ Bell Notification කොටස (වම් පස ඉහළ) ⚡ */}
-                {(!isCurrentMonthPaid(currentStudent.activeMonths) || (currentStudent.remindersCount || 0) > 0) && (
+                {/* ⚡ Bell Notification ⚡ */}
+                {(currentStudent.remindersCount || 0) > 0 && (
                   <div className="absolute top-4 left-4 z-50 group cursor-pointer">
                     <div className="relative p-2 rounded-full bg-slate-900/50 hover:bg-slate-800 border border-slate-700 transition">
                       <Bell size={16} className="text-red-400 animate-bounce" />
-                      {/* රිමයින්ඩර් ගණන බුබුලක් ලෙස පෙන්වීම */}
-                      {(currentStudent.remindersCount || 0) > 0 && (
-                        <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center border border-slate-900">
-                          {currentStudent.remindersCount}
-                        </span>
-                      )}
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center border border-slate-900">
+                        {currentStudent.remindersCount}
+                      </span>
                     </div>
-
-                    {/* Hover කළ විට පෙනෙන පණිවිඩ කොටස (Dropdown) */}
                     <div className="absolute left-0 mt-2 w-56 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 hidden group-hover:block transition-all text-left">
                       <h4 className="text-white text-xs font-semibold mb-2 flex items-center gap-2 border-b border-slate-700 pb-2">
-                        <AlertTriangle size={14} className="text-amber-400" />
-                        Payment Notice
+                        <AlertTriangle size={14} className="text-amber-400" /> Payment Notice
                       </h4>
                       <p className="text-[11px] text-slate-300 leading-relaxed">
                         {currentStudent.reminderMessage || "කරුණාකර මෙම මාසය සඳහා ඔබගේ පන්ති ගාස්තු ගෙවා රිසිට්පත යොමු කරන්න."}
@@ -1737,46 +1729,44 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Status Sticker (දකුණු පස ඉහළ) */}
-                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
-                  {isCurrentMonthPaid(currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
-                  {!isCurrentMonthPaid(currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
-                  {isCurrentMonthPaid(currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
+                {/* Status Sticker */}
+                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg border ${
+                  (currentStudent as any).isFreeStudent ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                  isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
+                  'bg-red-500/20 text-red-400 border-red-500/30'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    (currentStudent as any).isFreeStudent ? 'bg-blue-400 animate-pulse' :
+                    isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-400' :
+                    'bg-red-400 animate-ping'
+                  }`} />
+                  {(currentStudent as any).isFreeStudent ? 'Free Access' : isCurrentMonthPaid(currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
                 </div>
 
-                <div 
-                  onClick={openStudentProfileModal}
-                  className="flex flex-col items-center gap-4 cursor-pointer group mt-4"
-                  title="ප්‍රොෆයිල් විස්තර බැලීමට මෙහි ක්ලික් කරන්න"
-                >
-                  {/* Portrait photo button click trigger */}
+                <div onClick={openStudentProfileModal} className="flex flex-col items-center gap-4 cursor-pointer group mt-4" title="ප්‍රොෆයිල් විස්තර බැලීමට මෙහි ක්ලික් කරන්න">
+                  {/* Portrait photo button */}
                   <div className="relative">
-                    {/* ⚡ ගෙවීම් මත පදනම්ව Avatar එකේ වර්ණය වෙනස් වීම ⚡ */}
-                    <div 
-                      className={`w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl shadow-xl transform group-hover:scale-105 active:scale-95 transition-all duration-300 relative z-10 ${
-                        isCurrentMonthPaid(currentStudent.activeMonths) 
-                          ? 'bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-amber-600/40 ring-4 ring-amber-500/30 ring-offset-2 ring-offset-slate-900' 
-                          : 'bg-gradient-to-tr from-rose-600 to-red-500 shadow-rose-600/40 ring-4 ring-red-500/30 ring-offset-2 ring-offset-slate-900'
-                      }`}
-                    >
+                    <div className={`w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl shadow-xl transform group-hover:scale-105 active:scale-95 transition-all duration-300 relative z-10 ring-4 ring-offset-2 ring-offset-slate-900 ${
+                      (currentStudent as any).isFreeStudent ? 'bg-gradient-to-tr from-blue-600 to-cyan-500 shadow-blue-600/40 ring-blue-500/30' :
+                      isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-amber-600/40 ring-amber-500/30' :
+                      'bg-gradient-to-tr from-rose-600 to-red-500 shadow-rose-600/40 ring-red-500/30'
+                    }`}>
                       {currentStudent.firstName?.slice(0, 1).toUpperCase()}
                       {currentStudent.lastName?.slice(0, 1).toUpperCase()}
                     </div>
-                    {/* Background glow animation */}
-                    <div className={`absolute inset-0 rounded-2xl blur-xl opacity-60 z-0 animate-pulse ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500' : 'bg-red-500'}`} />
+                    <div className={`absolute inset-0 rounded-2xl blur-xl opacity-60 z-0 ${
+                      (currentStudent as any).isFreeStudent ? 'bg-blue-500 animate-pulse' :
+                      isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500' :
+                      'bg-red-500 animate-pulse'
+                    }`} />
                   </div>
                   <div>
                     <h3 className="font-extrabold text-lg text-white font-sans group-hover:text-blue-300 transition-colors">{currentStudent.name}</h3>
-                    <p className="text-[10px] text-slate-400 font-mono tracking-widest font-bold mt-1 uppercase">
-                      View Full Profile
-                    </p>
+                    <p className="text-[10px] text-slate-400 font-mono tracking-widest font-bold mt-1 uppercase">View Full Profile</p>
                   </div>
                 </div>
 
-                <button 
-                  onClick={handleStudentLogout}
-                  className="w-full mt-6 bg-[#1E293B] hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition duration-200"
-                >
+                <button onClick={handleStudentLogout} className="w-full mt-6 bg-[#1E293B] hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition duration-200">
                   <LogOut size={13} /> Log out Dashboard
                 </button>
               </div>
@@ -1785,46 +1775,34 @@ export default function App() {
               <div className="lg:col-span-9 space-y-5">
                 
                 {/* 1. Welcoming verified notice alert active */}
-                {showWelcomeBanner && isCurrentMonthPaid(currentStudent.activeMonths) && (
+                {showWelcomeBanner && ((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) && (
                   <div className="bg-gradient-to-r from-emerald-950/25 to-slate-900 border border-emerald-500/35 rounded-2xl p-4 flex justify-between items-center gap-4 transition shadow-md">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
-                        <CheckCircle size={18} />
-                      </div>
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0"><CheckCircle size={18} /></div>
                       <div className="space-y-0.5">
                         <h4 className="font-bold text-emerald-400 text-sm font-display">{siteConfig.dashboardWelcomeMsg ? siteConfig.dashboardWelcomeMsg.replace('{name}', currentStudent.firstName) : `Welcome back, ${currentStudent.firstName}!`}</h4>
                         <p className="text-xs text-slate-350">{siteConfig.dashboardIntroText || "Your account is active and verified."}</p>
                       </div>
                     </div>
-                    <button 
-                      onClick={closeWelcomeActiveBanner}
-                      className="text-slate-400 hover:text-white p-1 hover:bg-slate-800/50 rounded transition"
-                      title="පණිවිඩය සදහටම වසා දමන්න"
-                    >
-                      <X size={16} />
-                    </button>
+                    <button onClick={closeWelcomeActiveBanner} className="text-slate-400 hover:text-white p-1 hover:bg-slate-800/50 rounded transition"><X size={16} /></button>
                   </div>
                 )}
 
                 {/* Unpaid Warning block banner */}
-                {!isCurrentMonthPaid(currentStudent.activeMonths) && (
+                {!((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) && (
                   <div className="bg-gradient-to-r from-amber-950/25 to-slate-900 border border-amber-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-pulse">
-                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5">
-                      <AlertTriangle size={16} />
-                    </div>
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5"><AlertTriangle size={16} /></div>
                     <div className="whitespace-pre-wrap">
                       <h4 className="font-bold text-amber-500 text-sm font-sans">{siteConfig.dashboardUnpaidWarningTitle || "Payment Settle Warning Alert"}</h4>
-                      <p className="text-xs text-slate-300 leading-relaxed mt-1">
-                        {siteConfig.dashboardUnpaidWarningText || "ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර මෙම මාසයේ ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න."}
-                      </p>
+                      <p className="text-xs text-slate-300 leading-relaxed mt-1">{siteConfig.dashboardUnpaidWarningText || "ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර මෙම මාසයේ ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න."}</p>
                     </div>
                   </div>
                 )}
 
                 {/* Status indicator strip blocks */}
                 <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    Access: {isCurrentMonthPaid(currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    Access: {((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) ? 'ACTIVE' : 'ON SUSPENSION'}
                   </span>
                   <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
                     ID: {currentStudent.username}
