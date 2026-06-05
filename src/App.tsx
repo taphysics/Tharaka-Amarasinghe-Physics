@@ -1000,17 +1000,22 @@ export default function App() {
 
         {/* Navigation Elements */}
         <nav className="hidden md:flex items-center gap-1.5">
-          <button 
-            onClick={() => setCurrentView('home')} 
-            className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'home' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            Home
-          </button>
+          {/* සිසුවෙක් ලොග් වී නොමැති නම් පමණක් Home පෙන්වයි */}
+          {!currentStudent && (
+            <button 
+              onClick={() => setCurrentView('home')} 
+              className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'home' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+            >
+              Home
+            </button>
+          )}
+
+          {/* Free Notes වෙනුවට Physics Books Store ලෙස වෙනස් කරන ලදී */}
           <button 
             onClick={() => setCurrentView('free-notes')} 
             className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'free-notes' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
           >
-            Free Notes
+            Physics Books Store
           </button>
           
           {currentStudent ? (
@@ -1054,7 +1059,8 @@ export default function App() {
             <Settings size={14} />
           </button>
           <button 
-            onClick={() => setCurrentView(currentView === 'home' ? 'free-notes' : 'home')}
+            /* ලොග් වී ඇත්නම් Dashboard සහ Books අතරත්, නැත්නම් Home සහ Books අතරත් මාරු වීමට */
+            onClick={() => setCurrentView(currentView === (currentStudent ? 'dashboard' : 'home') ? 'free-notes' : (currentStudent ? 'dashboard' : 'home'))}
             className="text-slate-400 p-2 rounded-lg border border-slate-800"
             title="Toggle Fast Menu"
           >
@@ -1065,8 +1071,13 @@ export default function App() {
 
       {/* Mobile Sticky Bar for quick links */}
       <div className="md:hidden bg-[#0F172A] border-b border-slate-850 py-2.5 px-4 flex justify-around text-xs text-slate-400">
-        <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-400 font-bold' : ''}>Home</button>
-        <button onClick={() => setCurrentView('free-notes')} className={currentView === 'free-notes' ? 'text-blue-400 font-bold' : ''}>Free Notes</button>
+        {/* සිසුවෙක් ලොග් වී නොමැති නම් පමණක් යට මෙනුවේ Home පෙන්වයි */}
+        {!currentStudent && (
+          <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-400 font-bold' : ''}>Home</button>
+        )}
+        
+        <button onClick={() => setCurrentView('free-notes')} className={currentView === 'free-notes' ? 'text-blue-400 font-bold' : ''}>Physics Books</button>
+        
         {currentStudent ? (
           <button onClick={() => setCurrentView('dashboard')} className={currentView === 'dashboard' ? 'text-blue-400 font-bold' : ''}>Dashboard</button>
         ) : (
@@ -1079,7 +1090,6 @@ export default function App() {
 
       {/* Main Container Views */}
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 md:px-8 py-6 flex flex-col justify-start">
-        
         {/* VIEW 1: HOME */}
         {currentView === 'home' && (
           <div className="space-y-8 animate-fade-in">
@@ -1667,40 +1677,71 @@ export default function App() {
         {/* VIEW 5: ACTIVE STUDENTS INTERACTIVE DASHBOARD */}
         {currentView === 'dashboard' && currentStudent && (
           <div className="space-y-6 animate-fade-in w-full">
+            
             {/* 🎯 Dashboard Reminder / Announcements UI */}
-{currentView === 'dashboard' && studentAlerts.length > 0 && (
-  <div className="mb-6 space-y-3">
-    {studentAlerts.map((alert: any, index: number) => (
-      <div 
-        key={index} 
-        className={`p-4 rounded-lg border flex items-start gap-3 ${
-          alert.type === 'private' 
-            ? 'bg-red-500/10 border-red-500/30 text-red-100' // Private පණිවිඩ සඳහා රතු පැහැය (උදා: ගෙවීම් සිහිකැඳවීම්)
-            : 'bg-blue-500/10 border-blue-500/30 text-blue-100' // Public පණිවිඩ සඳහා නිල් පැහැය
-        }`}
-      >
-        <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
-        <div>
-          <h4 className="font-semibold text-lg">{alert.title}</h4>
-          <p className="text-sm mt-1 opacity-90">{alert.content}</p>
-          <span className="text-xs opacity-70 mt-2 block">{alert.date}</span>
-        </div>
-      </div>
-    ))}
-  </div>
-)}
+            {currentView === 'dashboard' && studentAlerts && studentAlerts.length > 0 && (
+              <div className="mb-6 space-y-3">
+                {studentAlerts.map((alert: any, index: number) => (
+                  <div 
+                    key={index} 
+                    className={`p-4 rounded-lg border flex items-start gap-3 ${
+                      alert.type === 'private' 
+                        ? 'bg-red-500/10 border-red-500/30 text-red-100' // Private පණිවිඩ සඳහා රතු පැහැය (උදා: ගෙවීම් සිහිකැඳවීම්)
+                        : 'bg-blue-500/10 border-blue-500/30 text-blue-100' // Public පණිවිඩ සඳහා නිල් පැහැය
+                    }`}
+                  >
+                    <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
+                    <div>
+                      <h4 className="font-semibold text-lg">{alert.title}</h4>
+                      <p className="text-sm mt-1 opacity-90">{alert.content}</p>
+                      <span className="text-xs opacity-70 mt-2 block">{alert.date}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             
             {/* Split Grid Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
               {/* Left Column Profile Demographics overview card */}
-              <div className="lg:col-span-3 bg-slate-800/40 border border-slate-700/50 p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px]">
+              <div className={`lg:col-span-3 border p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px] transition-colors duration-500 ${
+                isCurrentMonthPaid(currentStudent.activeMonths) 
+                  ? 'bg-slate-800/40 border-slate-700/50' 
+                  : 'bg-red-950/20 border-red-500/30' // ⚡ ගෙවා නැත්නම් මුළු කාඩ් එකම ලාවට රතු පැහැ ගැන්වේ
+              }`}>
                 
-                {/* Status Sticker */}
-                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
-                  {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
-                  {!isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
-                  {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
+                {/* ⚡ අලුතින් එක් කළ Bell Notification කොටස (වම් පස ඉහළ) ⚡ */}
+                {(!isCurrentMonthPaid(currentStudent.activeMonths) || (currentStudent.remindersCount || 0) > 0) && (
+                  <div className="absolute top-4 left-4 z-50 group cursor-pointer">
+                    <div className="relative p-2 rounded-full bg-slate-900/50 hover:bg-slate-800 border border-slate-700 transition">
+                      <Bell size={16} className="text-red-400 animate-bounce" />
+                      {/* රිමයින්ඩර් ගණන බුබුලක් ලෙස පෙන්වීම */}
+                      {(currentStudent.remindersCount || 0) > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center border border-slate-900">
+                          {currentStudent.remindersCount}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Hover කළ විට පෙනෙන පණිවිඩ කොටස (Dropdown) */}
+                    <div className="absolute left-0 mt-2 w-56 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 hidden group-hover:block transition-all text-left">
+                      <h4 className="text-white text-xs font-semibold mb-2 flex items-center gap-2 border-b border-slate-700 pb-2">
+                        <AlertTriangle size={14} className="text-amber-400" />
+                        Payment Notice
+                      </h4>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        {currentStudent.reminderMessage || "කරුණාකර මෙම මාසය සඳහා ඔබගේ පන්ති ගාස්තු ගෙවා රිසිට්පත යොමු කරන්න."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Status Sticker (දකුණු පස ඉහළ) */}
+                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse'}`}>
+                  {isCurrentMonthPaid(currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />}
+                  {!isCurrentMonthPaid(currentStudent.activeMonths) && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />}
+                  {isCurrentMonthPaid(currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
                 </div>
 
                 <div 
@@ -1710,14 +1751,19 @@ export default function App() {
                 >
                   {/* Portrait photo button click trigger */}
                   <div className="relative">
+                    {/* ⚡ ගෙවීම් මත පදනම්ව Avatar එකේ වර්ණය වෙනස් වීම ⚡ */}
                     <div 
-                      className={`w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl shadow-xl transform group-hover:scale-105 active:scale-95 transition-all duration-300 relative z-10 ${currentStudent.isPaid ? 'bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-amber-600/40 ring-4 ring-amber-500/30 ring-offset-2 ring-offset-slate-900' : 'bg-gradient-to-tr from-rose-600 to-red-500 shadow-rose-600/40 ring-4 ring-red-500/30 ring-offset-2 ring-offset-slate-900'}`}
+                      className={`w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl shadow-xl transform group-hover:scale-105 active:scale-95 transition-all duration-300 relative z-10 ${
+                        isCurrentMonthPaid(currentStudent.activeMonths) 
+                          ? 'bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-amber-600/40 ring-4 ring-amber-500/30 ring-offset-2 ring-offset-slate-900' 
+                          : 'bg-gradient-to-tr from-rose-600 to-red-500 shadow-rose-600/40 ring-4 ring-red-500/30 ring-offset-2 ring-offset-slate-900'
+                      }`}
                     >
-                      {currentStudent.firstName.slice(0, 1).toUpperCase()}
-                      {currentStudent.lastName.slice(0, 1).toUpperCase()}
+                      {currentStudent.firstName?.slice(0, 1).toUpperCase()}
+                      {currentStudent.lastName?.slice(0, 1).toUpperCase()}
                     </div>
                     {/* Background glow animation */}
-                    <div className={`absolute inset-0 rounded-2xl blur-xl opacity-60 z-0 animate-pulse ${currentStudent.isPaid ? 'bg-amber-500' : 'bg-red-500'}`} />
+                    <div className={`absolute inset-0 rounded-2xl blur-xl opacity-60 z-0 animate-pulse ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500' : 'bg-red-500'}`} />
                   </div>
                   <div>
                     <h3 className="font-extrabold text-lg text-white font-sans group-hover:text-blue-300 transition-colors">{currentStudent.name}</h3>
@@ -1738,8 +1784,8 @@ export default function App() {
               {/* Right Main Column components */}
               <div className="lg:col-span-9 space-y-5">
                 
-                {/* 1. Welcoming verified notice alert active (persistent close logic) */}
-                {showWelcomeBanner && (
+                {/* 1. Welcoming verified notice alert active */}
+                {showWelcomeBanner && isCurrentMonthPaid(currentStudent.activeMonths) && (
                   <div className="bg-gradient-to-r from-emerald-950/25 to-slate-900 border border-emerald-500/35 rounded-2xl p-4 flex justify-between items-center gap-4 transition shadow-md">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
@@ -1761,7 +1807,7 @@ export default function App() {
                 )}
 
                 {/* Unpaid Warning block banner */}
-                {!isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) && (
+                {!isCurrentMonthPaid(currentStudent.activeMonths) && (
                   <div className="bg-gradient-to-r from-amber-950/25 to-slate-900 border border-amber-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-pulse">
                     <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5">
                       <AlertTriangle size={16} />
@@ -1777,8 +1823,8 @@ export default function App() {
 
                 {/* Status indicator strip blocks */}
                 <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    Access: {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                    Access: {isCurrentMonthPaid(currentStudent.activeMonths) ? 'ACTIVE' : 'ON SUSPENSION'}
                   </span>
                   <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
                     ID: {currentStudent.username}
