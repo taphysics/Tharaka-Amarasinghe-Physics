@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import StudentDashboard from './components/StudentDashboard';
 import { 
   BookOpen, 
   Lock, 
@@ -1877,7 +1878,7 @@ const StudentDashboardView: React.FC<StudentDashboardProps> = ({
 
         {/* VIEW 5: ACTIVE STUDENTS INTERACTIVE DASHBOARD */}
         {currentView === 'dashboard' && currentStudent && (
-          <StudentDashboardView 
+          <StudentDashboard 
             currentStudent={currentStudent}
             studentAlerts={studentAlerts}
             showWelcomeBanner={showWelcomeBanner}
@@ -1886,11 +1887,6 @@ const StudentDashboardView: React.FC<StudentDashboardProps> = ({
             handleStudentLogout={handleStudentLogout}
             isCurrentMonthPaid={isCurrentMonthPaid}
             siteConfig={siteConfig}
-            Bell={Bell}
-            AlertTriangle={AlertTriangle}
-            CheckCircle={CheckCircle}
-            X={X}
-            LogOut={LogOut}
           />
         )}
 
