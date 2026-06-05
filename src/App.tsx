@@ -967,6 +967,207 @@ export default function App() {
     return <StudentPaymentInvoice />;
   }
 
+  // 🎯 ACTIVE STUDENT INTERACTIVE DASHBOARD COMPONENT
+interface StudentDashboardProps {
+  currentStudent: any;
+  studentAlerts: any[];
+  showWelcomeBanner: boolean;
+  closeWelcomeActiveBanner: () => void;
+  openStudentProfileModal: () => void;
+  handleStudentLogout: () => void;
+  isCurrentMonthPaid: (months: any) => boolean;
+  siteConfig: any;
+  Bell: any;
+  AlertTriangle: any;
+  CheckCircle: any;
+  X: any;
+  LogOut: any;
+}
+
+const StudentDashboardView: React.FC<StudentDashboardProps> = ({
+  currentStudent,
+  studentAlerts,
+  showWelcomeBanner,
+  closeWelcomeActiveBanner,
+  openStudentProfileModal,
+  handleStudentLogout,
+  isCurrentMonthPaid,
+  siteConfig,
+  Bell,
+  AlertTriangle,
+  CheckCircle,
+  X,
+  LogOut
+}) => {
+  
+  // 1. ශ්‍රී ලංකාවේ වේලාවට අනුව වත්මන් මාසය ස්වයංක්‍රීයව තීරණය කිරීම (උදා: "2026-06")
+  const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+  const currentMonthKey = `${slDate.getFullYear()}-${String(slDate.getMonth() + 1).padStart(2, '0')}`;
+
+  // 2. ගෙවීම් තත්ත්වයන් 3 නිවැරදිව පිරික්සීම (Paid / Free / Unpaid)
+  const isPaid = isCurrentMonthPaid(currentStudent.activeMonths);
+  const isFree = currentStudent.freeMonths?.includes(currentMonthKey) || currentStudent.isFreeStudent || false;
+  const paymentStatus: 'paid' | 'free' | 'unpaid' = isFree ? 'free' : (isPaid ? 'paid' : 'unpaid');
+
+  // 3. ඇඩ්මින් පැනලයෙන් එවන Reminder Count එක (DB Keys වෙනස් වීමේ ඉඩකඩ සලකා බලා ක්‍රම 2ම චෙක් කරයි)
+  const remindersCount = currentStudent.remindersCount || currentStudent.reminderCount || 0;
+
+  // 4. වර්ණ, ග්ලෝ (Glow) සහ ඇනිමේෂන් සඳහා වන නිවැරදි Tailwind Configs
+  const statusStyles = {
+    paid: {
+      cardBorder: 'border-amber-500/40 shadow-2xl shadow-amber-950/20 bg-slate-900/80 backdrop-blur-md',
+      sticker: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
+      dot: 'bg-amber-400',
+      avatar: 'bg-gradient-to-tr from-amber-600 to-yellow-500 ring-4 ring-amber-500/20 shadow-amber-500/20',
+      glow: 'bg-amber-500/10',
+      text: 'Premium Access'
+    },
+    free: {
+      cardBorder: 'border-blue-500/40 shadow-2xl shadow-blue-950/20 bg-slate-900/80 backdrop-blur-md',
+      sticker: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+      dot: 'bg-blue-400 animate-pulse',
+      avatar: 'bg-gradient-to-tr from-blue-600 to-cyan-500 ring-4 ring-blue-500/20 shadow-blue-500/20',
+      glow: 'bg-blue-500/10 animate-pulse',
+      text: 'Free Student'
+    },
+    unpaid: {
+      cardBorder: 'border-red-500 shadow-2xl shadow-red-950/40 bg-gradient-to-b from-red-950/10 to-slate-900/90 border animate-[pulse_2s_infinite]',
+      sticker: 'bg-red-500/20 text-red-400 border-red-500/40 font-bold',
+      dot: 'bg-red-500 animate-ping relative inline-flex',
+      avatar: 'bg-gradient-to-tr from-rose-600 to-red-500 ring-4 ring-red-500/30 shadow-red-500/30 animate-pulse',
+      glow: 'bg-red-600/20 animate-ping absolute inset-0 rounded-2xl',
+      text: 'Action Required'
+    }
+  };
+
+  const style = statusStyles[paymentStatus];
+
+  return (
+    <div className="space-y-6 animate-fade-in w-full">
+      
+      {/* 🎯 Dashboard Announcements / Alerts */}
+      {studentAlerts && studentAlerts.length > 0 && (
+        <div className="mb-6 space-y-3">
+          {studentAlerts.map((alert: any, index: number) => (
+            <div 
+              key={index} 
+              className={`p-4 rounded-lg border flex items-start gap-3 ${
+                alert.type === 'private' ? 'bg-red-500/10 border-red-500/30 text-red-100' : 'bg-blue-500/10 border-blue-500/30 text-blue-100' 
+              }`}
+            >
+              <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
+              <div>
+                <h4 className="font-semibold text-lg">{alert.title}</h4>
+                <p className="text-sm mt-1 opacity-90">{alert.content}</p>
+                <span className="text-xs opacity-70 mt-2 block">{alert.date}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {/* Main Grid Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        {/* Left Profile Card */}
+        <div className={`lg:col-span-3 border p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-xl relative min-h-[250px] transition-all duration-500 ${style.cardBorder}`}>
+          
+          {/* ⚡ Bell Notification Icon (රිමයින්ඩර් ගණන 0 ට වඩා වැඩි නම් පමණක් මතු වේ) ⚡ */}
+          {remindersCount > 0 && (
+            <div className="absolute top-4 left-4 z-50 group cursor-pointer">
+              <div className="relative p-2 rounded-full bg-slate-950 border border-red-500/40 hover:border-red-500 transition shadow-lg shadow-red-950/50">
+                <Bell size={18} className="text-red-400 animate-[bounce_1s_infinite]" />
+                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white text-[10px] font-extrabold rounded-full flex items-center justify-center border-2 border-slate-900 animate-pulse">
+                  {remindersCount}
+                </span>
+              </div>
+
+              {/* Hover Dropdown Message Box */}
+              <div className="absolute left-0 mt-2 w-64 bg-slate-950/95 border border-slate-700 backdrop-blur-xl rounded-2xl shadow-2xl p-4 hidden group-hover:block transition-all text-left z-50 animate-fade-in">
+                <h4 className="text-white text-xs font-bold mb-2 flex items-center gap-2 border-b border-slate-800 pb-2 uppercase tracking-wider">
+                  <AlertTriangle size={14} className="text-red-400 animate-pulse" /> Payment Notice
+                </h4>
+                <p className="text-[11px] text-slate-300 leading-relaxed font-sans font-medium">
+                  {currentStudent.reminderMessage || "කරුණාකර මෙම මාසය සඳහා ඔබගේ පන්ති ගාස්තු ගෙවා රිසිට්පත Dashboard එක හරහා යොමු කරන්න."}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Status Sticker */}
+          <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-md border ${style.sticker}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
+            {style.text}
+          </div>
+
+          {/* Profile Avatar Click Area */}
+          <div onClick={openStudentProfileModal} className="flex flex-col items-center gap-4 cursor-pointer group mt-4 w-full">
+            <div className="relative">
+              <div className={`w-20 h-20 rounded-2xl flex items-center justify-center font-extrabold text-white text-3xl shadow-lg transform group-hover:scale-105 transition-all duration-300 relative z-10 ${style.avatar}`}>
+                {currentStudent.firstName?.slice(0, 1).toUpperCase()}
+                {currentStudent.lastName?.slice(0, 1).toUpperCase()}
+              </div>
+              <div className={`absolute inset-0 rounded-2xl blur-xl opacity-70 z-0 ${style.glow}`} />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-lg text-white font-sans group-hover:text-blue-400 transition-colors">{currentStudent.name}</h3>
+              <p className="text-[9px] text-slate-400 font-mono tracking-widest font-bold mt-1 uppercase bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800">
+                View Full Profile
+              </p>
+            </div>
+          </div>
+
+          <button onClick={handleStudentLogout} className="w-full mt-6 bg-slate-950 hover:bg-red-950/40 text-slate-400 hover:text-red-400 border border-slate-800 hover:border-red-900/50 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition duration-200">
+            <LogOut size={13} /> Log out Dashboard
+          </button>
+        </div>
+
+        {/* Right Main Content Area */}
+        <div className="lg:col-span-9 space-y-5">
+          
+          {/* Welcome Verified Banner */}
+          {showWelcomeBanner && paymentStatus !== 'unpaid' && (
+            <div className="bg-gradient-to-r from-emerald-950/25 to-slate-900 border border-emerald-500/35 rounded-2xl p-4 flex justify-between items-center gap-4 transition shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0"><CheckCircle size={18} /></div>
+                <div className="space-y-0.5">
+                  <h4 className="font-bold text-emerald-400 text-sm font-display">{siteConfig.dashboardWelcomeMsg ? siteConfig.dashboardWelcomeMsg.replace('{name}', currentStudent.firstName) : `Welcome back, ${currentStudent.firstName}!`}</h4>
+                  <p className="text-xs text-slate-350">{siteConfig.dashboardIntroText || "Your account is active and verified."}</p>
+                </div>
+              </div>
+              <button onClick={closeWelcomeActiveBanner} className="text-slate-400 hover:text-white p-1 hover:bg-slate-800/50 rounded transition"><X size={16} /></button>
+            </div>
+          )}
+
+          {/* Unpaid Suspended Warning Banner */}
+          {paymentStatus === 'unpaid' && (
+            <div className="bg-gradient-to-r from-red-950/30 to-slate-900 border border-red-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-[pulse_3s_infinite]">
+              <div className="w-8 h-8 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 shrink-0 mt-0.5"><AlertTriangle size={16} /></div>
+              <div className="whitespace-pre-wrap">
+                <h4 className="font-bold text-red-400 text-sm font-sans">{siteConfig.dashboardUnpaidWarningTitle || "Payment Settle Warning Alert"}</h4>
+                <p className="text-xs text-slate-300 leading-relaxed mt-1">{siteConfig.dashboardUnpaidWarningText || "ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර මෙම මාසයේ ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න."}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Info Badges */}
+          <div className="flex flex-wrap gap-2">
+            <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${paymentStatus !== 'unpaid' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+              Access: {paymentStatus !== 'unpaid' ? 'ACTIVE' : 'ON SUSPENSION'}
+            </span>
+            <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
+              ID: {currentStudent.username}
+            </span>
+            <span className="text-[10px] font-mono bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
+              District: {currentStudent.district}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
   // Build high contrast, clean interactive calendar cells for May 2026
   const cellsOffset = 5; // Starts on Friday
   const cellsCount = 31;
@@ -1676,551 +1877,21 @@ export default function App() {
 
         {/* VIEW 5: ACTIVE STUDENTS INTERACTIVE DASHBOARD */}
         {currentView === 'dashboard' && currentStudent && (
-          <div className="space-y-6 animate-fade-in w-full">
-            
-            {/* 🎯 Dashboard Reminder / Announcements UI */}
-            {studentAlerts && studentAlerts.length > 0 && (
-              <div className="mb-6 space-y-3">
-                {studentAlerts.map((alert: any, index: number) => (
-                  <div 
-                    key={index} 
-                    className={`p-4 rounded-lg border flex items-start gap-3 ${
-                      alert.type === 'private' ? 'bg-red-500/10 border-red-500/30 text-red-100' : 'bg-blue-500/10 border-blue-500/30 text-blue-100' 
-                    }`}
-                  >
-                    <AlertTriangle className={`w-6 h-6 shrink-0 ${alert.type === 'private' ? 'text-red-400' : 'text-blue-400'}`} />
-                    <div>
-                      <h4 className="font-semibold text-lg">{alert.title}</h4>
-                      <p className="text-sm mt-1 opacity-90">{alert.content}</p>
-                      <span className="text-xs opacity-70 mt-2 block">{alert.date}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            {/* Split Grid Layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              
-              {/* Left Column Profile Demographics overview card */}
-              <div className={`lg:col-span-3 border p-6 rounded-3xl flex flex-col items-center justify-center text-center shadow-lg relative min-h-[220px] transition-colors duration-500 ${
-                (currentStudent as any).isFreeStudent ? 'border-blue-500/50 shadow-blue-900/20 bg-slate-800/40' :
-                isCurrentMonthPaid(currentStudent.activeMonths) ? 'border-amber-500/50 shadow-amber-900/20 bg-slate-800/40' :
-                'border-red-500/50 shadow-red-900/20 bg-red-950/20 animate-pulse'
-              }`}>
-                
-                {/* ⚡ Bell Notification ⚡ */}
-                {(currentStudent.remindersCount || 0) > 0 && (
-                  <div className="absolute top-4 left-4 z-50 group cursor-pointer">
-                    <div className="relative p-2 rounded-full bg-slate-900/50 hover:bg-slate-800 border border-slate-700 transition">
-                      <Bell size={16} className="text-red-400 animate-bounce" />
-                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center border border-slate-900">
-                        {currentStudent.remindersCount}
-                      </span>
-                    </div>
-                    <div className="absolute left-0 mt-2 w-56 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-4 hidden group-hover:block transition-all text-left">
-                      <h4 className="text-white text-xs font-semibold mb-2 flex items-center gap-2 border-b border-slate-700 pb-2">
-                        <AlertTriangle size={14} className="text-amber-400" /> Payment Notice
-                      </h4>
-                      <p className="text-[11px] text-slate-300 leading-relaxed">
-                        {currentStudent.reminderMessage || "කරුණාකර මෙම මාසය සඳහා ඔබගේ පන්ති ගාස්තු ගෙවා රිසිට්පත යොමු කරන්න."}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Status Sticker */}
-                <div className={`absolute top-4 right-4 px-2.5 py-1 rounded-full text-[9px] font-extrabold tracking-wider uppercase flex items-center gap-1.5 shadow-lg border ${
-                  (currentStudent as any).isFreeStudent ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                  isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' :
-                  'bg-red-500/20 text-red-400 border-red-500/30'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    (currentStudent as any).isFreeStudent ? 'bg-blue-400 animate-pulse' :
-                    isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-400' :
-                    'bg-red-400 animate-ping'
-                  }`} />
-                  {(currentStudent as any).isFreeStudent ? 'Free Access' : isCurrentMonthPaid(currentStudent.activeMonths) ? 'Premium' : 'Action Required'}
-                </div>
-
-                <div onClick={openStudentProfileModal} className="flex flex-col items-center gap-4 cursor-pointer group mt-4" title="ප්‍රොෆයිල් විස්තර බැලීමට මෙහි ක්ලික් කරන්න">
-                  {/* Portrait photo button */}
-                  <div className="relative">
-                    <div className={`w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl shadow-xl transform group-hover:scale-105 active:scale-95 transition-all duration-300 relative z-10 ring-4 ring-offset-2 ring-offset-slate-900 ${
-                      (currentStudent as any).isFreeStudent ? 'bg-gradient-to-tr from-blue-600 to-cyan-500 shadow-blue-600/40 ring-blue-500/30' :
-                      isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-gradient-to-tr from-amber-600 to-yellow-500 shadow-amber-600/40 ring-amber-500/30' :
-                      'bg-gradient-to-tr from-rose-600 to-red-500 shadow-rose-600/40 ring-red-500/30'
-                    }`}>
-                      {currentStudent.firstName?.slice(0, 1).toUpperCase()}
-                      {currentStudent.lastName?.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div className={`absolute inset-0 rounded-2xl blur-xl opacity-60 z-0 ${
-                      (currentStudent as any).isFreeStudent ? 'bg-blue-500 animate-pulse' :
-                      isCurrentMonthPaid(currentStudent.activeMonths) ? 'bg-amber-500' :
-                      'bg-red-500 animate-pulse'
-                    }`} />
-                  </div>
-                  <div>
-                    <h3 className="font-extrabold text-lg text-white font-sans group-hover:text-blue-300 transition-colors">{currentStudent.name}</h3>
-                    <p className="text-[10px] text-slate-400 font-mono tracking-widest font-bold mt-1 uppercase">View Full Profile</p>
-                  </div>
-                </div>
-
-                <button onClick={handleStudentLogout} className="w-full mt-6 bg-[#1E293B] hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition duration-200">
-                  <LogOut size={13} /> Log out Dashboard
-                </button>
-              </div>
-
-              {/* Right Main Column components */}
-              <div className="lg:col-span-9 space-y-5">
-                
-                {/* 1. Welcoming verified notice alert active */}
-                {showWelcomeBanner && ((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) && (
-                  <div className="bg-gradient-to-r from-emerald-950/25 to-slate-900 border border-emerald-500/35 rounded-2xl p-4 flex justify-between items-center gap-4 transition shadow-md">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0"><CheckCircle size={18} /></div>
-                      <div className="space-y-0.5">
-                        <h4 className="font-bold text-emerald-400 text-sm font-display">{siteConfig.dashboardWelcomeMsg ? siteConfig.dashboardWelcomeMsg.replace('{name}', currentStudent.firstName) : `Welcome back, ${currentStudent.firstName}!`}</h4>
-                        <p className="text-xs text-slate-350">{siteConfig.dashboardIntroText || "Your account is active and verified."}</p>
-                      </div>
-                    </div>
-                    <button onClick={closeWelcomeActiveBanner} className="text-slate-400 hover:text-white p-1 hover:bg-slate-800/50 rounded transition"><X size={16} /></button>
-                  </div>
-                )}
-
-                {/* Unpaid Warning block banner */}
-                {!((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) && (
-                  <div className="bg-gradient-to-r from-amber-950/25 to-slate-900 border border-amber-500/30 rounded-2xl p-4.5 flex gap-3 shadow-md animate-pulse">
-                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0 mt-0.5"><AlertTriangle size={16} /></div>
-                    <div className="whitespace-pre-wrap">
-                      <h4 className="font-bold text-amber-500 text-sm font-sans">{siteConfig.dashboardUnpaidWarningTitle || "Payment Settle Warning Alert"}</h4>
-                      <p className="text-xs text-slate-300 leading-relaxed mt-1">{siteConfig.dashboardUnpaidWarningText || "ඔබගේ ගිණුමේ සක්‍රීය ප්‍රවේශය තාවකාලිකව අත්හිටුවා ඇත. සජීවී දේශන සබැඳි, සටහන් පත්‍රිකා සහ පටිගත කළ දේශන නැරඹීමට කරුණාකර මෙම මාසයේ ඔබගේ ගෙවීම් රිසිට්පත ( WhatsApp 0719152128 ) හරහා යොමු කරන්න."}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Status indicator strip blocks */}
-                <div className="flex flex-wrap gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold tracking-wider uppercase px-3 py-1.5 rounded-full ${((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    Access: {((currentStudent as any).isFreeStudent || isCurrentMonthPaid(currentStudent.activeMonths)) ? 'ACTIVE' : 'ON SUSPENSION'}
-                  </span>
-                  <span className="text-[10px] font-mono select-all bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
-                    ID: {currentStudent.username}
-                  </span>
-                  <span className="text-[10px] font-mono bg-slate-950/60 border border-slate-800 px-3.5 py-1.5 rounded-full text-slate-350 font-semibold">
-                    District: {currentStudent.district}
-                  </span>
-                </div>
-
-                {/* Three Large Premium Custom Buttons */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {/* Live classes */}
-                  <div 
-                    onClick={() => handlePortalClick('live')}
-                    className="relative group bg-slate-800/30 border border-slate-705/40 hover:border-rose-500/40 rounded-3xl p-6 flex flex-col items-center text-center cursor-pointer transition transform hover:-translate-y-1 hover:shadow-xl hover:shadow-rose-950/20 overflow-hidden"
-                  >
-                    {/* Subtle pulse background animation */}
-                    <div className="absolute inset-0 bg-gradient-to-b from-rose-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                    
-                    {/* Visual Sticker Badges */}
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Live Open' : 'Locked'}
-                    </span>
-                    
-                    <div className="relative w-16 h-16 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-450 text-3xl group-hover:scale-110 group-hover:rotate-6 transition duration-300 my-4 shadow-inner z-10">
-                      <div className="absolute inset-0 bg-rose-400/20 rounded-2xl animate-ping opacity-20" />
-                      🎥
-                    </div>
-                    
-                    <h4 className="font-extrabold text-lg text-white font-display z-10 group-hover:text-rose-300 transition-colors">Live Classes</h4>
-                    <p className="text-xs text-slate-400 max-w-[200px] mt-1.5 font-sans leading-relaxed z-10">
-                      සජීවීව පවත්වන සතිපතා දේශනාවට සම්බන්ධ වන්න
-                    </p>
-                  </div>
-
-                  {/* Tutes & Papers */}
-                  <div 
-                    onClick={() => handlePortalClick('tutes')}
-                    className="relative group bg-slate-800/30 border border-slate-705/40 hover:border-emerald-500/40 rounded-3xl p-6 flex flex-col items-center text-center cursor-pointer transition transform hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-950/20 overflow-hidden"
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                    
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Notes Open' : 'Locked'}
-                    </span>
-                    
-                    <div className="relative w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-450 text-3xl group-hover:scale-110 group-hover:-translate-y-1 transition duration-300 my-4 shadow-inner z-10">
-                      <div className="absolute inset-0 bg-emerald-400/20 rounded-2xl animate-pulse opacity-30" />
-                      📁
-                    </div>
-                    
-                    <h4 className="font-extrabold text-lg text-white font-display z-10 group-hover:text-emerald-300 transition-colors">Tutes &amp; Papers</h4>
-                    <p className="text-xs text-slate-400 max-w-[200px] mt-1.5 font-sans leading-relaxed z-10">
-                      නියමිත නිබන්ධන හා ලිඛිත බහුවරණ ප්‍රශ්න පත්‍ර
-                    </p>
-                  </div>
-
-                  {/* Class Recordings */}
-                  <div 
-                    onClick={() => handlePortalClick('recordings')}
-                    className="relative group bg-slate-800/30 border border-slate-705/40 hover:border-purple-500/40 rounded-3xl p-6 flex flex-col items-center text-center cursor-pointer transition transform hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-950/20 overflow-hidden"
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                    
-                    <span className={`absolute top-4 right-4 text-[9px] font-mono tracking-wider font-extrabold uppercase px-2.5 py-1 rounded-full z-10 ${isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-slate-800/80 text-slate-400'}`}>
-                      {isCurrentMonthPaid(currentStudent.activeMonths || currentStudent.activeMonths) ? 'Recs Available' : 'Locked'}
-                    </span>
-                    
-                    <div className="relative w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-450 text-3xl group-hover:scale-110 group-hover:-rotate-3 transition duration-300 my-4 shadow-inner z-10">
-                      <div className="absolute inset-0 bg-purple-400/20 rounded-2xl animate-pulse opacity-40 duration-700" />
-                      📼
-                    </div>
-                    
-                    <h4 className="font-extrabold text-lg text-white font-display z-10 group-hover:text-purple-300 transition-colors">Class Recordings</h4>
-                    <p className="text-xs text-slate-400 max-w-[200px] mt-1.5 font-sans leading-relaxed z-10">
-                      පෙර පවත්වන ලද පාඩම් මාලා පටිගත කිරීම් නැරඹීම
-                    </p>
-                  </div>
-                </div>
-
-                {dashboardTab === 'overview' && (
-                  <div className="space-y-5 animate-fade-in">
-                    {/* Student's Payment History */}
-                    <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-4 shadow-lg">
-                      <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                        <div className="space-y-0.5">
-                          <h3 className="font-extrabold text-lg text-white tracking-tight font-display flex items-center gap-1.5">
-                            <Award size={18} className="text-green-400" /> My Payment History
-                          </h3>
-                          <p className="text-xs text-slate-400 leading-relaxed font-sans mt-0.5">
-                            ඔබ විසින් ගෙවන ලද මාසික ගාස්තු විස්තර මෙතැනින් බලන්න.
-                          </p>
-                        </div>
-                      </div>
-                      
-                      {(!currentStudent.payments || currentStudent.payments.length === 0) ? (
-                        <div className="text-xs text-slate-500 font-sans italic py-2 text-center bg-slate-900/50 rounded-xl border border-slate-800 p-4">
-                          ගෙවීම් පිලිබඳ දත්ත කිසිවක් නැත.
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {currentStudent.payments.map((pmnt, i) => (
-                            <div key={i} className="flex justify-between items-center bg-slate-900 border border-slate-800/80 p-3 rounded-xl transition hover:border-slate-700">
-                              <div className="flex flex-col gap-1">
-                                <span className="text-sm font-bold text-white tracking-wide">{pmnt.month}</span>
-                                <span className="text-[10px] text-slate-400">Added: {new Date(pmnt.paidDate || '').toLocaleDateString()}</span>
-                              </div>
-                              <div className="text-right flex flex-col items-end gap-1">
-                                <span className="text-sm text-slate-300 font-medium">Rs. {pmnt.amount}</span>
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase border ${pmnt.status === 'paid' ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-amber-500/20 text-amber-500 border-amber-500/30'}`}>
-                                  {pmnt.status}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-
-                    {/* Physics Interactive Scheduler Calendar Widget */}
-                    <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-4 shadow-lg">
-                      <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                        <div className="space-y-0.5">
-                          <h3 className="font-extrabold text-lg text-white tracking-tight font-display flex items-center gap-1.5">
-                            <CalendarIcon size={18} className="text-blue-400" /> Lesson Schedule &amp; Planner
-                          </h3>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-3 pt-1">
-                        {calendarEvents.filter(c => c.status !== 'past').map((cal) => (
-                          <div key={cal.id} className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${cal.status === 'cancelled' ? 'bg-red-500/5 border-red-500/20 shadow-none' : 'bg-slate-900/60 border-slate-800 hover:border-blue-500/40 shadow-md hover:shadow-lg'}`}>
-                            <div className={`p-3 rounded-2xl shrink-0 flex flex-col items-center justify-center min-w-[70px] ${cal.status === 'cancelled' ? 'bg-red-500/10 text-red-500' : 'bg-blue-600/20 text-blue-400'}`}>
-                              <span className="text-[10px] font-extrabold tracking-widest uppercase">{cal.date.split('-')[1]}</span>
-                              <span className="text-2xl font-bold font-mono tracking-tighter leading-none mt-0.5">{cal.date.split('-')[2]}</span>
-                            </div>
-                            <div className="space-y-1">
-                              <h4 className={`text-sm font-bold font-display ${cal.status === 'cancelled' ? 'text-slate-400 line-through' : 'text-slate-100'}`}>
-                                {cal.title}
-                              </h4>
-                              {cal.status === 'cancelled' && cal.warningMessage && (
-                                <p className="text-[11px] font-medium text-red-400 mt-1 flex items-center gap-1">
-                                  ⚠️ {cal.warningMessage}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                        {calendarEvents.filter(c => c.status !== 'past').length === 0 && (
-                          <p className="text-xs text-slate-500 italic font-sans py-2">ඉදිරියට නියමිත පන්ති දින කිසිවක් නැත.</p>
-                        )}
-                      </div>
-                    </section>
-
-                    {/* Private Alert Dashboard for the Student */}
-                    <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 shadow-lg">
-                      <div className="flex items-center gap-2 border-b border-slate-800/60 pb-3">
-                        <h3 className="font-extrabold text-lg text-white font-display flex items-center gap-1.5">
-                          <Bell size={18} className="text-rose-400" /> Notifications &amp; Alert Feed
-                        </h3>
-                      </div>
-
-                      <div className="space-y-3.5 pt-4">
-                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map((s: any) => s.trim()).includes(currentStudent.username.toLowerCase()))).map((not) => (
-                          <div key={not.id} className={`p-4 bg-gradient-to-r ${not.type === 'private' ? 'from-red-950/40 to-slate-900/60 border-l-red-500' : 'from-blue-950/40 to-slate-900/60 border-l-blue-500'} border border-slate-800 border-l-4 rounded-r-2xl space-y-1.5 animate-fade-in shadow-md`}>
-                            <div className="flex justify-between items-center gap-4">
-                              <h4 className={`font-extrabold text-sm flex items-center gap-1.5 ${not.type === 'private' ? 'text-red-400' : 'text-blue-400'}`}>
-                                {not.type === 'private' ? '⚠️' : '📢'} {not.title}
-                              </h4>
-                              <span className="text-[9px] font-bold text-slate-400 border border-slate-700 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
-                                {not.date}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-300 leading-relaxed">{not.content}</p>
-                          </div>
-                        ))}
-
-                        {announcements.filter(a => a.type === 'public' || (a.type === 'private' && a.targetUser?.toLowerCase().split(',').map((s: any) => s.trim()).includes(currentStudent.username.toLowerCase()))).length === 0 && (
-                          <p className="text-xs text-slate-500 italic font-sans py-2">ඔබගේ ගිණුමට අදාළ විශේෂ පෞද්ගලික හෝ පොදු ඇලර්ට් නිවේදන කිසිවක් දැනට නොමැත.</p>
-                        )}
-                      </div>
-                    </section>
-                  </div>
-                )}
-
-                {dashboardTab === 'live' && (
-                  <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-4 shadow-lg animate-fade-in relative min-h-[600px] flex flex-col">
-                    <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                      <h3 className="font-extrabold text-lg text-white font-display flex items-center gap-1.5">
-                        <Video size={18} className="text-red-400" /> Live Interactive Video Stream
-                      </h3>
-                      <button onClick={() => setDashboardTab('overview')} className="text-xs bg-slate-900 border border-slate-700 hover:bg-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-                        Back to Overview
-                      </button>
-                    </div>
-                    {/* Embedded auto-play video logic */}
-                    <div className="flex-1 rounded-2xl overflow-hidden border border-slate-700 relative bg-black flex items-center justify-center">
-                      {(() => {
-                        const now = new Date();
-                        const validLives = scheduledLives.filter(sl => {
-                           if (sl.visibility === 'free' && (!currentStudent.freeMonths || currentStudent.freeMonths.length === 0)) return false;
-                           // Simplified classes check
-                           const stClasses = currentStudent.classTypes || currentStudent.classTypes || [];
-                           const hasClass = sl.target_classes?.some((c: string) => stClasses.includes(c));
-                           if (!hasClass) return false;
-                           
-                           // Date check (only show if it's today's event or active)
-                           if (!sl.date || sl.date !== now.toISOString().split('T')[0]) return false;
-                           
-                           return true;
-                        });
-                        const activeLive = validLives[0];
-                        if (!activeLive) {
-                          return (
-                            <div className="text-slate-500 flex flex-col items-center gap-3">
-                              <Video size={48} className="opacity-30" />
-                              <p className="text-sm">අද දිනට සජීවී පන්ති නොමැත.</p>
-                            </div>
-                          );
-                        }
-
-                        // We need the standard countdown to 0. 
-                        const timeUntilStart = new Date(`${activeLive.date}T${activeLive.time || '00:00'}`).getTime() - Date.now();
-                        const isCountdown = timeUntilStart > 0 && timeUntilStart <= 300000;
-                        const isLive = timeUntilStart <= 0;
-
-                        if (isCountdown) {
-                           return (
-                              <div className="text-center flex flex-col items-center gap-4 animate-pulse">
-                                <h1 className="text-3xl font-extrabold text-white">පන්තිය ආරම්භ වීමට තව...</h1>
-                                <div className="text-6xl font-mono font-bold text-red-500 tracking-widest drop-shadow-[0_0_20px_rgba(239,68,68,0.5)]">
-                                  {Math.floor(timeUntilStart / 60000)}:{(Math.floor((timeUntilStart % 60000) / 1000)).toString().padStart(2, '0')}
-                                </div>
-                              </div>
-                           );
-                        }
-
-                        if (isLive) {
-                           return (
-                             <>
-                               <iframe 
-                                 src={activeLive.link}
-                                 className="w-full h-[500px]"
-                                 frameBorder="0"
-                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                 allowFullScreen
-                               ></iframe>
-                               <div className="absolute top-4 left-4 bg-red-600 border border-red-400 text-white text-[10px] font-bold px-3 py-1.5 rounded shadow-lg animate-pulse flex items-center gap-2">
-                                  <div className="w-2 h-2 rounded-full bg-white animate-ping"></div> LIVE
-                               </div>
-                             </>
-                           );
-                        }
-
-                        return (
-                           <div className="text-slate-500 flex flex-col items-center gap-3 p-10">
-                             <Video size={48} className="opacity-30" />
-                             <p className="text-sm">පන්තිය {activeLive.time} ට ආරම්භ වේ.</p>
-                           </div>
-                        );
-                      })()}
-                    </div>
-
-                    {showAttentionCheck && (
-                      <div className="absolute bottom-6 right-6 bg-slate-900 border border-amber-500/50 shadow-2xl z-50 rounded-2xl flex flex-col items-center justify-center text-center p-5 animate-slide-up w-72">
-                        <AlertTriangle size={32} className="text-amber-500 mb-2 animate-pulse" />
-                        <h2 className="text-sm font-extrabold text-white mb-2">අවධානයෙන් පන්තියට සහභාගී වන්න!</h2>
-                        <button
-                          onClick={async () => {
-                            setShowAttentionCheck(false);
-                            setAttentionCheckTime(0);
-                            const audio = document.getElementById('attention-audio') as HTMLAudioElement;
-                            if(audio) audio.pause();
-                            // Register in database as announcement log
-                            if(currentStudent) {
-                               await supabase.from('announcements').insert([{
-                                  title: 'Watch Log',
-                                  content: JSON.stringify({ liveId: dashboardTab, markedAt: new Date().toISOString() }),
-                                  type: 'attention_log',
-                                  target_user: currentStudent.username,
-                                  date: new Date().toISOString().split('T')[0]
-                               }]);
-                            }
-                          }}
-                          className="px-4 py-2 w-full bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all cursor-pointer"
-                        >
-                          I'm Here! (ඇටෙන්ශන් මාක් කරන්න)
-                        </button>
-                        <audio id="attention-audio" loop preload="auto" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" />
-                      </div>
-                    )}
-                  </section>
-                )}
-
-                {dashboardTab === 'tutes' && (
-                  <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-4 shadow-lg animate-fade-in min-h-[400px]">
-                    <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                      <h3 className="font-extrabold text-lg text-white font-display flex items-center gap-1.5">
-                        <Folder size={18} className="text-amber-400" /> Tutes &amp; PDF Materials
-                      </h3>
-                      <button onClick={() => setDashboardTab('overview')} className="text-xs bg-slate-900 border border-slate-700 hover:bg-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-                        Back
-                      </button>
-                    </div>
-                    
-                    <div className="flex gap-2 pb-2">
-                       <select value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none">
-                         <option value="">All Months</option>
-                         <option value="2026-05">2026-05</option>
-                         <option value="2026-06">2026-06</option>
-                         <option value="2026-07">2026-07</option>
-                       </select>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {resourceLinks.filter(r => r.type === 'tute' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.activeMonths?.includes(r.target_month) || currentStudent.freeMonths?.includes(r.target_month);
-                         return (
-                           <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-amber-500/20 hover:border-amber-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
-                             <div>
-                               <h4 className="font-bold text-sm text-white mb-1">{r.title}</h4>
-                               <p className="text-[10px] text-slate-400 font-mono">{r.target_classes?.join(', ')} • {r.target_month}</p>
-                             </div>
-                             {hasAccess ? (
-                               <a href={r.link} target="_blank" rel="noopener noreferrer" className="bg-amber-500 text-black px-4 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 hover:bg-amber-400 transition-colors shadow-[0_0_15px_rgba(245,158,11,0.2)] w-full">
-                                 Download PDF <Download size={14} />
-                               </a>
-                             ) : (
-                               <span className="text-[10px] text-red-500 bg-red-500/10 px-3 py-2 rounded-lg flex items-center justify-center gap-1"><Lock size={12}/> මාසික ගාස්තු ගෙවා නොමැත</span>
-                             )}
-                           </div>
-                         );
-                       })}
-                       {resourceLinks.filter(r => r.type === 'tute' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct))).length === 0 && (
-                         <div className="col-span-2 text-center text-slate-500 text-sm py-10">දැනට නිබන්ධන කිසිවක් එක් කර නැත.</div>
-                       )}
-                    </div>
-                  </section>
-                )}
-
-                {dashboardTab === 'recordings' && (
-                  <section className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-4 shadow-lg animate-fade-in min-h-[400px]">
-                    <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                      <h3 className="font-extrabold text-lg text-white font-display flex items-center gap-1.5">
-                        <Video size={18} className="text-purple-400" /> Class Recordings
-                      </h3>
-                      <button onClick={() => setDashboardTab('overview')} className="text-xs bg-slate-900 border border-slate-700 hover:bg-slate-800 px-3 py-1.5 rounded-lg text-slate-300">
-                        Back
-                      </button>
-                    </div>
-                    
-                    <div className="flex gap-2 pb-2">
-                       <select value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none">
-                         <option value="">All Months</option>
-                         <option value="2026-05">2026-05</option>
-                         <option value="2026-06">2026-06</option>
-                         <option value="2026-07">2026-07</option>
-                       </select>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       {resourceLinks.filter(r => r.type === 'recording' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct)) && (!filterMonth || r.target_month === filterMonth)).map((r) => {
-                         const hasAccess = currentStudent.activeMonths?.includes(r.target_month) || currentStudent.freeMonths?.includes(r.target_month);
-                         return (
-                           <div key={r.id} className={`p-4 rounded-xl border ${hasAccess ? 'bg-slate-900/50 border-purple-500/20 hover:border-purple-500/50' : 'bg-slate-900 border-slate-800 opacity-60'} transition flex flex-col justify-between h-full space-y-3`}>
-                             <div>
-                               <h4 className="font-bold text-sm text-white mb-1">{r.title}</h4>
-                               <p className="text-[10px] text-slate-400 font-mono">{r.target_classes?.join(', ')} • {r.target_month}</p>
-                             </div>
-                             {hasAccess ? (
-                               <button 
-                                 onClick={() => setPlayingVideoUrl(r.link)} 
-                                 className="w-full bg-purple-600 text-white px-4 py-2.5 rounded-lg text-[11px] font-bold uppercase tracking-wider text-center flex items-center justify-center gap-1.5 hover:bg-purple-500 transition-colors shadow-[0_0_15px_rgba(168,85,247,0.2)] cursor-pointer"
-                               >
-                                 Watch Recording <Play size={14} fill="currentColor" />
-                               </button>
-                             ) : (
-                               <span className="text-[10px] text-red-500 bg-red-500/10 px-3 py-2 rounded-lg flex items-center justify-center gap-1"><Lock size={12}/> මාසික ගාස්තු ගෙවා නොමැත</span>
-                             )}
-                           </div>
-                         );
-                       })}
-                       {resourceLinks.filter(r => r.type === 'recording' && currentStudent.classTypes.some(ct => r.target_classes?.includes(ct))).length === 0 && (
-                         <div className="col-span-2 text-center text-slate-500 text-sm py-10">දැනට පටිගත කිරීම් කිසිවක් එක් කර නැත.</div>
-                       )}
-                    </div>
-                  </section>
-                )}
-
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Recording Fullscreen Player Overlay */}
-        {playingVideoUrl && (
-          <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center animate-fade-in p-4 lg:p-10">
-             <button onClick={() => setPlayingVideoUrl(null)} className="absolute top-6 right-6 text-white hover:text-red-400 bg-slate-900/50 hover:bg-slate-800/80 p-3 rounded-full transition cursor-pointer z-[60]">
-               <X size={32} />
-             </button>
-             <div className="w-full h-full max-w-7xl max-h-[85vh] relative rounded-3xl overflow-hidden border border-slate-700 shadow-2xl bg-slate-950">
-               {playingVideoUrl.includes('youtube') || playingVideoUrl.includes('youtu.be') ? (
-                  <iframe 
-                    className="w-full h-full border-none"
-                    src={playingVideoUrl} 
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-               ) : (
-                  <video 
-                    className="w-full h-full object-contain"
-                    controls 
-                    autoPlay 
-                    src={playingVideoUrl}
-                  />
-               )}
-             </div>
-          </div>
+          <StudentDashboardView 
+            currentStudent={currentStudent}
+            studentAlerts={studentAlerts}
+            showWelcomeBanner={showWelcomeBanner}
+            closeWelcomeActiveBanner={closeWelcomeActiveBanner}
+            openStudentProfileModal={openStudentProfileModal}
+            handleStudentLogout={handleStudentLogout}
+            isCurrentMonthPaid={isCurrentMonthPaid}
+            siteConfig={siteConfig}
+            Bell={Bell}
+            AlertTriangle={AlertTriangle}
+            CheckCircle={CheckCircle}
+            X={X}
+            LogOut={LogOut}
+          />
         )}
 
         {/* VIEW 6: COCKPIT PANEL ADMIN CONSOLE */}
