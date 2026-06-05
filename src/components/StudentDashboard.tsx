@@ -1,18 +1,19 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText } from 'lucide-react';
 
-// මේවා අනිවාර්යයෙන්ම එකම ෆෝල්ඩරේ තියෙන්න ඕනේ
+// ඔයාගේ ෆයිල් නම සහ මෙතන අකුරු සියල්ල (Case-sensitive) හරියටම සමාන විය යුතුයි
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
 
+type TabType = "live" | "recordings" | "tutes" | "exams";
+
 interface StudentDashboardProps {
   currentStudent: any;
   handleStudentLogout: () => void;
-  dashboardTab: string;
-  // මෙතන "tutes" ලෙස හදන්න
-  setDashboardTab: React.Dispatch<React.SetStateAction<"live" | "recordings" | "tutes" | "exams">>; 
+  dashboardTab: TabType;
+  setDashboardTab: React.Dispatch<React.SetStateAction<TabType>>;
   showWelcomeBanner: boolean;
   closeWelcomeActiveBanner: () => void;
   studentAlerts: any[];
@@ -39,7 +40,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = (props) => {
   const [remindersCount, setRemindersCount] = useState<number>(0);
   const [reminderMessage, setReminderMessage] = useState<string>('');
   const [isPaidCurrentMonth, setIsPaidCurrentMonth] = useState<boolean>(false);
-const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exams'>('live');
 
   const remindersSectionRef = useRef<HTMLDivElement>(null);
   const liveClassSectionRef = useRef<HTMLDivElement>(null);
@@ -82,6 +82,7 @@ const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exa
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans">
+      {/* Header / Profile Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-slate-900/60 p-6 rounded-3xl border border-slate-800">
         <div className="lg:col-span-3 flex flex-col items-center relative">
           {remindersCount > 0 && (
@@ -110,20 +111,21 @@ const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exa
           <span className="text-xs text-slate-400 font-mono mt-1">ID: {currentStudent.username}</span>
         </div>
 
+        {/* Navigation Buttons - භාවිතා කරන්නේ dashboardTab Prop එකයි */}
         <div className="lg:col-span-9 flex flex-wrap gap-4 justify-center lg:justify-start">
           <button 
-            onClick={() => { setActiveTab('live'); scrollToSection(liveClassSectionRef); }}
-            className="flex items-center gap-2 px-5 py-3 bg-red-600/10 hover:bg-red-600 border border-red-500/30 rounded-2xl font-bold text-sm transition-all shadow-lg"
+            onClick={() => { setDashboardTab('live'); scrollToSection(liveClassSectionRef); }}
+            className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all shadow-lg ${dashboardTab === 'live' ? 'bg-red-600 border-red-500' : 'bg-red-600/10 border-red-500/30'}`}
           >
             <Video size={18} /> Join Live Lecture
           </button>
-          <button onClick={() => setActiveTab('recordings')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${activeTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
+          <button onClick={() => setDashboardTab('recordings')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
             <BookOpen size={18} /> Video Recordings
           </button>
-          <button onClick={() => setActiveTab('tuts')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${activeTab === 'tuts' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
+          <button onClick={() => setDashboardTab('tutes')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${dashboardTab === 'tutes' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
             <Download size={18} /> Tuts & Papers Docs
           </button>
-          <button onClick={() => setActiveTab('exams')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${activeTab === 'exams' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
+          <button onClick={() => setDashboardTab('exams')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition ${dashboardTab === 'exams' ? 'bg-amber-500 border-amber-400 text-slate-950' : 'bg-slate-800 border-slate-700'}`}>
             <FileText size={18} /> Online Exam Sheet History
           </button>
           <button onClick={handleStudentLogout} className="flex items-center gap-2 px-5 py-3 bg-slate-950 hover:bg-red-950/40 text-slate-400 hover:text-red-400 border border-slate-800 rounded-2xl font-bold text-sm transition">
@@ -145,14 +147,14 @@ const [activeTab, setActiveTab] = useState<'live' | 'recordings' | 'tuts' | 'exa
       </div>
 
       <main className="space-y-8">
-        {activeTab === 'live' && (
+        {dashboardTab === 'live' && (
           <div ref={liveClassSectionRef} className="scroll-mt-6">
             <LiveClassPlayer currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />
           </div>
         )}
-        {activeTab === 'recordings' && <RecordingsManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
-        {activeTab === 'tuts' && <TutsPapersManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
-        {activeTab === 'exams' && <OnlineExamsHistory currentStudent={currentStudent} />}
+        {dashboardTab === 'recordings' && <RecordingsManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
+        {dashboardTab === 'tutes' && <TutsPapersManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
+        {dashboardTab === 'exams' && <OnlineExamsHistory currentStudent={currentStudent} />}
       </main>
     </div>
   );
