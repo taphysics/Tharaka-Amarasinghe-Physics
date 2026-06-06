@@ -30,40 +30,58 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
+  const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid'}[]>([]);
 
   const remindersSectionRef = useRef<HTMLDivElement>(null);
   const liveClassSectionRef = useRef<HTMLDivElement>(null);
 
+  // වත්මන් මාසය ලබා ගැනීම (උදා: 2026-06)
   const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
   const currentMonthKey = `${slDate.getFullYear()}-${String(slDate.getMonth() + 1).padStart(2, '0')}`;
 
-  // Database එකේ ඇති class_types column එක හරහා පන්ති ලබා ගැනීම
-  let rawClasses = currentStudent.class_types || [];
-  if (typeof rawClasses === 'string') {
-    try { rawClasses = JSON.parse(rawClasses); } catch(e) { rawClasses = [rawClasses]; }
-  }
-  const enrolledClasses: string[] = Array.isArray(rawClasses) ? rawClasses : [];
-
-  // Database field නම් සරලව ලබා ගැනීම සඳහා
-  const studentName = currentStudent.full_name || currentStudent.name || "Student";
-  const isFree = currentStudent.is_free_student || currentStudent.isFreeStudent || false;
-
   useEffect(() => {
     fetchDashboardData();
-  }, [currentStudent]);
+  }, [currentStudent.username]);
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
     
     if (supabase) {
       try {
-        // 1. Payment දත්ත ලබා ගැනීම (payments ටේබල් එකෙන්)
-        const { data: paymentData } = await supabase
+        // 1. Supabase එකෙන් අලුත්ම සිසු දත්ත ලබාගැනීම (Cache මඟ හැරීම)
+        const { data: freshStudentData, error: studentErr } = await supabase
+          .from('students')
+          .select('*')
+          .eq('username', currentStudent.username)
+          .single();
+
+        const studentToUse = freshStudentData || currentStudent;
+        setLiveStudentData(studentToUse);
+
+        // පන්ති වර්ග (class_types) Array එකක් බවට පත් කිරීම
+        let enrolledClasses: string[] = [];
+        if (studentToUse.class_types) {
+          if (typeof studentToUse.class_types === 'string') {
+            try { enrolledClasses = JSON.parse(studentToUse.class_types); } 
+            catch(e) { enrolledClasses = [studentToUse.class_types]; }
+          } else if (Array.isArray(studentToUse.class_types)) {
+            enrolledClasses = studentToUse.class_types;
+          }
+        }
+        
+        console.log("Enrolled Classes:", enrolledClasses);
+
+        const isFree = studentToUse.is_free_student === true || studentToUse.is_free_student === 'true';
+
+        // 2. Payment දත්ත ලබා ගැනීම
+        const { data: paymentData, error: paymentErr } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_username', currentStudent.username)
+          .eq('student_username', studentToUse.username)
           .eq('month', currentMonthKey);
+          
+        console.log("Payments for", currentMonthKey, ":", paymentData);
 
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
 
@@ -72,38 +90,42 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           setIsPaidCurrentMonth(true);
         } else {
           statuses = enrolledClasses.map((cls) => {
-            const isPaidForThisClass = paymentData?.some((p: any) => 
-              (p.class_name === cls || !p.class_name) && p.status === 'Paid'
-            );
-            return {
-              name: cls,
-              status: isPaidForThisClass ? 'Paid' : 'Unpaid'
-            };
+            // මේ පන්තියට ගෙවලා තියෙනවද බලනවා (Paid හෝ Free ලෙස සටහන් වී ඇත්දැයි)
+            const paymentRecord = paymentData?.find((p: any) => p.class_name === cls || !p.class_name);
+            
+            let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
+            if (paymentRecord) {
+              if (paymentRecord.status === 'Paid') statusValue = 'Paid';
+              else if (paymentRecord.status === 'Free') statusValue = 'Free';
+            }
+            
+            return { name: cls, status: statusValue };
           });
 
-          // අඩුම තරමේ එක පන්තියකට හෝ ගෙවා ඇත්නම් (හෝ පන්ති තෝරාගෙන නැත්නම්) ප්‍රධාන Access එක දෙනවා
+          // අඩුම තරමේ එක පන්තියකට හෝ Access ඇත්නම් හෝ පන්ති තෝරාගෙන නැත්නම්
           const hasAnyAccess = statuses.some(s => s.status !== 'Unpaid') || enrolledClasses.length === 0;
           setIsPaidCurrentMonth(hasAnyAccess);
         }
         
         setClassPaymentStatuses(statuses);
 
-        // 2. Reminders ලබා ගැනීම (student_reminders ටේබල් එකෙන්)
-        const { data: reminderData } = await supabase
+        // 3. Reminders ලබා ගැනීම
+        const { data: reminderData, error: reminderErr } = await supabase
           .from('student_reminders')
           .select('*')
-          .eq('student_username', currentStudent.username)
-          .eq('is_read', false);
+          .eq('student_username', studentToUse.username);
+          
+        console.log("Reminders fetched:", reminderData);
 
         if (reminderData) {
-          setDbReminders(reminderData);
+          // is_read false ඒවා විතරක් පෙරා ගැනීම (database එකේ ඒ column එක නැත්නම් ඔක්කොම පෙන්නයි)
+          const activeReminders = reminderData.filter((r: any) => r.is_read !== true);
+          setDbReminders(activeReminders);
         }
+
       } catch (error) {
-        console.error("Error fetching data:", error);
+        console.error("Error fetching live dashboard data:", error);
       }
-    } else {
-      setClassPaymentStatuses(enrolledClasses.map(cls => ({ name: cls, status: 'Unpaid' })));
-      setIsPaidCurrentMonth(false);
     }
     
     setIsRefreshing(false);
@@ -113,7 +135,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     elementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // Props වලින් එන Alerts සහ DB එකෙන් එන Alerts එකතු කිරීම
   const allReminders = [...dbReminders, ...studentAlerts];
+
+  // Display Name එක හදාගැනීම
+  const studentName = liveStudentData.full_name || liveStudentData.name || liveStudentData.firstName || "Student";
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans">
@@ -125,8 +151,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="bg-gradient-to-r from-blue-900 to-slate-900 p-6 flex justify-between items-start border-b border-slate-800">
               <div>
                 <h3 className="font-bold text-2xl text-white">{studentName}</h3>
-                <p className="text-blue-300 text-sm font-mono mt-1">Username: {currentStudent.username}</p>
-                {currentStudent.nic && <p className="text-slate-400 text-xs mt-1">NIC: {currentStudent.nic}</p>}
+                <p className="text-blue-300 text-sm font-mono mt-1">Username: {liveStudentData.username}</p>
+                {liveStudentData.nic && <p className="text-slate-400 text-xs mt-1">NIC: {liveStudentData.nic}</p>}
               </div>
               <button onClick={() => setIsProfileOpen(false)} className="p-2 bg-slate-800/50 rounded-full hover:bg-slate-700 text-slate-300 hover:text-white transition">
                 <X size={20} />
@@ -139,11 +165,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="grid grid-cols-2 gap-4 w-full">
                   <div>
                     <p className="text-[11px] text-slate-500 uppercase font-bold">WhatsApp</p>
-                    <p className="font-medium text-sm">{currentStudent.whatsapp_number || currentStudent.whatsapp || 'N/A'}</p>
+                    <p className="font-medium text-sm">{liveStudentData.whatsapp_number || liveStudentData.whatsapp || 'N/A'}</p>
                   </div>
                   <div>
                     <p className="text-[11px] text-slate-500 uppercase font-bold">Mobile</p>
-                    <p className="font-medium text-sm">{currentStudent.phone_number || currentStudent.phone || 'N/A'}</p>
+                    <p className="font-medium text-sm">{liveStudentData.phone_number || liveStudentData.phone || liveStudentData.mobile || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -152,17 +178,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <MapPin size={18} className="text-rose-400" />
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase font-bold">District</p>
-                  <p className="font-medium text-sm">{currentStudent.district || 'N/A'}</p>
+                  <p className="font-medium text-sm">{liveStudentData.district || 'N/A'}</p>
                 </div>
               </div>
 
               <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-3">
                 <School size={18} className="text-blue-400" />
                 <div>
-                  <p className="text-[11px] text-slate-500 uppercase font-bold">School & Grade</p>
-                  <p className="font-medium text-sm">
-                    {currentStudent.school || 'N/A'} {currentStudent.grade && `(Grade: ${currentStudent.grade})`}
-                  </p>
+                  <p className="text-[11px] text-slate-500 uppercase font-bold">School</p>
+                  <p className="font-medium text-sm">{liveStudentData.school || 'N/A'}</p>
                 </div>
               </div>
 
@@ -171,7 +195,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase font-bold">Selected Classes</p>
                   <p className="font-medium text-sm text-amber-300">
-                    {enrolledClasses.length > 0 ? enrolledClasses.join(' • ') : 'No Classes Selected'}
+                    {classPaymentStatuses.length > 0 ? classPaymentStatuses.map(c => c.name).join(' • ') : 'No Classes Selected'}
                   </p>
                 </div>
               </div>
@@ -232,7 +256,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {cls.name}: {cls.status}
               </span>
             )) : (
-              <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full">No classes selected</span>
+              <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">No classes selected</span>
             )}
           </div>
         </div>
@@ -277,10 +301,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <AlertTriangle className="text-red-500 shrink-0" size={24} />
                 <div>
                   <h3 className="font-bold text-red-400 text-base">
-                    {reminder.title || 'විශේෂ දැනුම්දීමයි!'}
+                    {reminder.title || 'පේමන්ට් රිමයින්ඩරය (Payment Reminder)'}
                   </h3>
                   <p className="text-sm text-slate-200 mt-1 leading-relaxed font-sans font-medium">
-                    {reminder.message || reminder.alertText || typeof reminder === 'string' ? reminder : 'ඔබගේ ගිණුමේ ගැටළුවක් ඇත.'}
+                    {reminder.message || reminder.alertText || reminder.reminder_text || typeof reminder === 'string' ? reminder : 'කරුණාකර ඔබගේ ගෙවීම් පරීක්ෂා කරන්න.'}
                   </p>
                 </div>
               </div>
@@ -293,12 +317,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <main className="space-y-8">
         {dashboardTab === 'live' && (
           <div ref={liveClassSectionRef} className="scroll-mt-24">
-            <LiveClassPlayer currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />
+            <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
           </div>
         )}
-        {dashboardTab === 'recordings' && <RecordingsManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
-        {dashboardTab === 'tutes' && <TutsPapersManager currentStudent={currentStudent} isPaid={isPaidCurrentMonth} />}
-        {dashboardTab === 'exams' && <OnlineExamsHistory currentStudent={currentStudent} />}
+        {dashboardTab === 'recordings' && <RecordingsManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
+        {dashboardTab === 'tutes' && <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
+        {dashboardTab === 'exams' && <OnlineExamsHistory currentStudent={liveStudentData} />}
       </main>
 
     </div>
