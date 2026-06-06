@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, School, Book, RefreshCw } from 'lucide-react';
+import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
@@ -49,7 +49,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     
     if (supabase) {
       try {
-        // 1. Supabase එකෙන් අලුත්ම සිසු දත්ත ලබාගැනීම (Cache මඟ හැරීම)
+        // 1. Students ටේබල් එකෙන් අලුත්ම දත්ත ගැනීම (Database Schema එකට අනුව)
         const { data: freshStudentData, error: studentErr } = await supabase
           .from('students')
           .select('*')
@@ -59,75 +59,86 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         const studentToUse = freshStudentData || currentStudent;
         setLiveStudentData(studentToUse);
 
-        // පන්ති වර්ග (class_types) Array එකක් බවට පත් කිරීම
+        // class_types (text[]) array එකක් ලෙස ගැනීම
         let enrolledClasses: string[] = [];
         if (studentToUse.class_types) {
-          if (typeof studentToUse.class_types === 'string') {
+          if (Array.isArray(studentToUse.class_types)) {
+            enrolledClasses = studentToUse.class_types;
+          } else if (typeof studentToUse.class_types === 'string') {
             try { enrolledClasses = JSON.parse(studentToUse.class_types); } 
             catch(e) { enrolledClasses = [studentToUse.class_types]; }
-          } else if (Array.isArray(studentToUse.class_types)) {
-            enrolledClasses = studentToUse.class_types;
           }
         }
-        
-        console.log("Enrolled Classes:", enrolledClasses);
 
-        const isFree = studentToUse.is_free_student === true || studentToUse.is_free_student === 'true';
+        const isFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payment දත්ත ලබා ගැනීම
+        // 2. Payments ටේබල් එකෙන් දත්ත ගැනීම (student_username වෙනුවට username භාවිතය)
         const { data: paymentData, error: paymentErr } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_username', studentToUse.username)
-          .eq('month', currentMonthKey);
-          
-        console.log("Payments for", currentMonthKey, ":", paymentData);
+          .eq('username', studentToUse.username);
 
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
+        let extractedReminders: any[] = [];
 
-        if (isFree) {
-          statuses = enrolledClasses.map((cls) => ({ name: cls, status: 'Free' }));
-          setIsPaidCurrentMonth(true);
+        if (paymentData && paymentData.length > 0) {
+          // පේමන්ට් රිමයින්ඩර්ස් වෙන්කර ගැනීම (July වැනි අනාගත මාස වල ඒවාත් පෙන්වීමට)
+          extractedReminders = paymentData
+            .filter((p: any) => p.reminder_massage && p.reminder_massage.trim() !== '')
+            .map((p: any) => ({
+              title: `Payment Reminder - ${p.month || p.target_month || ''}`,
+              message: p.reminder_massage
+            }));
+
+          // වත්මන් මාසයට අදාල ගෙවීම් පරීක්ෂා කිරීම
+          const currentMonthPayments = paymentData.filter((p: any) => p.month === currentMonthKey || p.target_month === currentMonthKey);
+
+          if (isFree) {
+            statuses = enrolledClasses.map((cls) => ({ name: cls, status: 'Free' }));
+            setIsPaidCurrentMonth(true);
+          } else {
+            statuses = enrolledClasses.map((cls) => {
+              const paymentRecord = currentMonthPayments.find((p: any) => p.class_name === cls || p.class_type === cls);
+              
+              let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
+              if (paymentRecord) {
+                if (paymentRecord.status?.toLowerCase() === 'paid') statusValue = 'Paid';
+                else if (paymentRecord.status?.toLowerCase() === 'free') statusValue = 'Free';
+              }
+              return { name: cls, status: statusValue };
+            });
+
+            const hasAnyAccess = statuses.some(s => s.status !== 'Unpaid') || enrolledClasses.length === 0;
+            setIsPaidCurrentMonth(hasAnyAccess);
+          }
         } else {
-          statuses = enrolledClasses.map((cls) => {
-            // මේ පන්තියට ගෙවලා තියෙනවද බලනවා (Paid හෝ Free ලෙස සටහන් වී ඇත්දැයි)
-            const paymentRecord = paymentData?.find((p: any) => p.class_name === cls || !p.class_name);
-            
-            let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
-            if (paymentRecord) {
-              if (paymentRecord.status === 'Paid') statusValue = 'Paid';
-              else if (paymentRecord.status === 'Free') statusValue = 'Free';
-            }
-            
-            return { name: cls, status: statusValue };
-          });
-
-          // අඩුම තරමේ එක පන්තියකට හෝ Access ඇත්නම් හෝ පන්ති තෝරාගෙන නැත්නම්
-          const hasAnyAccess = statuses.some(s => s.status !== 'Unpaid') || enrolledClasses.length === 0;
-          setIsPaidCurrentMonth(hasAnyAccess);
+          // ගෙවීම් වාර්තා කිසිවක් නැති විට
+          statuses = enrolledClasses.map(cls => ({ name: cls, status: isFree ? 'Free' : 'Unpaid' }));
+          setIsPaidCurrentMonth(isFree);
         }
         
         setClassPaymentStatuses(statuses);
 
-        // 3. Reminders ලබා ගැනීම
-        const { data: reminderData, error: reminderErr } = await supabase
-          .from('student_reminders')
+        // 3. Announcements ටේබල් එකෙන් අමතර නිවේදන ඇත්නම් ගැනීම
+        const { data: announcementData } = await supabase
+          .from('announcements')
           .select('*')
-          .eq('student_username', studentToUse.username);
-          
-        console.log("Reminders fetched:", reminderData);
+          .or(`target_user.eq.${studentToUse.username},target_user.eq.all`);
 
-        if (reminderData) {
-          // is_read false ඒවා විතරක් පෙරා ගැනීම (database එකේ ඒ column එක නැත්නම් ඔක්කොම පෙන්නයි)
-          const activeReminders = reminderData.filter((r: any) => r.is_read !== true);
-          setDbReminders(activeReminders);
+        if (announcementData) {
+          const generalAlerts = announcementData.map((a: any) => ({
+            title: a.title || 'විශේෂ නිවේදනයයි',
+            message: a.content
+          }));
+          extractedReminders = [...extractedReminders, ...generalAlerts];
         }
 
+        setDbReminders(extractedReminders);
+
       } catch (error) {
-        console.error("Error fetching live dashboard data:", error);
+        console.error("Dashboard Data Fetch Error:", error);
       }
     }
-    
     setIsRefreshing(false);
   };
 
@@ -135,14 +146,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     elementRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  // Props වලින් එන Alerts සහ DB එකෙන් එන Alerts එකතු කිරීම
   const allReminders = [...dbReminders, ...studentAlerts];
-
-  // Display Name එක හදාගැනීම
-  const studentName = liveStudentData.full_name || liveStudentData.name || liveStudentData.firstName || "Student";
+  const studentDisplayName = liveStudentData.name || liveStudentData.first_name || liveStudentData.username;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans">
+    <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans selection:bg-blue-500/30">
       
       {/* --- STUDENT PROFILE FULL DETAILS MODAL --- */}
       {isProfileOpen && (
@@ -150,8 +158,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
             <div className="bg-gradient-to-r from-blue-900 to-slate-900 p-6 flex justify-between items-start border-b border-slate-800">
               <div>
-                <h3 className="font-bold text-2xl text-white">{studentName}</h3>
-                <p className="text-blue-300 text-sm font-mono mt-1">Username: {liveStudentData.username}</p>
+                <h3 className="font-bold text-2xl text-white">{studentDisplayName} {liveStudentData.last_name || ''}</h3>
+                <p className="text-blue-300 text-sm font-mono mt-1">ID: {liveStudentData.username}</p>
                 {liveStudentData.nic && <p className="text-slate-400 text-xs mt-1">NIC: {liveStudentData.nic}</p>}
               </div>
               <button onClick={() => setIsProfileOpen(false)} className="p-2 bg-slate-800/50 rounded-full hover:bg-slate-700 text-slate-300 hover:text-white transition">
@@ -160,21 +168,21 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
             
             <div className="p-6 space-y-4">
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-3">
+              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
                 <Phone size={18} className="text-emerald-400" />
                 <div className="grid grid-cols-2 gap-4 w-full">
                   <div>
                     <p className="text-[11px] text-slate-500 uppercase font-bold">WhatsApp</p>
-                    <p className="font-medium text-sm">{liveStudentData.whatsapp_number || liveStudentData.whatsapp || 'N/A'}</p>
+                    <p className="font-medium text-sm">{liveStudentData.WhatsApp || 'N/A'}</p>
                   </div>
                   <div>
                     <p className="text-[11px] text-slate-500 uppercase font-bold">Mobile</p>
-                    <p className="font-medium text-sm">{liveStudentData.phone_number || liveStudentData.phone || liveStudentData.mobile || 'N/A'}</p>
+                    <p className="font-medium text-sm">{liveStudentData.mobile || 'N/A'}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-3">
+              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
                 <MapPin size={18} className="text-rose-400" />
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase font-bold">District</p>
@@ -182,129 +190,132 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-3">
-                <School size={18} className="text-blue-400" />
-                <div>
-                  <p className="text-[11px] text-slate-500 uppercase font-bold">School</p>
-                  <p className="font-medium text-sm">{liveStudentData.school || 'N/A'}</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-3">
+              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
                 <Book size={18} className="text-amber-400" />
-                <div>
-                  <p className="text-[11px] text-slate-500 uppercase font-bold">Selected Classes</p>
-                  <p className="font-medium text-sm text-amber-300">
-                    {classPaymentStatuses.length > 0 ? classPaymentStatuses.map(c => c.name).join(' • ') : 'No Classes Selected'}
-                  </p>
+                <div className="w-full">
+                  <p className="text-[11px] text-slate-500 uppercase font-bold mb-1.5">Enrolled Classes</p>
+                  <div className="flex flex-wrap gap-2">
+                    {classPaymentStatuses.length > 0 ? classPaymentStatuses.map((cls, idx) => (
+                      <span key={idx} className={`px-2 py-1 text-xs font-medium rounded-md border ${
+                        cls.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                        cls.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
+                        'bg-red-500/10 text-red-400 border-red-500/30'
+                      }`}>
+                        {cls.name}
+                      </span>
+                    )) : (
+                      <span className="text-sm text-slate-500">No classes selected</span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
             
-            <div className="p-4 bg-slate-950 flex justify-end gap-3">
-               <button onClick={handleStudentLogout} className="flex items-center gap-2 px-4 py-2 bg-red-950/40 text-red-400 hover:bg-red-900 hover:text-white rounded-xl transition">
-                <LogOut size={16} /> Logout
+            <div className="p-4 bg-slate-950 flex justify-end">
+               <button onClick={handleStudentLogout} className="flex items-center gap-2 px-4 py-2.5 bg-red-950/40 text-red-400 hover:bg-red-600 hover:text-white rounded-xl transition-all font-medium">
+                <LogOut size={16} /> Logout from System
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- DASHBOARD HEADER --- */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-slate-900/60 p-6 rounded-3xl border border-slate-800 relative z-10">
+      {/* --- DASHBOARD HEADER (Beautiful Glassmorphism) --- */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-800 shadow-2xl relative z-10">
         
-        {/* Profile Section */}
+        {/* Profile Avatar & Quick Info */}
         <div className="lg:col-span-3 flex flex-col items-center relative">
           
-          {/* Notification Bell */}
           {allReminders.length > 0 && (
             <button 
               onClick={() => scrollToSection(remindersSectionRef)}
-              className="absolute -top-2 left-1/2 -translate-x-16 z-40 p-3 rounded-full bg-slate-900 border-2 border-red-500 text-red-500 animate-bounce shadow-[0_0_15px_rgba(239,68,68,0.5)] hover:bg-slate-800 transition-all cursor-pointer"
+              className="absolute -top-3 left-1/2 -translate-x-16 z-40 p-3 rounded-full bg-slate-900 border-2 border-amber-500 text-amber-500 animate-bounce shadow-[0_0_15px_rgba(245,158,11,0.5)] hover:bg-slate-800 cursor-pointer transition-all"
             >
-              <Bell size={24} className="fill-red-500/20" />
-              <span className="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-6 h-6 rounded-full flex items-center justify-center font-black border-2 border-slate-900">
+              <Bell size={22} className="fill-amber-500/20" />
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black border border-slate-900">
                 {allReminders.length}
               </span>
             </button>
           )}
 
-          {/* Profile Avatar */}
-          <div 
-            onClick={() => setIsProfileOpen(true)}
-            className="cursor-pointer group relative mt-2"
-          >
-            <div className={`w-28 h-28 rounded-[2rem] flex items-center justify-center font-black text-4xl shadow-2xl transition-all duration-500 ${
+          <div onClick={() => setIsProfileOpen(true)} className="cursor-pointer group relative mt-2">
+            <div className={`w-24 h-24 md:w-28 md:h-28 rounded-full flex items-center justify-center font-black text-4xl shadow-xl transition-all duration-500 ${
               !isPaidCurrentMonth 
-                ? 'bg-gradient-to-br from-red-900 to-slate-900 border-4 border-red-600 shadow-[0_0_30px_rgba(220,38,38,0.6)] animate-pulse' 
-                : 'bg-gradient-to-br from-blue-600 to-indigo-600 border-2 border-blue-400/50 group-hover:scale-105 group-hover:shadow-blue-500/50'
+                ? 'bg-gradient-to-br from-red-900 to-slate-900 border-2 border-red-600 shadow-red-900/50' 
+                : 'bg-gradient-to-br from-blue-600 to-indigo-800 border-2 border-blue-400/50 group-hover:scale-105 group-hover:shadow-blue-500/40'
             }`}>
-              {studentName.slice(0, 1).toUpperCase()}
+              {studentDisplayName.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="absolute -bottom-2 -right-2 bg-slate-800 rounded-full p-1.5 border border-slate-700 text-slate-400 group-hover:text-white transition-colors">
+              <User size={16} />
             </div>
           </div>
 
-          <h2 className="mt-4 font-bold text-xl text-center">{studentName}</h2>
+          <h2 className="mt-4 font-bold text-xl text-center text-white tracking-wide">{studentDisplayName}</h2>
           
-          {/* Class Payment Status Badges */}
-          <div className="flex flex-wrap justify-center gap-2 mt-3 w-full">
+          {/* Class Badges Display under profile */}
+          <div className="flex flex-wrap justify-center gap-1.5 mt-3 w-full">
             {classPaymentStatuses.length > 0 ? classPaymentStatuses.map((cls, idx) => (
-              <span key={idx} className={`px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border shadow-sm ${
+              <span key={idx} className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border shadow-sm ${
                 cls.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
                 cls.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
-                'bg-red-500/10 text-red-400 border-red-500/40 shadow-red-900/20 animate-pulse'
+                'bg-red-500/10 text-red-400 border-red-500/40 animate-pulse'
               }`}>
-                {cls.name}: {cls.status}
+                {cls.status === 'Paid' || cls.status === 'Free' ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                {cls.name}
               </span>
             )) : (
-              <span className="text-xs text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">No classes selected</span>
+              <span className="text-xs text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">No Classes</span>
             )}
           </div>
         </div>
 
-        {/* Navigation Buttons */}
-        <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-6 mt-6 lg:mt-0">
+        {/* Action Tabs */}
+        <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-8 mt-6 lg:mt-0">
           <button 
             onClick={fetchDashboardData} 
-            className={`flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-800/50 border border-slate-700 hover:bg-slate-700 text-slate-300 transition ${isRefreshing ? 'animate-spin text-blue-400' : ''}`}
-            title="Refresh Dashboard"
+            className={`flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 hover:bg-slate-700 text-slate-300 transition-all ${isRefreshing ? 'animate-spin text-blue-400 border-blue-500/50' : ''}`}
+            title="Refresh Data"
           >
              <RefreshCw size={18} />
           </button>
           
-          <button 
-            onClick={() => { setDashboardTab('live'); scrollToSection(liveClassSectionRef); }}
-            className={`flex items-center gap-2 px-6 py-3 border-2 rounded-2xl font-bold text-sm transition-all shadow-lg ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 shadow-red-500/20' : 'bg-slate-800 border-slate-700 hover:bg-red-900/30 hover:border-red-500/50'}`}
-          >
+          <button onClick={() => { setDashboardTab('live'); scrollToSection(liveClassSectionRef); }} className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/40 text-slate-300'}`}>
             <Video size={18} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
           </button>
 
-          <button onClick={() => setDashboardTab('recordings')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border-2 transition ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-amber-500/20' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}>
+          <button onClick={() => setDashboardTab('recordings')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-amber-950/40 text-slate-300'}`}>
             <BookOpen size={18} /> Recordings
           </button>
 
-          <button onClick={() => setDashboardTab('tutes')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border-2 transition ${dashboardTab === 'tutes' ? 'bg-blue-500 border-blue-400 text-slate-950 shadow-blue-500/20' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}>
+          <button onClick={() => setDashboardTab('tutes')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'tutes' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-blue-950/40 text-slate-300'}`}>
             <Download size={18} /> Tutes & Papers
           </button>
 
-          <button onClick={() => setDashboardTab('exams')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border-2 transition ${dashboardTab === 'exams' ? 'bg-emerald-500 border-emerald-400 text-slate-950 shadow-emerald-500/20' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}>
+          <button onClick={() => setDashboardTab('exams')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'exams' ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_20px_rgba(5,150,105,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-emerald-950/40 text-slate-300'}`}>
             <FileText size={18} /> Online Exams
           </button>
         </div>
       </div>
 
-      {/* --- REMINDERS SECTION --- */}
+      {/* --- PAYMENT REMINDERS SECTION --- */}
       <div ref={remindersSectionRef} className="scroll-mt-24">
         {allReminders.length > 0 && (
-          <div className="mb-8 space-y-3">
+          <div className="mb-10 space-y-4">
+            <h3 className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-2 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-500" /> Notifications & Reminders
+            </h3>
             {allReminders.map((reminder, index) => (
-              <div key={index} className="p-5 bg-gradient-to-r from-red-950 to-slate-900 border-l-4 border-l-red-500 border-y border-r border-slate-800 rounded-r-2xl shadow-xl flex items-start gap-4 animate-in slide-in-from-left duration-500">
-                <AlertTriangle className="text-red-500 shrink-0" size={24} />
+              <div key={index} className="p-5 bg-gradient-to-r from-amber-950/80 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800 rounded-r-2xl shadow-lg flex items-start gap-4 animate-in slide-in-from-left duration-500">
+                <div className="p-2 bg-amber-500/10 rounded-full shrink-0">
+                  <AlertTriangle className="text-amber-500" size={24} />
+                </div>
                 <div>
-                  <h3 className="font-bold text-red-400 text-base">
+                  <h3 className="font-bold text-amber-400 text-base">
                     {reminder.title || 'පේමන්ට් රිමයින්ඩරය (Payment Reminder)'}
                   </h3>
-                  <p className="text-sm text-slate-200 mt-1 leading-relaxed font-sans font-medium">
-                    {reminder.message || reminder.alertText || reminder.reminder_text || typeof reminder === 'string' ? reminder : 'කරුණාකර ඔබගේ ගෙවීම් පරීක්ෂා කරන්න.'}
+                  <p className="text-sm text-slate-200 mt-1.5 leading-relaxed font-medium">
+                    {reminder.message || reminder}
                   </p>
                 </div>
               </div>
@@ -314,7 +325,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       </div>
 
       {/* --- MAIN CONTENT AREA --- */}
-      <main className="space-y-8">
+      <main className="space-y-8 bg-slate-900/30 p-6 rounded-3xl border border-slate-800/50 min-h-[500px]">
         {dashboardTab === 'live' && (
           <div ref={liveClassSectionRef} className="scroll-mt-24">
             <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
