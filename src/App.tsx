@@ -1683,7 +1683,7 @@ export default function App() {
     scheduledLives={scheduledLives}
     resourceLinks={resourceLinks}
     // Utilities & Filters
-    isCurrentMonthPaid={isCurrentMonthPaid}
+    isCurrentMonthPaid={isCurrentMonthPaid(currentStudent?.activeMonths)}
     filterMonth={filterMonth}
     setFilterMonth={setFilterMonth}
     supabase={supabase}
