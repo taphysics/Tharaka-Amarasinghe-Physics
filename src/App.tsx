@@ -207,6 +207,7 @@ export default function App() {
   // Dashboard inner tabs
   const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams'>('live');
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
     alert.type === 'public' || (alert.type === 'private' && alert.target_user === currentStudent.username)
   ) : [];
@@ -410,6 +411,7 @@ export default function App() {
         localStorage.removeItem('physics_hub_login_expiry');
       }
     }
+    setIsLoading(false);
   }, [students]); 
 
   // Check login states on bootup
@@ -972,7 +974,13 @@ export default function App() {
   const cellsOffset = 5; // Starts on Friday
   const cellsCount = 31;
   const daysHeaders = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-
+if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       
