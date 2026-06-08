@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
+// Supabase කෙලින්ම මෙතනට Import කරගන්න (ඔබේ ෆෝල්ඩර් අනුපිළිවෙල අනුව '../supabaseClient' විය හැක)
+import { supabase } from '../supabaseClient'; 
 
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
@@ -24,7 +26,6 @@ interface StudentDashboardProps {
   isCurrentMonthPaid?: boolean;
   filterMonth?: string;
   setFilterMonth?: any;
-  supabase?: any;
 }
 
 const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -58,8 +59,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   resourceLinks,
   isCurrentMonthPaid: parentPaidStatus,
   filterMonth,
-  setFilterMonth,
-  supabase 
+  setFilterMonth
 }) => {
   const [dbReminders, setDbReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
@@ -75,12 +75,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const mainContentRef = useRef<HTMLDivElement>(null);
 
-  const getSLCurrentMonthKey = () => {
+  // ශ්‍රී ලංකා වේලාවෙන් වත්මන් මාසය ලබා ගැනීම
+  const getSLDateInfo = () => {
     const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
-    return `${slDate.getFullYear()}-${String(slDate.getMonth() + 1).padStart(2, '0')}`;
+    const year = slDate.getFullYear();
+    const monthNum = slDate.getMonth() + 1;
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthName = monthNames[slDate.getMonth()];
+    return {
+      year,
+      monthNum,
+      monthPadded: String(monthNum).padStart(2, '0'),
+      monthName,
+      key: `${year}-${String(monthNum).padStart(2, '0')}`
+    };
   };
 
-  const currentMonthKey = getSLCurrentMonthKey();
+  const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
 
   useEffect(() => {
     fetchDashboardData();
@@ -140,23 +151,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         let pHistory: Record<string, string[]> = {};
         let activeRemindersSum = 0;
 
-        const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
-        const cYear = slDate.getFullYear();
-        const cMonthNum = slDate.getMonth() + 1;
-        const cMonthPadded = String(cMonthNum).padStart(2, '0');
-        const monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-        const cMonthName = monthNames[slDate.getMonth()];
-
         const isCurrentMonthMatch = (dbMonthValue: any) => {
           if (!dbMonthValue) return false;
           const clean = dbMonthValue.toString().trim().toLowerCase();
+          const cNameLower = cMonthName.toLowerCase();
           return (
             clean === `${cYear}-${cMonthPadded}` || 
             clean === `${cYear}-${cMonthNum}` ||    
             clean === `${cYear}/${cMonthPadded}` || 
             clean === `${cYear}/${cMonthNum}` ||    
-            clean === cMonthName ||                 
-            clean.includes(cMonthName)              
+            clean === cNameLower ||                 
+            clean.includes(cNameLower)              
           );
         };
 
@@ -168,18 +173,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 title: `Payment Reminder`,
                 message: p.reminder_massage
               });
-              // ඇඩ්මින් පැනලයෙන් ලබා දෙන reminders_count එක එකතු කිරීම (නැතිනම් default 1 බැගින්)
               activeRemindersSum += p.reminders_count || 1;
             }
           });
 
-          // History එක සැකසීම
+          // History එක සැකසීම (සියලුම ගෙවීම් වාර්තා)
           paymentData.forEach((p: any) => {
             if (p.status?.toLowerCase() === 'paid' || p.status?.toLowerCase() === 'free') {
               const className = p.class_name || p.class_type || 'General';
               if (!pHistory[className]) pHistory[className] = [];
-              const monthStr = p.month || p.target_month;
-              if (monthStr && !pHistory[className].includes(monthStr)) {
+              const monthStr = p.month || p.target_month || 'Unknown Month';
+              if (!pHistory[className].includes(monthStr)) {
                 pHistory[className].push(monthStr);
               }
             }
@@ -209,7 +213,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               return { name: cls, status: statusValue };
             });
 
-            // සියලුම ලියාපදිංචි පන්ති වලට වත්මන් මාසයේ මුදල් ගෙවා ඇත්දැයි බැලීම
             const hasUnpaidClass = statuses.some(s => s.status === 'Unpaid');
             setIsPaidCurrentMonth(enrolledClasses.length === 0 ? true : !hasUnpaidClass);
           }
@@ -252,7 +255,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setIsRefreshing(false);
   };
 
-  // ටැබ් එක වෙනස් කර සුමටව ස්ක්‍රෝල් කරවන ෆන්ක්ෂන් එක
   const handleTabChange = (tab: TabType) => {
     setDashboardTab(tab);
     setTimeout(() => {
@@ -260,9 +262,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }, 150);
   };
 
-  // Bell Icon එක ක්ලික් කළ විට Payment History වෙත ස්ක්‍රෝල් කරවන ෆන්ක්ෂන් එක
   const handleBellClick = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Profile modal එක ඕපන් වීම වැළැක්වීමට
+    e.stopPropagation();
     setDashboardTab('history');
     setTimeout(() => {
       mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -276,10 +277,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const allReminders = [...dbReminders, ...studentAlerts];
 
-  // පන්ති වල ගෙවීම් තත්ත්වයන් මත Profile border එක සැකසීම
   const generateProfileBorderGradient = () => {
     if (!isPaidCurrentMonth) {
-      return 'conic-gradient(#ef4444 0% 100%)'; // මුදල් නොගෙවූ සිසුන්ට සම්පූර්ණයෙන්ම රතු
+      return 'conic-gradient(#ef4444 0% 100%)'; 
     }
     if (classPaymentStatuses.length === 0) {
       return 'conic-gradient(#10b981 0% 100%)';
@@ -300,12 +300,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   const renderCalendar = () => {
-    const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
-    const year = slDate.getFullYear();
-    const month = slDate.getMonth();
-    
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const firstDayIndex = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(cYear, cMonthNum, 0).getDate();
+    const firstDayIndex = new Date(cYear, cMonthNum - 1, 1).getDay();
     
     const days = [];
     for (let i = 0; i < firstDayIndex; i++) days.push(null);
@@ -323,9 +319,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {days.map((day, index) => {
             if (day === null) return <div key={`empty-${index}`} className="p-4"></div>;
             
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const dateStr = `${cYear}-${cMonthPadded}-${String(day).padStart(2, '0')}`;
             const dayEvents = calendarEvents.filter(e => e.date === dateStr);
-            const isToday = day === slDate.getDate();
+            const isToday = day === new Date().getDate();
 
             return (
               <div key={index} className={`min-h-[90px] p-2 rounded-xl border flex flex-col justify-between transition-all ${isToday ? 'bg-purple-950/30 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-slate-800/40 border-slate-700/60 hover:border-slate-600'}`}>
@@ -348,7 +344,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans selection:bg-blue-500/30">
       
-      {/* --- PROFILE MODAL --- */}
+      {/* Profile Modal */}
       {isProfileOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
@@ -409,20 +405,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
-      {/* --- DASHBOARD HEADER --- */}
+      {/* Dashboard Header */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-800 shadow-2xl relative z-10">
         
         {/* Profile Avatar Container */}
         <div className="lg:col-span-3 flex flex-col items-center relative border-r-0 lg:border-r border-slate-800/60 lg:pr-4">
           
           <div onClick={() => setIsProfileOpen(true)} className="relative group mt-2 w-28 h-28 md:w-32 md:h-32 flex items-center justify-center cursor-pointer">
-            
-            {/* මුදල් නොගෙවූ සිසුන් සදහා රතු පාටින් බ්ලින්ක් වන / ඇනිමේට් වන රින්ග් එක (Red Glow Animation) */}
             {!isPaidCurrentMonth && (
               <div className="absolute inset-0 rounded-full bg-red-600 animate-ping opacity-25" />
             )}
 
-            {/* කැරකෙන Border වලය */}
             <div 
               className={`absolute inset-0 rounded-full animate-[spin_8s_linear_infinite] ${
                 !isPaidCurrentMonth ? 'shadow-[0_0_30px_rgba(239,68,68,0.8)] border-2 border-red-500' : 'shadow-[0_0_25px_rgba(255,255,255,0.05)]'
@@ -435,7 +428,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="w-full h-full bg-slate-950 rounded-full" />
             </div>
 
-            {/* Profile අකුර */}
             <div className={`absolute inset-[5px] rounded-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center font-black text-4xl shadow-inner group-hover:scale-105 transition-transform duration-300 ${
               !isPaidCurrentMonth ? 'border border-red-500/50' : ''
             }`}>
@@ -444,12 +436,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </span>
             </div>
 
-            {/* Profile User Icon Overlay */}
             <div className="absolute bottom-0 right-1 bg-slate-900 rounded-full p-2 border border-slate-700 text-slate-300 group-hover:text-white transition-colors shadow-md z-10">
               <User size={16} />
             </div>
 
-            {/* --- BELL REMINDER ICON OVERLAY --- */}
             {totalRemindersCount > 0 && (
               <div 
                 onClick={handleBellClick}
@@ -463,6 +453,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
 
           <h2 className="mt-4 font-bold text-lg text-center text-white tracking-wide">{studentDisplayName}</h2>
+          
+          {/* අලුතින් එක් කළ: වත්මන් අවුරුද්ද සහ මාසය පෙන්වන කොටස */}
+          <p className="text-slate-400 text-sm text-center font-medium mt-1 bg-slate-900/50 px-3 py-1 rounded-full border border-slate-800">
+            {cYear} {cMonthName}
+          </p>
           
           {/* Class Label Stickers */}
           <div className="flex flex-wrap justify-center gap-2 mt-4 w-full">
@@ -488,7 +483,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* Navigation Tab Controls Menu */}
         <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-6 mt-4 lg:mt-0">
           
-          {/* Refresh Component */}
           <button 
             onClick={fetchDashboardData} 
             className={`flex items-center justify-center p-3 rounded-2xl bg-slate-800/80 border border-slate-700 hover:bg-slate-700 text-slate-300 transition-all ${isRefreshing ? 'animate-spin text-blue-400 border-blue-500/50' : ''}`}
@@ -497,39 +491,33 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
              <RefreshCw size={18} />
           </button>
           
-          {/* Live Classes Tab (Auto Scroll ඒකාබද්ධ කර ඇත) */}
           <button onClick={() => handleTabChange('live')} className={`flex items-center gap-2 px-5 py-3.5 border rounded-2xl font-bold text-xs md:text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/30 text-slate-300'}`}>
             <Video size={16} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
           </button>
 
-          {/* Recordings Tab */}
           <button onClick={() => handleTabChange('recordings')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-amber-950/20 text-slate-300'}`}>
             <BookOpen size={16} /> Recordings
           </button>
 
-          {/* Tutes & Papers Tab */}
           <button onClick={() => handleTabChange('tutes')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'tutes' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-blue-950/20 text-slate-300'}`}>
             <Download size={16} /> Tutes & Papers
           </button>
 
-          {/* Online Exams Tab */}
           <button onClick={() => handleTabChange('exams')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'exams' ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_20px_rgba(5,150,105,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-emerald-950/20 text-slate-300'}`}>
             <FileText size={16} /> Online Exams
           </button>
 
-          {/* Class Calendar Tab */}
           <button onClick={() => handleTabChange('calendar')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'calendar' ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_20px_rgba(147,51,234,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-purple-950/20 text-slate-300'}`}>
             <CalendarDays size={16} /> පන්ති කාලසටහන
           </button>
 
-          {/* Payment History Tab */}
           <button onClick={() => handleTabChange('history')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'history' ? 'bg-cyan-600 border-cyan-500 text-white shadow-[0_0_20px_rgba(8,145,178,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-cyan-950/20 text-slate-300'}`}>
             <History size={16} /> Payment History
           </button>
         </div>
       </div>
 
-      {/* --- PAYMENT REMINDERS --- */}
+      {/* Payment Reminders */}
       {allReminders.length > 0 && (
         <div className="mb-8 space-y-4">
           {allReminders.map((reminder, index) => (
@@ -544,7 +532,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
-      {/* --- MAIN INTERACTIVE VIEW CONTENT --- */}
+      {/* Main Interactive View Content */}
       <div ref={mainContentRef} className="scroll-mt-6">
         <main className="bg-slate-900/40 p-4 md:p-8 rounded-3xl border border-slate-800/50 min-h-[520px]">
           
@@ -572,10 +560,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </SafeComponent>
           )}
           
-          {/* Render Calendar Route */}
           {dashboardTab === 'calendar' && renderCalendar()}
           
-          {/* Render Payment History Route */}
           {dashboardTab === 'history' && (
             <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
                <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
