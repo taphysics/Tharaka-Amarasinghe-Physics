@@ -5,6 +5,7 @@ import { RefreshCw, Maximize2, Minimize2, AlertCircle, Clock, Check, HelpCircle,
 interface Props {
   currentStudent: any;
   isPaid: boolean;
+  supabase?: any;
 }
 
 const LiveClassPlayer: React.FC<Props> = ({ currentStudent, isPaid }) => {

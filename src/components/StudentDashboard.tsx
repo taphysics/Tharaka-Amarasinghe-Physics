@@ -36,7 +36,7 @@ const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <AlertTriangle />
         <div>
           <p className="font-bold">Component එක ලෝඩ් වීමේ දෝෂයකි!</p>
-          <p className="text-xs text-slate-400">මෙම සෙක්ෂන් එකෙහි ඇති පරණ Database Table සම්බන්ධතා (404 Errors) නිසා මෙය සිදුවේ.</p>
+          <p className="text-xs text-slate-400">මෙම සෙක්ෂන් එකෙහි ඇති පරණ Database Table සම්බන්ධතා නිසා මෙය සිදුවේ.</p>
         </div>
       </div>
     );
@@ -62,6 +62,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   supabase 
 }) => {
   const [dbReminders, setDbReminders] = useState<any[]>([]);
+  const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
   const [isPaidCurrentMonth, setIsPaidCurrentMonth] = useState<boolean>(true);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -72,7 +73,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [paymentHistory, setPaymentHistory] = useState<Record<string, string[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
-  const remindersSectionRef = useRef<HTMLDivElement>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   const getSLCurrentMonthKey = () => {
@@ -86,7 +86,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     fetchDashboardData();
 
     if (supabase) {
-      const channel = supabase.channel('student_dashboard_live')
+      const channel = supabase.channel('student_dashboard_realtime')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
           fetchDashboardData();
         })
@@ -109,6 +109,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     
     if (supabase) {
       try {
+        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
@@ -128,7 +129,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත කියවීම සහ සැසඳීම (Dynamic Month Checker ඇතුළත් කර ඇත)
+        // 2. Payments දත්ත කියවීම සහ සැසඳීම
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
@@ -137,8 +138,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
         let extractedReminders: any[] = [];
         let pHistory: Record<string, string[]> = {};
+        let activeRemindersSum = 0;
 
-        // විවිධ ආකාරයේ මාස Format අල්ලා ගැනීමට සකසන ලද Logic එක 
         const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
         const cYear = slDate.getFullYear();
         const cMonthNum = slDate.getMonth() + 1;
@@ -150,25 +151,29 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           if (!dbMonthValue) return false;
           const clean = dbMonthValue.toString().trim().toLowerCase();
           return (
-            clean === `${cYear}-${cMonthPadded}` || // 2026-06
-            clean === `${cYear}-${cMonthNum}` ||    // 2026-6
-            clean === `${cYear}/${cMonthPadded}` || // 2026/06
-            clean === `${cYear}/${cMonthNum}` ||    // 2026/6
-            clean === cMonthName ||                 // june
-            clean.includes(cMonthName)              // 2026 june / june 2026
+            clean === `${cYear}-${cMonthPadded}` || 
+            clean === `${cYear}-${cMonthNum}` ||    
+            clean === `${cYear}/${cMonthPadded}` || 
+            clean === `${cYear}/${cMonthNum}` ||    
+            clean === cMonthName ||                 
+            clean.includes(cMonthName)              
           );
         };
 
         if (paymentData && paymentData.length > 0) {
-          // Reminders ගැනීම
-          extractedReminders = paymentData
-            .filter((p: any) => p.reminder_massage && p.reminder_massage.trim() !== '')
-            .map((p: any) => ({
-              title: `Payment Reminder`,
-              message: p.reminder_massage
-            }));
+          // Reminders සහ Reminders Count එක එකතු කිරීම
+          paymentData.forEach((p: any) => {
+            if (p.reminder_massage && p.reminder_massage.trim() !== '') {
+              extractedReminders.push({
+                title: `Payment Reminder`,
+                message: p.reminder_massage
+              });
+              // ඇඩ්මින් පැනලයෙන් ලබා දෙන reminders_count එක එකතු කිරීම (නැතිනම් default 1 බැගින්)
+              activeRemindersSum += p.reminders_count || 1;
+            }
+          });
 
-          // History එක හැදීම
+          // History එක සැකසීම
           paymentData.forEach((p: any) => {
             if (p.status?.toLowerCase() === 'paid' || p.status?.toLowerCase() === 'free') {
               const className = p.class_name || p.class_type || 'General';
@@ -180,7 +185,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
-          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව (Flexible Month Comparison)
+          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
           const currentMonthPayments = paymentData.filter((p: any) => 
             isCurrentMonthMatch(p.month) || isCurrentMonthMatch(p.target_month)
           );
@@ -190,7 +195,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             setIsPaidCurrentMonth(true);
           } else {
             statuses = enrolledClasses.map((cls) => {
-              // පන්ති නාමයන්හි අග හෝ මුල හිස්තැන් සහ Case-sensitivity මඟහැරවීම
               const paymentRecord = currentMonthPayments.find((p: any) => {
                 const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
@@ -205,9 +209,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               return { name: cls, status: statusValue };
             });
 
-            // එක පන්තියකට හෝ මුදල් ගෙවා ඇත්දැයි බැලීම
-            const hasAnyAccess = statuses.some(s => s.status === 'Paid' || s.status === 'Free');
-            setIsPaidCurrentMonth(enrolledClasses.length === 0 ? true : hasAnyAccess);
+            // සියලුම ලියාපදිංචි පන්ති වලට වත්මන් මාසයේ මුදල් ගෙවා ඇත්දැයි බැලීම
+            const hasUnpaidClass = statuses.some(s => s.status === 'Unpaid');
+            setIsPaidCurrentMonth(enrolledClasses.length === 0 ? true : !hasUnpaidClass);
           }
         } else {
           statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
@@ -216,7 +220,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         
         setClassPaymentStatuses(statuses);
         setPaymentHistory(pHistory);
+        setTotalRemindersCount(activeRemindersSum);
 
+        // 3. Announcements කියවීම
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
@@ -231,6 +237,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
         setDbReminders(extractedReminders);
 
+        // 4. Calendar Events කියවීම
         const { data: eventsData } = await supabase
           .from('calender_events')
           .select('*')
@@ -245,8 +252,18 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setIsRefreshing(false);
   };
 
+  // ටැබ් එක වෙනස් කර සුමටව ස්ක්‍රෝල් කරවන ෆන්ක්ෂන් එක
   const handleTabChange = (tab: TabType) => {
     setDashboardTab(tab);
+    setTimeout(() => {
+      mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  };
+
+  // Bell Icon එක ක්ලික් කළ විට Payment History වෙත ස්ක්‍රෝල් කරවන ෆන්ක්ෂන් එක
+  const handleBellClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Profile modal එක ඕපන් වීම වැළැක්වීමට
+    setDashboardTab('history');
     setTimeout(() => {
       mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 150);
@@ -259,17 +276,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const allReminders = [...dbReminders, ...studentAlerts];
 
-  // පන්ති වල ගෙවීම් තත්ත්වයන් මත Profile border එක සඳහා Conic Gradient එකක් උත්පාදනය කිරීම
+  // පන්ති වල ගෙවීම් තත්ත්වයන් මත Profile border එක සැකසීම
   const generateProfileBorderGradient = () => {
+    if (!isPaidCurrentMonth) {
+      return 'conic-gradient(#ef4444 0% 100%)'; // මුදල් නොගෙවූ සිසුන්ට සම්පූර්ණයෙන්ම රතු
+    }
     if (classPaymentStatuses.length === 0) {
-      return 'conic-gradient(#ef4444 0% 100%)'; // පන්ති නොමැති නම් රතු පාට
+      return 'conic-gradient(#10b981 0% 100%)';
     }
     
     const segmentPercentage = 100 / classPaymentStatuses.length;
     const gradientParts = classPaymentStatuses.map((cls, index) => {
-      let color = '#ef4444'; // Unpaid -> රතු
-      if (cls.status === 'Paid') color = '#10b981'; // Paid -> කොළ
-      else if (cls.status === 'Free') color = '#3b82f6'; // Free -> ලා නිල්
+      let color = '#ef4444'; 
+      if (cls.status === 'Paid') color = '#10b981'; 
+      else if (cls.status === 'Free') color = '#3b82f6'; 
       
       const start = (index * segmentPercentage).toFixed(2);
       const end = ((index + 1) * segmentPercentage).toFixed(2);
@@ -392,25 +412,33 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* --- DASHBOARD HEADER --- */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-800 shadow-2xl relative z-10">
         
-        {/* Dynamic Segmented Profile Avatar Container */}
+        {/* Profile Avatar Container */}
         <div className="lg:col-span-3 flex flex-col items-center relative border-r-0 lg:border-r border-slate-800/60 lg:pr-4">
           
-          <div onClick={() => setIsProfileOpen(true)} className="cursor-pointer group relative mt-2 w-28 h-28 md:w-32 md:h-32 flex items-center justify-center">
+          <div onClick={() => setIsProfileOpen(true)} className="relative group mt-2 w-28 h-28 md:w-32 md:h-32 flex items-center justify-center cursor-pointer">
             
-            {/* කැරකෙන සමානව බෙදුනු වර්ණ Border වලය (Conic Gradient Ring with continuous spin animation) */}
+            {/* මුදල් නොගෙවූ සිසුන් සදහා රතු පාටින් බ්ලින්ක් වන / ඇනිමේට් වන රින්ග් එක (Red Glow Animation) */}
+            {!isPaidCurrentMonth && (
+              <div className="absolute inset-0 rounded-full bg-red-600 animate-ping opacity-25" />
+            )}
+
+            {/* කැරකෙන Border වලය */}
             <div 
-              className="absolute inset-0 rounded-full animate-[spin_8s_linear_infinite] shadow-[0_0_25px_rgba(255,255,255,0.05)]"
+              className={`absolute inset-0 rounded-full animate-[spin_8s_linear_infinite] ${
+                !isPaidCurrentMonth ? 'shadow-[0_0_30px_rgba(239,68,68,0.8)] border-2 border-red-500' : 'shadow-[0_0_25px_rgba(255,255,255,0.05)]'
+              }`}
               style={{ 
                 background: generateProfileBorderGradient(),
                 padding: '5px' 
               }}
             >
-              {/* Inner Gradient Blend Cutout to overlay border */}
               <div className="w-full h-full bg-slate-950 rounded-full" />
             </div>
 
-            {/* ස්ථාවරව පවතින Profile අකුර (Inner Avatar content - strictly non-rotating) */}
-            <div className="absolute inset-[5px] rounded-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center font-black text-4xl shadow-inner group-hover:scale-105 transition-transform duration-300">
+            {/* Profile අකුර */}
+            <div className={`absolute inset-[5px] rounded-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center font-black text-4xl shadow-inner group-hover:scale-105 transition-transform duration-300 ${
+              !isPaidCurrentMonth ? 'border border-red-500/50' : ''
+            }`}>
               <span className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
                 {studentDisplayName.slice(0, 1).toUpperCase()}
               </span>
@@ -420,11 +448,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="absolute bottom-0 right-1 bg-slate-900 rounded-full p-2 border border-slate-700 text-slate-300 group-hover:text-white transition-colors shadow-md z-10">
               <User size={16} />
             </div>
+
+            {/* --- BELL REMINDER ICON OVERLAY --- */}
+            {totalRemindersCount > 0 && (
+              <div 
+                onClick={handleBellClick}
+                className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-amber-500 text-white font-black text-xs rounded-full h-7 w-7 flex items-center justify-center shadow-[0_0_15px_rgba(239,68,68,0.5)] border border-white/20 animate-[bounce_1s_infinite] cursor-pointer hover:scale-110 transition-transform z-20"
+                title={`${totalRemindersCount} ගෙවීම් මතක් කිරීම් ඇත. ක්ලික් කර බලන්න.`}
+              >
+                <Bell size={12} className="animate-pulse mr-[1px]" />
+                <span className="text-[10px]">{totalRemindersCount}</span>
+              </div>
+            )}
           </div>
 
           <h2 className="mt-4 font-bold text-lg text-center text-white tracking-wide">{studentDisplayName}</h2>
           
-          {/* Class Label Stickers with individual animations matching state */}
+          {/* Class Label Stickers */}
           <div className="flex flex-wrap justify-center gap-2 mt-4 w-full">
             {classPaymentStatuses.length > 0 ? classPaymentStatuses.map((cls, idx) => (
               <span key={idx} className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-xl border shadow-lg transition-all ${
@@ -445,7 +485,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
 
-        {/* Refactored Navigation Tab Controls Menu (All 6 Tabs Integrated) */}
+        {/* Navigation Tab Controls Menu */}
         <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-6 mt-4 lg:mt-0">
           
           {/* Refresh Component */}
@@ -457,7 +497,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
              <RefreshCw size={18} />
           </button>
           
-          {/* Live Classes Tab */}
+          {/* Live Classes Tab (Auto Scroll ඒකාබද්ධ කර ඇත) */}
           <button onClick={() => handleTabChange('live')} className={`flex items-center gap-2 px-5 py-3.5 border rounded-2xl font-bold text-xs md:text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/30 text-slate-300'}`}>
             <Video size={16} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
           </button>
@@ -504,19 +544,38 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
-      {/* --- MAIN INTERACTIVE VIEW CONTENT CONTENT & TARGET SCROLL --- */}
+      {/* --- MAIN INTERACTIVE VIEW CONTENT --- */}
       <div ref={mainContentRef} className="scroll-mt-6">
         <main className="bg-slate-900/40 p-4 md:p-8 rounded-3xl border border-slate-800/50 min-h-[520px]">
-          {/* Sub-Components View Switching Logic Based on Activated tab menu */}
-          {dashboardTab === 'live' && <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
-          {dashboardTab === 'recordings' && <RecordingsManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
-          {dashboardTab === 'tutes' && <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
-          {dashboardTab === 'exams' && <OnlineExamsHistory currentStudent={liveStudentData} />}
           
-          {/* Render Calendar Route Inside Main Box */}
+          {dashboardTab === 'live' && (
+            <SafeComponent>
+              <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
+            </SafeComponent>
+          )}
+          
+          {dashboardTab === 'recordings' && (
+            <SafeComponent>
+              <RecordingsManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
+            </SafeComponent>
+          )}
+          
+          {dashboardTab === 'tutes' && (
+            <SafeComponent>
+              <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
+            </SafeComponent>
+          )}
+          
+          {dashboardTab === 'exams' && (
+            <SafeComponent>
+              <OnlineExamsHistory currentStudent={liveStudentData} />
+            </SafeComponent>
+          )}
+          
+          {/* Render Calendar Route */}
           {dashboardTab === 'calendar' && renderCalendar()}
           
-          {/* Render Payment History Route Inside Main Box */}
+          {/* Render Payment History Route */}
           {dashboardTab === 'history' && (
             <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
                <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
