@@ -95,38 +95,39 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
 
-  useEffect(() => {
-    fetchDashboardData();
+  //  අලුත් කේතය (මෙය ඇතුළත් කරන්න):
+useEffect(() => {
+  fetchDashboardData();
 
-    if (supabase) {
-      const channel = supabase.channel('student_dashboard_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
-          fetchDashboardData();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `username=eq.${currentStudent.username}` }, () => {
-          fetchDashboardData();
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
-          fetchDashboardData();
-        })
-        .subscribe();
+  if (supabase) {
+    const channel = supabase.channel('student_dashboard_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
+        fetchDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `id=eq.${currentStudent.id}` }, () => { // 👈 username වෙනුවට id දැම්මා
+        fetchDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
+        fetchDashboardData();
+      })
+      .subscribe();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [currentStudent.username, supabase]); // 💡 dependency array එකට supabase එකතු කළා
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }
+}, [currentStudent.id, supabase]); // 👈 dependency array එකටත් id දැම්මා
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
     
     if (supabase) {
       try {
-        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම
+        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම (ID එකෙන්)
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
-          .eq('username', currentStudent.username)
+          .eq('id', currentStudent.id) // 👈 username වෙනුවට id එකෙන් සොයයි
           .single();
 
         const studentToUse = freshStudentData || currentStudent;
@@ -142,11 +143,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත කියවීම සහ සැසඳීම
+        // 2. Payments දත්ත කියවීම සහ සැසඳීම (student_id එකෙන්)
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
-          .eq('username', studentToUse.username);
+          .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
+
 
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
         let extractedReminders: any[] = [];
@@ -227,11 +229,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setPaymentHistory(pHistory);
         setTotalRemindersCount(activeRemindersSum);
 
-        // 3. Announcements කියවීම
+        // 3. Announcements කියවීම (පන්ති වර්ගය අනුව)
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
-          .or(`target_user.eq.${studentToUse.username},target_user.eq.all`);
+          .or(`target_class_type.eq.${studentToUse.class},target_user.eq.all`);
 
         if (announcementData) {
           const generalAlerts = announcementData.map((a: any) => ({
@@ -242,11 +244,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
         setDbReminders(extractedReminders);
 
-        // 4. Calendar Events කියවීම
+        // 4. Calendar Events කියවීම (පන්ති වර්ගය අනුව)
         const { data: eventsData } = await supabase
           .from('calendar_events')
           .select('*')
-          .like('date', `${currentMonthKey}%`);
+          .like('date', `${currentMonthKey}%`)
+          .eq('target_class_type', studentToUse.class);
         
         if (eventsData) setCalendarEvents(eventsData);
 
