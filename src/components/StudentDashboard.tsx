@@ -72,7 +72,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid'}[]>([]);
   
-  const [paymentHistory, setPaymentHistory] = useState<Record<string, string[]>>({});
+  const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -95,28 +95,31 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
 
-  //  අලුත් කේතය (මෙය ඇතුළත් කරන්න):
-useEffect(() => {
-  fetchDashboardData();
+  // 🔄 ඇඩ්මින් පැනලයෙන් කරන වෙනස්කම් ක්ෂණිකව (Realtime) අප්ඩේට් වන කොටස
+  useEffect(() => {
+    fetchDashboardData();
 
-  if (supabase) {
-    const channel = supabase.channel('student_dashboard_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
-        fetchDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `id=eq.${currentStudent.id}` }, () => { // 👈 username වෙනුවට id දැම්මා
-        fetchDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
-        fetchDashboardData();
-      })
-      .subscribe();
+    if (supabase) {
+      const channel = supabase.channel('student_dashboard_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
+          fetchDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `id=eq.${currentStudent.id}` }, () => {
+          fetchDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
+          fetchDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+          fetchDashboardData();
+        })
+        .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }
-}, [currentStudent.id, supabase]); // 👈 dependency array එකටත් id දැම්මා
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [currentStudent.id, supabase]);
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
@@ -149,10 +152,9 @@ useEffect(() => {
           .select('*')
           .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
 
-
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
         let extractedReminders: any[] = [];
-        let pHistory: Record<string, string[]> = {};
+        let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' }[]> = {};
         let activeRemindersSum = 0;
 
         const isCurrentMonthMatch = (dbMonthValue: any) => {
@@ -181,16 +183,50 @@ useEffect(() => {
             }
           });
 
-          // History එක සැකසීම (සියලුම ගෙවීම් වාර්තා)
-          paymentData.forEach((p: any) => {
-            if (p.status?.toLowerCase() === 'paid' || p.status?.toLowerCase() === 'free') {
-              const className = p.class_name || p.class_type || 'General';
-              if (!pHistory[className]) pHistory[className] = [];
-              const monthStr = p.month || p.target_month || 'Unknown Month';
-              if (!pHistory[className].includes(monthStr)) {
-                pHistory[className].push(monthStr);
-              }
+          // 📜 History එක සැකසීම (Paid, Free, Unpaid සහ Deactivated මාස වෙන් කිරීම)
+          const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+          const yearMonths = monthNames.map((name, index) => {
+            const pad = String(index + 1).padStart(2, '0');
+            return { key: `${cYear}-${pad}`, name };
+          });
+
+          // ඇඩ්මින් විසින් ඩීඇක්ටිවේට් කරන ලද මාස ලැයිස්තුව කියවීම
+          let deactivatedList: string[] = [];
+          if (studentToUse.deactivated_months) {
+            if (Array.isArray(studentToUse.deactivated_months)) deactivatedList = studentToUse.deactivated_months;
+            else if (typeof studentToUse.deactivated_months === 'string') {
+              try { deactivatedList = JSON.parse(studentToUse.deactivated_months); } catch(e) { deactivatedList = [studentToUse.deactivated_months]; }
             }
+          }
+
+          enrolledClasses.forEach((cls) => {
+            pHistory[cls] = [];
+            yearMonths.forEach((m) => {
+              // ඇඩ්මින් පැනලයෙන් ඩීඇක්ටිවේට් කර ඇත්නම් එම මාසය පෙන්වීම මඟ හරියි
+              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
+                return;
+              }
+
+              // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
+              const record = paymentData.find((p: any) => {
+                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
+                const sClass = cls.toString().trim().toLowerCase();
+                const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
+                return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
+              });
+
+              let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
+              const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
+
+              if (record) {
+                if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
+                else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
+              } else if (isMonthFree) {
+                statusValue = 'Free';
+              }
+
+              pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
+            });
           });
 
           // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
@@ -223,6 +259,32 @@ useEffect(() => {
         } else {
           statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
           setIsPaidCurrentMonth(isFreeStudent);
+          
+          // පේමන්ට් කිසිවක් නැති විට මුළු අවුරුද්දම Unpaid/Free ලෙස සෑදීම
+          const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+          const yearMonths = monthNames.map((name, index) => {
+            const pad = String(index + 1).padStart(2, '0');
+            return { key: `${cYear}-${pad}`, name };
+          });
+          
+          let deactivatedList: string[] = [];
+          if (studentToUse.deactivated_months) {
+            if (Array.isArray(studentToUse.deactivated_months)) deactivatedList = studentToUse.deactivated_months;
+            else if (typeof studentToUse.deactivated_months === 'string') {
+              try { deactivatedList = JSON.parse(studentToUse.deactivated_months); } catch(e) { deactivatedList = [studentToUse.deactivated_months]; }
+            }
+          }
+
+          enrolledClasses.forEach((cls) => {
+            pHistory[cls] = [];
+            yearMonths.forEach((m) => {
+              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
+                return;
+              }
+              const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
+              pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: isMonthFree ? 'Free' : 'Unpaid' });
+            });
+          });
         }
         
         setClassPaymentStatuses(statuses);
@@ -363,7 +425,7 @@ useEffect(() => {
               </button>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
               <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
                 <User size={18} className="text-purple-400" />
                 <div className="grid grid-cols-2 gap-4 w-full">
@@ -397,6 +459,25 @@ useEffect(() => {
                 <div>
                   <p className="text-[11px] text-slate-500 uppercase font-bold">District</p>
                   <p className="font-medium text-sm">{liveStudentData.district || 'N/A'}</p>
+                </div>
+              </div>
+
+              {/* අලුතින් එකතු කළ ලියාපදිංචි පන්ති පෙන්වන කොටස */}
+              <div className="flex items-start gap-3 text-slate-300 pt-2">
+                <Book size={18} className="text-cyan-400 mt-1" />
+                <div className="w-full">
+                  <p className="text-[11px] text-slate-500 uppercase font-bold mb-2">ලියාපදිංචි පන්ති (Registered Classes)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {liveStudentData.class_types && liveStudentData.class_types.length > 0 ? (
+                      liveStudentData.class_types.map((cls: string, idx: number) => (
+                        <span key={idx} className="bg-slate-800 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 font-medium">
+                          {cls}
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-sm text-slate-500">පන්ති කිසිවක් සඳහා ලියාපදිංචි වී නොමැත.</p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -578,11 +659,20 @@ useEffect(() => {
                        <p className="font-bold text-slate-200 mb-3 flex items-center gap-2">
                          <Book size={16} className="text-cyan-400" /> {className}
                        </p>
-                       <div className="flex flex-wrap gap-2">
-                         {months.sort().map((m, idx) => (
-                           <span key={idx} className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-lg border border-emerald-500/20 shadow-sm">
-                             {m}
-                           </span>
+                       <div className="flex flex-col gap-2">
+                         {months.map((m, idx) => (
+                           <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                             m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                             m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                             'bg-red-500/10 text-red-400 border-red-500/20'
+                           }`}>
+                             <span>{m.monthName} ({m.monthKey})</span>
+                             <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/30 font-medium">
+                               {m.status === 'Paid' && '🟢 Paid'}
+                               {m.status === 'Free' && '🔵 Free'}
+                               {m.status === 'Unpaid' && '🔴 මෙම මාසය සදහා මෙම පන්තියට මුදල් ගෙවා නෑ'}
+                             </span>
+                           </div>
                          ))}
                        </div>
                      </div>
