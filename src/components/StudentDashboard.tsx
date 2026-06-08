@@ -1,7 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
-// Supabase කෙලින්ම මෙතනට Import කරගන්න (ඔබේ ෆෝල්ඩර් අනුපිළිවෙල අනුව '../supabaseClient' විය හැක)
-import { supabase } from '../supabaseClient'; 
 
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
@@ -26,6 +24,9 @@ interface StudentDashboardProps {
   isCurrentMonthPaid?: boolean;
   filterMonth?: string;
   setFilterMonth?: any;
+  
+  // 💡 App.tsx එකෙන් එවන supabase client එක පිළිගැනීමට මෙය අලුතින්ම එකතු කළා
+  supabase: any; 
 }
 
 const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -59,7 +60,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   resourceLinks,
   isCurrentMonthPaid: parentPaidStatus,
   filterMonth,
-  setFilterMonth
+  setFilterMonth,
+  supabase // 💡 Props වලින් supabase ලබා ගැනීම මෙතනට ඇතුලත් කළා
 }) => {
   const [dbReminders, setDbReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
@@ -104,7 +106,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `username=eq.${currentStudent.username}` }, () => {
           fetchDashboardData();
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
           fetchDashboardData();
         })
         .subscribe();
@@ -113,7 +115,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         supabase.removeChannel(channel);
       };
     }
-  }, [currentStudent.username]);
+  }, [currentStudent.username, supabase]); // 💡 dependency array එකට supabase එකතු කළා
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
@@ -242,7 +244,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         // 4. Calendar Events කියවීම
         const { data: eventsData } = await supabase
-          .from('calender_events')
+          .from('calendar_events')
           .select('*')
           .like('date', `${currentMonthKey}%`);
         
@@ -454,7 +456,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
           <h2 className="mt-4 font-bold text-lg text-center text-white tracking-wide">{studentDisplayName}</h2>
           
-          {/* අලුතින් එක් කළ: වත්මන් අවුරුද්ද සහ මාසය පෙන්වන කොටස */}
           <p className="text-slate-400 text-sm text-center font-medium mt-1 bg-slate-900/50 px-3 py-1 rounded-full border border-slate-800">
             {cYear} {cMonthName}
           </p>

@@ -34,7 +34,7 @@ const LiveClassPlayer: React.FC<Props> = ({ currentStudent, isPaid }) => {
     // 1. Live Data Stream එකට සවන් දීම (Supabase Realtime Subscription)
     const channel = supabase
       .channel('live_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_schedules' }, (payload: any) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, (payload: any) => {
         handleLiveStreamUpdate(payload.new);
       })
       .subscribe();
@@ -48,7 +48,7 @@ const LiveClassPlayer: React.FC<Props> = ({ currentStudent, isPaid }) => {
   }, []);
 
   const fetchCurrentLiveStream = async () => {
-    const { data } = await supabase.from('live_schedules').select('*').eq('is_active', true).maybeSingle();
+    const { data } = await supabase.from('scheduled_lives').select('*').eq('is_active', true).maybeSingle();
     if (data) handleLiveStreamUpdate(data);
   };
 

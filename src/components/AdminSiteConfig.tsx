@@ -17,9 +17,9 @@ export default function AdminSiteConfig() {
     alert("Configurations saved successfully!");
   };
 
-  const handleChange = (field: string, value: string) => {
-    setLocalConfig(prev => ({ ...prev, [field]: value }));
-  };
+ const handleChange = (field: string, value: string) => {
+  setLocalConfig((prev: any) => ({ ...prev, [field]: value }));
+};
 
   return (
     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">

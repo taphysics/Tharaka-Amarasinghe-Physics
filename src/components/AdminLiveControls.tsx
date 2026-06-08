@@ -30,7 +30,7 @@ const AdminLiveControls: React.FC = () => {
   }, []);
 
   const fetchAdminData = async () => {
-    const { data: lives } = await supabase.from('live_schedules').select('*');
+    const { data: lives } = await supabase.from('scheduled_lives').select('*');
     if (lives) setLiveSessions(lives);
 
     const { data: exms } = await supabase.from('online_exams').select('*').order('created_at', { ascending: false });
@@ -56,13 +56,13 @@ const AdminLiveControls: React.FC = () => {
   // Push Exam Sheet to Active Students Live Video Frames Screen
   const handlePushExamToLive = async (sessionId: string) => {
     if (!selectedExamId) return alert('කරුණාකර මුලින්ම පත්‍රයක් තෝරාගන්න!');
-    await supabase.from('live_schedules').update({ pushed_exam_id: selectedExamId }).eq('id', sessionId);
+    await supabase.from('scheduled_lives').update({ pushed_exam_id: selectedExamId }).eq('id', sessionId);
     alert('විභාගය සිසුන්ගේ තිරය මතට Push කරන ලදී!');
   };
 
   // Toggle Attention Check Prompt Trigger Switcher Box Engine
   const handleTriggerAttentionAlert = async (sessionId: string, currentState: boolean) => {
-    await supabase.from('live_schedules').update({ attention_check_active: !currentState }).eq('id', sessionId);
+    await supabase.from('scheduled_lives').update({ attention_check_active: !currentState }).eq('id', sessionId);
     if (!currentState) {
       // Clear old logs to populate new analytics fresh
       await supabase.from('live_attendance').delete().eq('live_schedule_id', sessionId);
