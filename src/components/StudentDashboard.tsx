@@ -183,12 +183,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
-          // 📜 History එක සැකසීම (Paid, Free, Unpaid සහ Deactivated මාස වෙන් කිරීම)
+          // 📜 History එක සැකසීම සහ අනාගත මාස ඉවත් කිරීම (වත්මන් මාසය දක්වා පමණක් පෙන්වීම)
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
-            return { key: `${cYear}-${pad}`, name };
-          });
+            return { key: `${cYear}-${pad}`, name, monthIndex: index + 1 };
+          }).filter(m => m.monthIndex <= cMonthNum);
 
           // ඇඩ්මින් විසින් ඩීඇක්ටිවේට් කරන ලද මාස ලැයිස්තුව කියවීම
           let deactivatedList: string[] = [];
@@ -413,79 +413,70 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       
       {/* Profile Modal */}
       {isProfileOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-300">
-            <div className="bg-gradient-to-r from-blue-900 to-slate-900 p-6 flex justify-between items-start border-b border-slate-800">
-              <div>
-                <h3 className="font-bold text-2xl text-white">{studentDisplayName}</h3>
-                <p className="text-blue-300 text-sm font-mono mt-1">ID: {liveStudentData.username}</p>
-              </div>
-              <button onClick={() => setIsProfileOpen(false)} className="p-2 bg-slate-800/50 rounded-full hover:bg-slate-700 text-slate-300 transition">
-                <X size={20} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#0b101e] border border-slate-800 rounded-xl w-full max-w-[420px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Header */}
+            <div className="flex justify-between items-center p-4 border-b border-slate-800/60">
+              <h3 className="font-semibold text-[13px] text-white tracking-wide">Verify Student Profile Data</h3>
+              <button onClick={() => setIsProfileOpen(false)} className="text-slate-400 hover:text-white transition">
+                <X size={18} />
               </button>
             </div>
             
-            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
-                <User size={18} className="text-purple-400" />
-                <div className="grid grid-cols-2 gap-4 w-full">
-                   <div>
-                    <p className="text-[11px] text-slate-500 uppercase font-bold">NIC</p>
-                    <p className="font-medium text-sm">{liveStudentData.nic || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-slate-500 uppercase font-bold">Class / Grade</p>
-                    <p className="font-medium text-sm">{liveStudentData.class || 'N/A'}</p>
-                  </div>
+            <div className="p-6">
+              {/* Avatar & Name */}
+              <div className="flex flex-col items-center mb-6">
+                <div className="w-[68px] h-[68px] rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-2xl font-bold text-white mb-3 shadow-lg">
+                  {(fName.charAt(0) + (lName.charAt(0) || fName.charAt(1) || '')).toUpperCase()}
+                </div>
+                <h2 className="text-[17px] font-bold text-white">{studentDisplayName}</h2>
+                <p className="text-[10px] text-slate-500 tracking-[0.15em] mt-1 uppercase">Registration File Verified</p>
+              </div>
+
+              {/* Details List */}
+              <div className="space-y-0 text-[13px]">
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">STUDENT ID (Username):</span>
+                  <span className="text-fuchsia-400 font-bold">{liveStudentData?.username || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">First Name:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.first_name || liveStudentData?.name || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">Last Name:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.last_name || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">National ID (NIC) Number:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.nic || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">Enrolled Course Plan:</span>
+                  <span className="text-purple-400 font-bold text-right max-w-[200px] truncate">
+                    {Array.isArray(liveStudentData?.class_types) ? liveStudentData.class_types.join(', ') : (liveStudentData?.class_types || liveStudentData?.class || 'N/A')}
+                  </span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">Home District:</span>
+                  <span className="text-slate-200 font-medium">{capitalize(liveStudentData?.district || 'N/A')}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">WhatsApp Number:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.WhatsApp || liveStudentData?.whatsapp || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
+                  <span className="text-slate-400">Mobile Voice Call:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.mobile || 'N/A'}</span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
-                <Phone size={18} className="text-emerald-400" />
-                <div className="grid grid-cols-2 gap-4 w-full">
-                  <div>
-                    <p className="text-[11px] text-slate-500 uppercase font-bold">WhatsApp</p>
-                    <p className="font-medium text-sm">{liveStudentData.WhatsApp || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] text-slate-500 uppercase font-bold">Mobile</p>
-                    <p className="font-medium text-sm">{liveStudentData.mobile || 'N/A'}</p>
-                  </div>
-                </div>
+              {/* Close Button */}
+              <div className="mt-8 flex justify-center">
+                <button onClick={() => setIsProfileOpen(false)} className="px-5 py-2.5 rounded-lg border border-slate-700/80 text-slate-300 text-xs font-semibold hover:bg-slate-800 transition duration-200">
+                  Close Profile Details
+                </button>
               </div>
-
-              <div className="flex items-center gap-3 text-slate-300 border-b border-slate-800/50 pb-4">
-                <MapPin size={18} className="text-rose-400" />
-                <div>
-                  <p className="text-[11px] text-slate-500 uppercase font-bold">District</p>
-                  <p className="font-medium text-sm">{liveStudentData.district || 'N/A'}</p>
-                </div>
-              </div>
-
-              {/* අලුතින් එකතු කළ ලියාපදිංචි පන්ති පෙන්වන කොටස */}
-              <div className="flex items-start gap-3 text-slate-300 pt-2">
-                <Book size={18} className="text-cyan-400 mt-1" />
-                <div className="w-full">
-                  <p className="text-[11px] text-slate-500 uppercase font-bold mb-2">ලියාපදිංචි පන්ති (Registered Classes)</p>
-                  <div className="flex flex-wrap gap-2">
-                    {liveStudentData.class_types && liveStudentData.class_types.length > 0 ? (
-                      liveStudentData.class_types.map((cls: string, idx: number) => (
-                        <span key={idx} className="bg-slate-800 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg border border-slate-700 font-medium">
-                          {cls}
-                        </span>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">පන්ති කිසිවක් සඳහා ලියාපදිංචි වී නොමැත.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-slate-950 flex justify-end">
-               <button onClick={handleStudentLogout} className="flex items-center gap-2 px-6 py-2.5 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white border border-red-900/50 rounded-xl transition-all font-bold">
-                <LogOut size={16} /> Logout
-              </button>
             </div>
           </div>
         </div>
