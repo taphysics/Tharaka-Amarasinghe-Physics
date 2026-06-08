@@ -65,6 +65,7 @@ export default function PaymentManager() {
     }
   };
 
+  // Real-time Update යවන ප්‍රධාන ක්‍රියාවලිය
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
     const student = students.find((s: any) => s.id === studentId);
@@ -87,7 +88,7 @@ export default function PaymentManager() {
       }
     }
 
-    // Optimistic UI Update
+    // Optimistic UI Update (Admin panel එකේ ක්ෂණිකව වෙනස් වීමට)
     setPayments(prev => {
       const exists = prev.find((p: any) => p.record_id === recordId);
       if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
@@ -108,6 +109,16 @@ export default function PaymentManager() {
     if (error) {
       console.error("Payment status save failed:", error);
       alert("දත්ත සුරැකීමේදී දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
+    } else {
+      // --- REALTIME BROADCAST ---
+      // මෙය මගින් සිසුවා ලෝකේ කොහේ සිටියත් එම තත්පරයේම සංඥාව යවයි
+      const channel = supabase.channel(`student_dashboard_${studentId}`);
+      await channel.send({
+        type: 'broadcast',
+        event: 'payment_updated',
+        payload: { studentId, monthKey, className, status }
+      });
+      supabase.removeChannel(channel);
     }
   };
 
@@ -154,6 +165,16 @@ export default function PaymentManager() {
               target_user: student.username
             });
           }
+          
+          // --- REALTIME BROADCAST FOR REMINDER ---
+          const channel = supabase.channel(`student_dashboard_${studentId}`);
+          await channel.send({
+            type: 'broadcast',
+            event: 'reminder_updated',
+            payload: { studentId, monthKey, className: cName }
+          });
+          supabase.removeChannel(channel);
+
           sentCount++;
         }
       }
@@ -192,6 +213,15 @@ export default function PaymentManager() {
             if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
             return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_name: cName, status: currentStatus, whatsapp_sent: true }];
           });
+          
+          // --- REALTIME BROADCAST FOR WHATSAPP STATUS ---
+          const channel = supabase.channel(`student_dashboard_${student.id}`);
+          await channel.send({
+            type: 'broadcast',
+            event: 'whatsapp_status_updated',
+            payload: { studentId: student.id, monthKey, className: cName }
+          });
+          supabase.removeChannel(channel);
         }
       }
     }
@@ -211,7 +241,19 @@ export default function PaymentManager() {
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
     setStudents(prev => prev.map((s: any) => s.id === studentId ? { ...s, class_types: newClasses } : s));
     const { error } = await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
-    if (error) console.error("Error updating student classes:", error);
+    
+    if (error) {
+      console.error("Error updating student classes:", error);
+    } else {
+      // --- REALTIME BROADCAST FOR CLASS UPDATES ---
+      const channel = supabase.channel(`student_dashboard_${studentId}`);
+      await channel.send({
+        type: 'broadcast',
+        event: 'student_classes_updated',
+        payload: { studentId, newClasses }
+      });
+      supabase.removeChannel(channel);
+    }
   };
 
   const getMonthButtonStyle = (student: any, monthKey: string) => {

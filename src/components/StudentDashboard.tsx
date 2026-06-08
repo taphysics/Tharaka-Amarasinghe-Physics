@@ -13,16 +13,52 @@ interface StudentDashboardProps {
   handleStudentLogout: () => void;
   dashboardTab: TabType | string;
   setDashboardTab: React.Dispatch<React.SetStateAction<any>>;
+  showWelcomeBanner?: boolean;
+  closeWelcomeActiveBanner?: () => void;
   studentAlerts?: any[];
+  siteConfig?: any;
+  calendarEvents?: any[];
+  announcements?: any[];
+  scheduledLives?: any[];
+  resourceLinks?: any[];
+  isCurrentMonthPaid?: boolean;
+  filterMonth?: string;
+  setFilterMonth?: any;
   supabase?: any;
 }
+
+const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  try {
+    return <>{children}</>;
+  } catch (e) {
+    return (
+      <div className="p-6 bg-red-950/30 border border-red-500/30 text-red-400 rounded-2xl flex items-center gap-3">
+        <AlertTriangle />
+        <div>
+          <p className="font-bold">Component එක ලෝඩ් වීමේ දෝෂයකි!</p>
+          <p className="text-xs text-slate-400">මෙම සෙක්ෂන් එකෙහි ඇති පරණ Database Table සම්බන්ධතා (404 Errors) නිසා මෙය සිදුවේ.</p>
+        </div>
+      </div>
+    );
+  }
+};
 
 const StudentDashboard: React.FC<StudentDashboardProps> = ({ 
   currentStudent, 
   handleStudentLogout, 
   dashboardTab, 
   setDashboardTab,
+  showWelcomeBanner,
+  closeWelcomeActiveBanner,
   studentAlerts = [], 
+  siteConfig,
+  calendarEvents: parentCalendarEvents,
+  announcements: parentAnnouncements,
+  scheduledLives,
+  resourceLinks,
+  isCurrentMonthPaid: parentPaidStatus,
+  filterMonth,
+  setFilterMonth,
   supabase 
 }) => {
   const [dbReminders, setDbReminders] = useState<any[]>([]);
@@ -33,14 +69,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid'}[]>([]);
   
-  // අලුත් States
   const [paymentHistory, setPaymentHistory] = useState<Record<string, string[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
   const remindersSectionRef = useRef<HTMLDivElement>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
-  // ලංකාවේ වේලාවට අනුව වත්මන් මාසය ලබා ගැනීම
   const getSLCurrentMonthKey = () => {
     const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
     return `${slDate.getFullYear()}-${String(slDate.getMonth() + 1).padStart(2, '0')}`;
@@ -51,11 +85,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   useEffect(() => {
     fetchDashboardData();
 
-    // සජීවීව දත්ත ලබා ගැනීම (Supabase Realtime)
     if (supabase) {
       const channel = supabase.channel('student_dashboard_live')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
-          fetchDashboardData(); // පේමන්ට් අප්ඩේට් වූ සැනින් රිෆ්‍රෙශ් කරන්න
+          fetchDashboardData();
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `username=eq.${currentStudent.username}` }, () => {
           fetchDashboardData();
@@ -76,7 +109,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     
     if (supabase) {
       try {
-        // 1. සිසු දත්ත
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
@@ -96,7 +128,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
@@ -107,7 +138,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         let pHistory: Record<string, string[]> = {};
 
         if (paymentData && paymentData.length > 0) {
-          // Reminders ගැනීම
           extractedReminders = paymentData
             .filter((p: any) => p.reminder_massage && p.reminder_massage.trim() !== '')
             .map((p: any) => ({
@@ -115,7 +145,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               message: p.reminder_massage
             }));
 
-          // History එක හැදීම
           paymentData.forEach((p: any) => {
             if (p.status?.toLowerCase() === 'paid' || p.status?.toLowerCase() === 'free') {
               const className = p.class_name || p.class_type || 'General';
@@ -127,7 +156,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
-          // වත්මන් මාසයේ Status බැලීම
           const currentMonthPayments = paymentData.filter((p: any) => p.month === currentMonthKey || p.target_month === currentMonthKey);
 
           if (isFreeStudent) {
@@ -144,7 +172,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               return { name: cls, status: statusValue };
             });
 
-            // එක පන්තියකට හෝ මුදල් ගෙවා ඇත්දැයි බැලීම
             const hasAnyAccess = statuses.some(s => s.status === 'Paid' || s.status === 'Free');
             setIsPaidCurrentMonth(enrolledClasses.length === 0 ? true : hasAnyAccess);
           }
@@ -156,7 +183,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setClassPaymentStatuses(statuses);
         setPaymentHistory(pHistory);
 
-        // 3. Announcements
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
@@ -171,11 +197,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
         setDbReminders(extractedReminders);
 
-        // 4. Calendar Events (වත්මන් මාසයට අදාල)
         const { data: eventsData } = await supabase
           .from('calender_events')
           .select('*')
-          .like('date', `${currentMonthKey}%`); // 2026-06 වලින් පටන් ගන්නා දින
+          .like('date', `${currentMonthKey}%`);
         
         if (eventsData) setCalendarEvents(eventsData);
 
@@ -193,7 +218,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }, 150);
   };
 
-  // නම්වල මුල් අකුර Capital කිරීම
   const capitalize = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1).toLowerCase() : '';
   const fName = capitalize(liveStudentData?.first_name || liveStudentData?.name || '');
   const lName = capitalize(liveStudentData?.last_name || '');
@@ -201,7 +225,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const allReminders = [...dbReminders, ...studentAlerts];
 
-  // Calendar Render Logic
+  // පන්ති වල ගෙවීම් තත්ත්වයන් මත Profile border එක සඳහා Conic Gradient එකක් උත්පාදනය කිරීම
+  const generateProfileBorderGradient = () => {
+    if (classPaymentStatuses.length === 0) {
+      return 'conic-gradient(#ef4444 0% 100%)'; // පන්ති නොමැති නම් රතු පාට
+    }
+    
+    const segmentPercentage = 100 / classPaymentStatuses.length;
+    const gradientParts = classPaymentStatuses.map((cls, index) => {
+      let color = '#ef4444'; // Unpaid -> රතු
+      if (cls.status === 'Paid') color = '#10b981'; // Paid -> කොළ
+      else if (cls.status === 'Free') color = '#3b82f6'; // Free -> ලා නිල්
+      
+      const start = (index * segmentPercentage).toFixed(2);
+      const end = ((index + 1) * segmentPercentage).toFixed(2);
+      return `${color} ${start}% ${end}%`;
+    });
+
+    return `conic-gradient(${gradientParts.join(', ')})`;
+  };
+
   const renderCalendar = () => {
     const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
     const year = slDate.getFullYear();
@@ -215,10 +258,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
 
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-        <h3 className="text-xl font-bold mb-6 flex items-center gap-2"><CalendarDays className="text-blue-400" /> පන්ති කාලසටහන ({currentMonthKey})</h3>
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+          <CalendarDays className="text-purple-400" /> පන්ති කාලසටහන ({currentMonthKey})
+        </h3>
         <div className="grid grid-cols-7 gap-2 text-center text-sm font-bold text-slate-400 mb-2">
-          <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+          <div className="text-rose-500">Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
         </div>
         <div className="grid grid-cols-7 gap-2">
           {days.map((day, index) => {
@@ -229,11 +274,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             const isToday = day === slDate.getDate();
 
             return (
-              <div key={index} className={`min-h-[80px] p-2 rounded-xl border flex flex-col items-center ${isToday ? 'bg-blue-900/40 border-blue-500' : 'bg-slate-800/50 border-slate-700'}`}>
-                <span className={`text-sm font-bold ${isToday ? 'text-blue-400' : 'text-slate-300'}`}>{day}</span>
-                <div className="mt-1 space-y-1 w-full">
+              <div key={index} className={`min-h-[90px] p-2 rounded-xl border flex flex-col justify-between transition-all ${isToday ? 'bg-purple-950/30 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-slate-800/40 border-slate-700/60 hover:border-slate-600'}`}>
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md self-start ${isToday ? 'bg-purple-500 text-white' : 'text-slate-300'}`}>{day}</span>
+                <div className="mt-1 space-y-1 w-full overflow-y-auto max-h-[50px] custom-scrollbar">
                   {dayEvents.map((ev, i) => (
-                     <div key={i} className="text-[9px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 truncate w-full text-center" title={ev.title}>
+                     <div key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 truncate w-full text-center font-medium" title={ev.title}>
                        {ev.title}
                      </div>
                   ))}
@@ -313,123 +358,160 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* --- DASHBOARD HEADER --- */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-800 shadow-2xl relative z-10">
         
-        {/* Profile Avatar */}
-        <div className="lg:col-span-3 flex flex-col items-center relative">
+        {/* Dynamic Segmented Profile Avatar Container */}
+        <div className="lg:col-span-3 flex flex-col items-center relative border-r-0 lg:border-r border-slate-800/60 lg:pr-4">
           
-          <div onClick={() => setIsProfileOpen(true)} className="cursor-pointer group relative mt-2">
-            <div className={`w-24 h-24 md:w-28 md:h-28 rounded-full flex items-center justify-center font-black text-4xl transition-all duration-500 ${
-              isPaidCurrentMonth 
-                ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 border-4 border-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.4)] group-hover:scale-105' 
-                : 'bg-gradient-to-br from-red-800 to-slate-900 border-2 border-red-600 shadow-[0_0_30px_rgba(220,38,38,0.6)] animate-pulse'
-            }`}>
-              <span className="text-white drop-shadow-md">{studentDisplayName.slice(0, 1).toUpperCase()}</span>
+          <div onClick={() => setIsProfileOpen(true)} className="cursor-pointer group relative mt-2 w-28 h-28 md:w-32 md:h-32 flex items-center justify-center">
+            
+            {/* කැරකෙන සමානව බෙදුනු වර්ණ Border වලය (Conic Gradient Ring with continuous spin animation) */}
+            <div 
+              className="absolute inset-0 rounded-full animate-[spin_8s_linear_infinite] shadow-[0_0_25px_rgba(255,255,255,0.05)]"
+              style={{ 
+                background: generateProfileBorderGradient(),
+                padding: '5px' 
+              }}
+            >
+              {/* Inner Gradient Blend Cutout to overlay border */}
+              <div className="w-full h-full bg-slate-950 rounded-full" />
             </div>
-            <div className="absolute -bottom-2 -right-2 bg-slate-800 rounded-full p-2 border border-slate-700 text-slate-300 group-hover:text-white transition-colors">
-              <User size={18} />
+
+            {/* ස්ථාවරව පවතින Profile අකුර (Inner Avatar content - strictly non-rotating) */}
+            <div className="absolute inset-[5px] rounded-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center font-black text-4xl shadow-inner group-hover:scale-105 transition-transform duration-300">
+              <span className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+                {studentDisplayName.slice(0, 1).toUpperCase()}
+              </span>
+            </div>
+
+            {/* Profile User Icon Overlay */}
+            <div className="absolute bottom-0 right-1 bg-slate-900 rounded-full p-2 border border-slate-700 text-slate-300 group-hover:text-white transition-colors shadow-md z-10">
+              <User size={16} />
             </div>
           </div>
 
-          <h2 className="mt-5 font-bold text-xl text-center text-white tracking-wide">{studentDisplayName}</h2>
+          <h2 className="mt-4 font-bold text-lg text-center text-white tracking-wide">{studentDisplayName}</h2>
           
-          {/* Class Badges */}
-          <div className="flex flex-wrap justify-center gap-1.5 mt-3 w-full">
+          {/* Class Label Stickers with individual animations matching state */}
+          <div className="flex flex-wrap justify-center gap-2 mt-4 w-full">
             {classPaymentStatuses.length > 0 ? classPaymentStatuses.map((cls, idx) => (
-              <span key={idx} className={`flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border shadow-sm ${
-                cls.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
-                cls.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
-                'bg-red-500/10 text-red-400 border-red-500/40 animate-pulse'
+              <span key={idx} className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-xl border shadow-lg transition-all ${
+                cls.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)] animate-[pulse_2.5s_infinite]' :
+                cls.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/40 shadow-[0_0_12px_rgba(59,130,246,0.15)] animate-[pulse_3s_infinite]' :
+                'bg-red-500/10 text-red-400 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.25)] animate-pulse'
               }`}>
-                {cls.status === 'Paid' || cls.status === 'Free' ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
-                {cls.name} ({cls.status})
+                {cls.status === 'Paid' || cls.status === 'Free' ? (
+                  <CheckCircle2 size={11} className={cls.status === 'Paid' ? 'text-emerald-400' : 'text-blue-400'} />
+                ) : (
+                  <XCircle size={11} className="text-red-400" />
+                )}
+                {cls.name} : {cls.status}
               </span>
             )) : (
-              <span className="text-xs text-slate-500 bg-slate-800/50 px-3 py-1 rounded-full border border-slate-700">No Classes</span>
+              <span className="text-xs text-slate-500 bg-slate-800/50 px-3 py-1.5 rounded-xl border border-slate-700">පන්ති ඇතුලත් කර නොමැත</span>
             )}
           </div>
         </div>
 
-        {/* Action Tabs */}
-        <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-8 mt-6 lg:mt-0">
+        {/* Refactored Navigation Tab Controls Menu (All 6 Tabs Integrated) */}
+        <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-6 mt-4 lg:mt-0">
+          
+          {/* Refresh Component */}
           <button 
             onClick={fetchDashboardData} 
-            className={`flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-800/80 border border-slate-700 hover:bg-slate-700 text-slate-300 transition-all ${isRefreshing ? 'animate-spin text-blue-400 border-blue-500/50' : ''}`}
+            className={`flex items-center justify-center p-3 rounded-2xl bg-slate-800/80 border border-slate-700 hover:bg-slate-700 text-slate-300 transition-all ${isRefreshing ? 'animate-spin text-blue-400 border-blue-500/50' : ''}`}
+            title="දත්ත යාවත්කාලීන කරන්න"
           >
              <RefreshCw size={18} />
           </button>
           
-          <button onClick={() => handleTabChange('live')} className={`flex items-center gap-2 px-5 py-3 border rounded-2xl font-bold text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/40 text-slate-300'}`}>
-            <Video size={18} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
+          {/* Live Classes Tab */}
+          <button onClick={() => handleTabChange('live')} className={`flex items-center gap-2 px-5 py-3.5 border rounded-2xl font-bold text-xs md:text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/30 text-slate-300'}`}>
+            <Video size={16} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
           </button>
 
-          <button onClick={() => handleTabChange('recordings')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-amber-950/40 text-slate-300'}`}>
-            <BookOpen size={18} /> Recordings
+          {/* Recordings Tab */}
+          <button onClick={() => handleTabChange('recordings')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-amber-950/20 text-slate-300'}`}>
+            <BookOpen size={16} /> Recordings
           </button>
 
-          <button onClick={() => handleTabChange('tutes')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'tutes' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-blue-950/40 text-slate-300'}`}>
-            <Download size={18} /> Tutes & Papers
+          {/* Tutes & Papers Tab */}
+          <button onClick={() => handleTabChange('tutes')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'tutes' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-blue-950/20 text-slate-300'}`}>
+            <Download size={16} /> Tutes & Papers
           </button>
 
-          <button onClick={() => handleTabChange('exams')} className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-sm border transition-all ${dashboardTab === 'exams' ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_20px_rgba(5,150,105,0.3)]' : 'bg-slate-800/50 border-slate-700 hover:bg-emerald-950/40 text-slate-300'}`}>
-            <FileText size={18} /> Online Exams
+          {/* Online Exams Tab */}
+          <button onClick={() => handleTabChange('exams')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'exams' ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_20px_rgba(5,150,105,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-emerald-950/20 text-slate-300'}`}>
+            <FileText size={16} /> Online Exams
+          </button>
+
+          {/* Class Calendar Tab (Newly Managed into Menu) */}
+          <button onClick={() => handleTabChange('calendar')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'calendar' ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_20px_rgba(147,51,234,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-purple-950/20 text-slate-300'}`}>
+            <CalendarDays size={16} /> පන්ති කාලසටහන
+          </button>
+
+          {/* Payment History Tab (Newly Managed into Menu) */}
+          <button onClick={() => handleTabChange('history')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'history' ? 'bg-cyan-600 border-cyan-500 text-white shadow-[0_0_20px_rgba(8,145,178,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-cyan-950/20 text-slate-300'}`}>
+            <History size={16} /> Payment History
           </button>
         </div>
       </div>
 
       {/* --- PAYMENT REMINDERS --- */}
       {allReminders.length > 0 && (
-        <div className="mb-10 space-y-4">
+        <div className="mb-8 space-y-4">
           {allReminders.map((reminder, index) => (
-            <div key={index} className="p-5 bg-gradient-to-r from-amber-950/80 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800 rounded-r-2xl shadow-lg flex items-start gap-4">
-              <AlertTriangle className="text-amber-500 shrink-0" size={24} />
+            <div key={index} className="p-5 bg-gradient-to-r from-amber-950/50 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              <AlertTriangle className="text-amber-500 shrink-0" size={22} />
               <div>
-                <h3 className="font-bold text-amber-400 text-base">{reminder.title}</h3>
-                <p className="text-sm text-slate-200 mt-1.5 font-medium">{reminder.message}</p>
+                <h3 className="font-bold text-amber-400 text-sm md:text-base">{reminder.title}</h3>
+                <p className="text-xs md:text-sm text-slate-300 mt-1 font-medium">{reminder.message}</p>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* --- MAIN CONTENT & SCROLL TARGET --- */}
-      <div ref={mainContentRef} className="scroll-mt-8">
-        
-        {/* Calendar and History Cards (Always visible or in a specific tab, here shown above main content) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          
-          {/* Calendar View */}
-          {renderCalendar()}
-
-          {/* Payment History View */}
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-xl">
-             <h3 className="text-xl font-bold mb-6 flex items-center gap-2"><History className="text-amber-400" /> Payment History (ගෙවීම් ඉතිහාසය)</h3>
-             {Object.keys(paymentHistory).length > 0 ? (
-               <div className="space-y-4">
-                 {Object.entries(paymentHistory).map(([className, months]) => (
-                   <div key={className} className="p-4 bg-slate-800/50 rounded-xl border border-slate-700">
-                     <p className="font-bold text-slate-200 mb-2">{className}</p>
-                     <div className="flex flex-wrap gap-2">
-                       {months.sort().map((m, idx) => (
-                         <span key={idx} className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-md border border-emerald-500/30">
-                           {m}
-                         </span>
-                       ))}
-                     </div>
-                   </div>
-                 ))}
-               </div>
-             ) : (
-               <p className="text-slate-500 text-sm">මෙතෙක් කිසිදු ගෙවීමක් සිදු කර නොමැත.</p>
-             )}
-          </div>
-
-        </div>
-
-        {/* Dynamic Component Rendering */}
-        <main className="bg-slate-900/40 p-6 rounded-3xl border border-slate-800/50 min-h-[500px]">
+      {/* --- MAIN INTERACTIVE VIEW CONTENT CONTENT & TARGET SCROLL --- */}
+      <div ref={mainContentRef} className="scroll-mt-6">
+        <main className="bg-slate-900/40 p-4 md:p-8 rounded-3xl border border-slate-800/50 min-h-[520px]">
+          {/* Sub-Components View Switching Logic Based on Activated tab menu */}
           {dashboardTab === 'live' && <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
           {dashboardTab === 'recordings' && <RecordingsManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
           {dashboardTab === 'tutes' && <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />}
           {dashboardTab === 'exams' && <OnlineExamsHistory currentStudent={liveStudentData} />}
+          
+          {/* Render Calendar Route Inside Main Box */}
+          {dashboardTab === 'calendar' && renderCalendar()}
+          
+          {/* Render Payment History Route Inside Main Box */}
+          {dashboardTab === 'history' && (
+            <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+               <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+                 <History className="text-cyan-400" /> Payment History (ගෙවීම් ඉතිහාසය)
+               </h3>
+               {Object.keys(paymentHistory).length > 0 ? (
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   {Object.entries(paymentHistory).map(([className, months]) => (
+                     <div key={className} className="p-4 bg-slate-800/40 rounded-2xl border border-slate-700/70 hover:border-slate-600 transition-all">
+                       <p className="font-bold text-slate-200 mb-3 flex items-center gap-2">
+                         <Book size={16} className="text-cyan-400" /> {className}
+                       </p>
+                       <div className="flex flex-wrap gap-2">
+                         {months.sort().map((m, idx) => (
+                           <span key={idx} className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-bold rounded-lg border border-emerald-500/20 shadow-sm">
+                             {m}
+                           </span>
+                         ))}
+                       </div>
+                     </div>
+                   ))}
+                 </div>
+               ) : (
+                 <div className="text-center py-12">
+                   <p className="text-slate-500 text-sm font-medium">මෙතෙක් කිසිදු ගෙවීම් වාර්තාවක් පද්ධතිය තුළ හමු නොවීය.</p>
+                 </div>
+               )}
+            </div>
+          )}
         </main>
       </div>
 
