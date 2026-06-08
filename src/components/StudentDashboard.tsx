@@ -128,6 +128,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
+        // 2. Payments දත්ත කියවීම සහ සැසඳීම (Dynamic Month Checker ඇතුළත් කර ඇත)
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
@@ -137,7 +138,29 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         let extractedReminders: any[] = [];
         let pHistory: Record<string, string[]> = {};
 
+        // විවිධ ආකාරයේ මාස Format අල්ලා ගැනීමට සකසන ලද Logic එක 
+        const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+        const cYear = slDate.getFullYear();
+        const cMonthNum = slDate.getMonth() + 1;
+        const cMonthPadded = String(cMonthNum).padStart(2, '0');
+        const monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+        const cMonthName = monthNames[slDate.getMonth()];
+
+        const isCurrentMonthMatch = (dbMonthValue: any) => {
+          if (!dbMonthValue) return false;
+          const clean = dbMonthValue.toString().trim().toLowerCase();
+          return (
+            clean === `${cYear}-${cMonthPadded}` || // 2026-06
+            clean === `${cYear}-${cMonthNum}` ||    // 2026-6
+            clean === `${cYear}/${cMonthPadded}` || // 2026/06
+            clean === `${cYear}/${cMonthNum}` ||    // 2026/6
+            clean === cMonthName ||                 // june
+            clean.includes(cMonthName)              // 2026 june / june 2026
+          );
+        };
+
         if (paymentData && paymentData.length > 0) {
+          // Reminders ගැනීම
           extractedReminders = paymentData
             .filter((p: any) => p.reminder_massage && p.reminder_massage.trim() !== '')
             .map((p: any) => ({
@@ -145,6 +168,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               message: p.reminder_massage
             }));
 
+          // History එක හැදීම
           paymentData.forEach((p: any) => {
             if (p.status?.toLowerCase() === 'paid' || p.status?.toLowerCase() === 'free') {
               const className = p.class_name || p.class_type || 'General';
@@ -156,14 +180,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
-          const currentMonthPayments = paymentData.filter((p: any) => p.month === currentMonthKey || p.target_month === currentMonthKey);
+          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව (Flexible Month Comparison)
+          const currentMonthPayments = paymentData.filter((p: any) => 
+            isCurrentMonthMatch(p.month) || isCurrentMonthMatch(p.target_month)
+          );
 
           if (isFreeStudent) {
             statuses = enrolledClasses.map((cls) => ({ name: cls, status: 'Free' }));
             setIsPaidCurrentMonth(true);
           } else {
             statuses = enrolledClasses.map((cls) => {
-              const paymentRecord = currentMonthPayments.find((p: any) => p.class_name === cls || p.class_type === cls);
+              // පන්ති නාමයන්හි අග හෝ මුල හිස්තැන් සහ Case-sensitivity මඟහැරවීම
+              const paymentRecord = currentMonthPayments.find((p: any) => {
+                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
+                const sClass = cls.toString().trim().toLowerCase();
+                return pClass === sClass;
+              });
+
               let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
               if (paymentRecord) {
                 if (paymentRecord.status?.toLowerCase() === 'paid') statusValue = 'Paid';
@@ -172,6 +205,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               return { name: cls, status: statusValue };
             });
 
+            // එක පන්තියකට හෝ මුදල් ගෙවා ඇත්දැයි බැලීම
             const hasAnyAccess = statuses.some(s => s.status === 'Paid' || s.status === 'Free');
             setIsPaidCurrentMonth(enrolledClasses.length === 0 ? true : hasAnyAccess);
           }
@@ -443,12 +477,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <FileText size={16} /> Online Exams
           </button>
 
-          {/* Class Calendar Tab (Newly Managed into Menu) */}
+          {/* Class Calendar Tab */}
           <button onClick={() => handleTabChange('calendar')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'calendar' ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_20px_rgba(147,51,234,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-purple-950/20 text-slate-300'}`}>
             <CalendarDays size={16} /> පන්ති කාලසටහන
           </button>
 
-          {/* Payment History Tab (Newly Managed into Menu) */}
+          {/* Payment History Tab */}
           <button onClick={() => handleTabChange('history')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'history' ? 'bg-cyan-600 border-cyan-500 text-white shadow-[0_0_20px_rgba(8,145,178,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-cyan-950/20 text-slate-300'}`}>
             <History size={16} /> Payment History
           </button>
