@@ -41,6 +41,7 @@ import { supabase } from './supabaseClient';
 
 import { useSupabaseSync } from './hooks/useSupabaseSync';
 import AdminRegistryTable from './components/AdminRegistryTable';
+import ClassTypesFeesManager from './components/ClassTypesFeesManager';
 import AdminPaymentManager from './components/AdminPaymentManager';
 import AdminPaymentHistory from './components/AdminPaymentHistory';
 import AdminGlobalConfig from './components/AdminGlobalConfig';
@@ -1736,7 +1737,7 @@ if (isLoading) {
                     onClick={() => handleAdminTabChange('resets')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resets' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
-                    Password Resets
+                    Class Types & Fees Manager
                   </button>
                   <button 
                     onClick={() => handleAdminTabChange('payments')}
@@ -1972,8 +1973,10 @@ if (isLoading) {
                   )}
 
                   {activeAdminTab === 'resets' && (
-                    <AdminPasswordReset students={students} />
-                  )}
+  <div className="lg:col-span-12 w-full">
+    <ClassTypesFeesManager />
+  </div>
+)}
 
                   {activeAdminTab === 'live_classes' && (
                     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
