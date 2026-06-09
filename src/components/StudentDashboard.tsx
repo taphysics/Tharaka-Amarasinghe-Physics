@@ -220,17 +220,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
 
               if (record) {
-                if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
-                else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
-                // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
-                else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
-              } else if (isMonthFree) {
-                statusValue = 'Free';
-              }
+                    if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
+                    else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
+                    // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
+                    else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
+                  } else if (isMonthFree) {
+                    statusValue = 'Free';
+                  }
 
-              pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
-            });
-          });
+                  // 💡 වෙනස: statusValue එක 'Absent' නොවේ නම් පමණක් History එකට ඇතුලත් කරන්න
+                  if (statusValue !== 'Absent') {
+                    pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
+                  }
+                });
+              });
 
           // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
           const currentMonthPayments = paymentData.filter((p: any) => 
