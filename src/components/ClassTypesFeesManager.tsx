@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Plus, Trash2, Edit2, Save, X, DollarSign, CheckCircle, XCircle } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Edit2, Save, X, DollarSign, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { supabase } from '../supabaseClient'; 
 
 interface ClassType {
-  id?: string | number;
+  id?: string;
   class_name: string;
   monthly_fee: number;
   is_active: boolean;
@@ -14,11 +14,30 @@ const ClassTypesFeesManager = () => {
   const [className, setClassName] = useState('');
   const [monthlyFee, setMonthlyFee] = useState('');
   const [isActive, setIsActive] = useState(true);
-  const [editingId, setEditingId] = useState<string | number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
+    // 1. මුලින්ම තියෙන දත්ත ටික ලෝඩ් කරගැනීම
     fetchClassTypes();
+
+    // 2. සජීවීව (Live Realtime) දත්ත අප්ඩේට් වීම සඳහා Supabase Realtime චැනල් එකක් සක්‍රීය කිරීම
+    const classTypesChannel = supabase
+      .channel('live_class_types_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'class_types_config' },
+        (payload) => {
+          console.log('Realtime update received:', payload);
+          fetchClassTypes(); // ඩේටාබේස් එකේ වෙනසක් වුණු සැණින් UI එක ඔටෝ අප්ඩේට් වේ
+        }
+      )
+      .subscribe();
+
+    // Component එක අයින් වන විට Subscription එක ඉවත් කිරීම
+    return () => {
+      supabase.removeChannel(classTypesChannel);
+    };
   }, []);
 
   // Database එකෙන් සියලුම පන්ති වර්ග ලබා ගැනීම
@@ -53,21 +72,20 @@ const ClassTypesFeesManager = () => {
     };
 
     if (editingId) {
-      // එඩිට් කිරීම (Update)
+      // මිල හෝ නම එඩිට් කිරීම (මෙය වෙනස් කළ සැනින් ON UPDATE CASCADE හරහා මුළු වෙබ් අඩවියේම මෙම ක්ලාස් එක ඇති තැන් ඔටෝම අප්ඩේට් වේ!)
       const { error } = await supabase
         .from('class_types_config')
         .update(payload)
         .eq('id', editingId);
 
       if (!error) {
-        alert('පන්ති වර්ගයේ විස්තර සාර්ථකව වෙනස් කරන ලදී!');
+        alert('පන්ති විස්තර සහ එයට අදාළ මුළු වෙබ් අඩවියේම ඇති සියලුම දත්ත සජීවීව යාවත්කාලීන කරන ලදී!');
         resetForm();
-        fetchClassTypes();
       } else {
         alert('යාවත්කාලීන කිරීමේදී දෝෂයක්: ' + error.message);
       }
     } else {
-      // අලුතින් ඇතුළත් කිරීම (Insert)
+      // අලුතින් ඇතුළත් කිරීම (මෙය ඇතුළත් කළ සැනින් රෙජිස්ට්‍රේෂන් පෝම් ආදී හැම තැනකම ඔටෝම පෙන්වයි)
       const { error } = await supabase
         .from('class_types_config')
         .insert([payload]);
@@ -75,7 +93,6 @@ const ClassTypesFeesManager = () => {
       if (!error) {
         alert('නව පන්ති වර්ගය සාර්ථකව පද්ධතියට එකතු කරන ලදී!');
         resetForm();
-        fetchClassTypes();
       } else {
         alert('ඇතුළත් කිරීමේදී දෝෂයක්: ' + error.message);
       }
@@ -92,33 +109,29 @@ const ClassTypesFeesManager = () => {
   };
 
   // පන්ති වර්ගයක් සම්පූර්ණයෙන්ම මකා දැමීම
-  const handleDelete = async (id: string | number) => {
-    if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? (මෙය සිසුන්ගේ ලේඛන වලට බලපෑම් ඇති කළ හැක)")) {
+  const handleDelete = async (id: string) => {
+    if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? මෙය වෙනත් ටේබල් වල දත්ත වලට බලපා ඇත්නම් මකා දැමීමට ඉඩ නොදෙනු ඇත.")) {
       setIsLoading(true);
       const { error } = await supabase
         .from('class_types_config')
         .delete()
         .eq('id', id);
 
-      if (!error) {
-        fetchClassTypes();
-      } else {
-        alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
+      if (error) {
+        alert('මකා දැමීමේදී දෝෂයක් (මෙම පන්තියට අදාළ සිසුන්/ගෙවීම් දැනටමත් පද්ධතියේ තිබිය හැක): ' + error.message);
       }
       setIsLoading(false);
     }
   };
 
   // Active / Inactive තත්ත්වය ඉක්මනින් වෙනස් කිරීම
-  const toggleActiveStatus = async (id: string | number, currentStatus: boolean) => {
+  const toggleActiveStatus = async (id: string, currentStatus: boolean) => {
     const { error } = await supabase
       .from('class_types_config')
       .update({ is_active: !currentStatus })
       .eq('id', id);
 
-    if (!error) {
-      fetchClassTypes();
-    } else {
+    if (error) {
       alert('තත්ත්වය වෙනස් කිරීමට නොහැකි විය: ' + error.message);
     }
   };
@@ -134,9 +147,12 @@ const ClassTypesFeesManager = () => {
     <div className="lg:col-span-12 w-full bg-slate-900/40 border border-slate-800 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm">
       
       {/* Header */}
-      <h3 className="text-lg md:text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3 font-display">
-        <BookOpen className="text-emerald-400" size={22} /> Class Types &amp; Fees Manager
-      </h3>
+      <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-3">
+        <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 text-white font-display">
+          <BookOpen className="text-emerald-400" size={22} /> Class Types &amp; Fees Manager
+        </h3>
+        {isLoading && <RefreshCw className="animate-spin text-slate-400" size={18} />}
+      </div>
 
       {/* Control Form & List Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -145,7 +161,7 @@ const ClassTypesFeesManager = () => {
         <div className="lg:col-span-1 bg-slate-900/80 border border-slate-800 p-5 rounded-2xl h-fit">
           <h4 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
             {editingId ? <Edit2 size={16} className="text-amber-400" /> : <Plus size={16} className="text-emerald-400" />}
-            {editingId ? 'Edit Class Config' : 'Add New Class Type'}
+            {editingId ? 'Edit Class & Cascade' : 'Add New Class Type'}
           </h4>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -165,7 +181,7 @@ const ClassTypesFeesManager = () => {
 
             {/* Fee Input */}
             <div className="flex flex-col space-y-1.5">
-              <label className="text-xs text-slate-400 font-medium">Monthly Fee (මාසික පන්ති ගාස්තුව - රුපියල්)</label>
+              <label className="text-xs text-slate-400 font-medium">Monthly Fee (මාසික පන්ති ගාස්තුව)</label>
               <div className="relative">
                 <span className="absolute left-3 top-3 text-xs text-slate-500 font-bold">Rs.</span>
                 <input 
@@ -202,7 +218,7 @@ const ClassTypesFeesManager = () => {
                 }`}
               >
                 {editingId ? <Save size={14} /> : <Plus size={14} />}
-                {isLoading ? 'Saving...' : editingId ? 'Update Class' : 'Create Class'}
+                {isLoading ? 'Processing...' : editingId ? 'Save & Update All' : 'Create Class'}
               </button>
 
               {editingId && (
@@ -221,15 +237,15 @@ const ClassTypesFeesManager = () => {
 
         {/* Right Side: Responsive Table/List View */}
         <div className="lg:col-span-2 space-y-3">
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configured Classes &amp; Fees</h4>
+          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configured Classes &amp; Fees (Live View)</h4>
           
           <div className="max-h-[420px] overflow-y-auto pr-2 space-y-2.5 custom-scrollbar">
             {classTypes.length === 0 ? (
               <p className="text-sm text-slate-500 italic text-center py-8">දැනට කිසිදු පන්ති වර්ගයක් පද්ධතියට ඇතුළත් කර නැත.</p>
             ) : (
-              classTypes.map((cls, index) => (
+              classTypes.map((cls) => (
                 <div 
-                  key={index} 
+                  key={cls.id} 
                   className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-950/50 border rounded-xl gap-4 transition-all hover:border-slate-700 ${
                     cls.is_active ? 'border-slate-800/80' : 'border-red-950/40 bg-red-950/5'
                   }`}
@@ -261,7 +277,7 @@ const ClassTypesFeesManager = () => {
                     {/* Toggle Activation Button */}
                     <button
                       onClick={() => toggleActiveStatus(cls.id!, cls.is_active)}
-                      title={cls.is_active ? "Click to Hide from Registration Form" : "Click to Show in Registration Form"}
+                      title={cls.is_active ? "Click to Hide" : "Click to Show"}
                       className={`p-2 rounded-lg border transition-all text-xs flex items-center gap-1 ${
                         cls.is_active 
                           ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/10 hover:bg-emerald-500/20' 
