@@ -252,6 +252,24 @@ export default function App() {
     }
   }, [currentView, dashboardTab, showAttentionCheck, playingVideoUrl, siteConfig]);
 
+// පිටුව ලෝඩ් වෙද්දීම class_types_config එකෙන් පන්ති වර්ග කියවා ගැනීම
+useEffect(() => {
+  const fetchAvailableClasses = async () => {
+    const { data, error } = await supabase
+      .from('class_types_config')
+      .select('class_name') // අපිට අවශ්‍ය වන්නේ පන්තියේ නම පමණි
+      .order('class_name', { ascending: true }); // අකාරාදී පිළිවෙලට සකස් කිරීම
+
+    if (!error && data) {
+      setAvailableClasses(data);
+    } else {
+      console.error('Error fetching class configs:', error);
+    }
+  };
+
+  fetchAvailableClasses();
+}, []);
+
   useEffect(() => {
     // If attention check is shown, wait 5 minutes (300 seconds) to play ringtone
     if (showAttentionCheck) {
@@ -348,6 +366,8 @@ export default function App() {
   const [regClassTypes, setRegClassTypes] = useState<string[]>([]);
   const [regWhatsApp, setRegWhatsApp] = useState('');
   const [regMobile, setRegMobile] = useState('');
+  // ඩේටාබේස් එකෙන් ලැබෙන පන්ති වර්ග තබා ගැනීමට අලුත් State එකක්
+  const [availableClasses, setAvailableClasses] = useState<any[]>([]);
 
   // Registration Validation Highlight States
   const [invalidGroups, setInvalidGroups] = useState<{ [key: string]: boolean }>({});
@@ -496,8 +516,9 @@ export default function App() {
   };
 
   // Student direct registration submission from student app view
-  const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
+  e.preventDefault(); // ෆෝම් එක සබ්මිට් වෙද්දී පේජ් එක රීලෝඩ් වීම නවත්වයි
+  setIsSubmitButtonDisabled(true);
 
     // 1. මුලින්ම NIC එක Database එකේ තියෙනවද බලනවා
     const isDuplicate = await checkNICExists(regNIC); 
@@ -551,115 +572,117 @@ export default function App() {
     }
 
     // Format secure message for Tutor/Admin on WhatsApp status
-    const formattedMessage = `*New Student Registration - TA Physics Online Hub*\n\n` +
-      `• First Name: *${regFirst}*\n` +
-      `• Last Name: *${regLast}*\n` +
-      `• NIC Number: *${regNIC}*\n` +
-      `• District: *${regDistrict}*\n` +
-      `• Class Type(s): *${regClassTypes.join(', ')}*\n` +
-      `• WhatsApp Number: *${regWhatsApp}*\n` +
-      `• Mobile Number: *${regMobile}*\n\n` +
-      `Please verify my details and provide my login username and password. Thank you!`;
+  const formattedMessage = `*New Student Registration - TA Physics Online Hub*\n\n` +
+    `• First Name: *${regFirst}*\n` +
+    `• Last Name: *${regLast}*\n` +
+    `• NIC Number: *${regNIC}*\n` +
+    `• District: *${regDistrict}*\n` +
+    `• Class Type(s): *${regClassTypes.join(', ')}*\n` +
+    `• WhatsApp Number: *${regWhatsApp}*\n` +
+    `• Mobile Number: *${regMobile}*\n\n` +
+    `Please verify my details and provide my login username and password. Thank you!`;
 
-    const encoded = encodeURIComponent(formattedMessage);
-    const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
-    
-    // Save to Supabase
-    supabase.from('students').insert([{
-      username: `PENDING_${Date.now()}`, // Temporary unique username
-      password: '',
-      name: `${regFirst} ${regLast}`,
-      first_name: regFirst,
-      last_name: regLast,
-      nic: regNIC,
-      district: regDistrict,
-      class_types: regClassTypes,
-      whatsapp: regWhatsApp,
-      mobile: regMobile,
-      is_paid: false,
-      is_approved: false,
-      active_months: [], // මෙතැන activeMonths යන්න active_months ලෙස නිවැරදි කර ඇත
-      joined_at: new Date().toISOString()
-    }]).then(({ error }) => {
-      if (error) {
-        console.error('Error saving to DB:', error);
-        alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
-      }
-    });
-    // Reset fields
-    setRegFirst('');
-    setRegLast('');
-    setRegNIC('');
-    setRegDistrict('');
-    setRegClassTypes([]);
-    setRegWhatsApp('');
-    setRegMobile('');
-    setInvalidGroups({});
+  const encoded = encodeURIComponent(formattedMessage);
+  const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
+  
+  // Save to Supabase (async/await ක්‍රමයට වඩාත් නිවැරදිව සකසා ඇත)
+  const { error } = await supabase.from('students').insert([{
+    username: `PENDING_${Date.now()}`, // Temporary unique username
+    password: '',
+    name: `${regFirst} ${regLast}`,
+    first_name: regFirst,
+    last_name: regLast,
+    nic: regNIC,
+    district: regDistrict,
+    class_types: regClassTypes, // මෙතනට dynamic ලෙස තෝරාගත් පන්ති Array එක එකතු වේ
+    whatsapp: regWhatsApp,
+    mobile: regMobile,
+    is_paid: false,
+    is_approved: false,
+    active_months: [], 
+    joined_at: new Date().toISOString()
+  }]);
+
+  if (error) {
+    console.error('Error saving to DB:', error);
+    alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
     setIsSubmitButtonDisabled(false);
+    return; // එරර් එකක් ආවොත් ක්‍රියාවලිය මෙතනින් නතර කරයි
+  }
 
-    // Prompt user with modal containing instructions
-    setModalTitle("ලියාපදිංචි වීමට අවශ්‍ය තොරතුරු!");
-    setModalContent(
-      <div className="space-y-4">
-        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300">
-          ඔබගේ විස්තර ගුරුවරයා වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
-        </div>
-        <div className="flex gap-3 pt-2">
-          <button 
-            onClick={() => {
-              window.open(whatsappLink, '_blank');
-              setIsModalOpen(false);
-              setCurrentView('login');
-            }}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition"
-          >
-            <Send size={18} /> Send Data via WhatsApp
-          </button>
-          <button 
-            onClick={() => {
-              setIsModalOpen(false);
-              setCurrentView('login');
-            }}
-            className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2.5 px-4 rounded-lg transition"
-          >
-            Go to Login
-          </button>
-        </div>
+  // Reset fields
+  setRegFirst('');
+  setRegLast('');
+  setRegNIC('');
+  setRegDistrict('');
+  setRegClassTypes([]);
+  setRegWhatsApp('');
+  setRegMobile('');
+  setInvalidGroups({});
+  setIsSubmitButtonDisabled(false);
+
+  // Prompt user with modal containing instructions
+  setModalTitle("ලියාපදිංචි වීමට අවශ්‍ය තොරතුරු!");
+  setModalContent(
+    <div className="space-y-4">
+      <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300">
+        ඔබගේ විස්තර ගුරුවරයා වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
       </div>
-    );
-    setIsModalOpen(true);
-  };
+      <div className="flex gap-3 pt-2">
+        <button 
+          onClick={() => {
+            window.open(whatsappLink, '_blank');
+            setIsModalOpen(false);
+            setCurrentView('login');
+          }}
+          className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition"
+        >
+          <Send size={18} /> Send Data via WhatsApp
+        </button>
+        <button 
+          onClick={() => {
+            setIsModalOpen(false);
+            setCurrentView('login');
+          }}
+          className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2.5 px-4 rounded-lg transition"
+        >
+          Go to Login
+        </button>
+      </div>
+    </div>
+  );
+  setIsModalOpen(true);
+};
 
-  // Safe input changer to clear invalid styling
-  const handleInputChange = (field: string, val: string) => {
-    // Reset invalid field representation
-    if (invalidGroups[field]) {
-      setInvalidGroups(prev => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
-    }
-    // Re-enable button
-    setIsSubmitButtonDisabled(false);
-  };
+// Safe input changer to clear invalid styling
+const handleInputChange = (field: string, val: string) => {
+  if (invalidGroups[field]) {
+    setInvalidGroups(prev => {
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
+  setIsSubmitButtonDisabled(false);
+};
 
-  const handleClassCheckboxChange = (course: string, checked: boolean) => {
-    if (invalidGroups.classes) {
-      setInvalidGroups(prev => {
-        const next = { ...prev };
-        delete next.classes;
-        return next;
-      });
-    }
-    setIsSubmitButtonDisabled(false);
+// Checkbox එකක් ක්ලික් කරද්දී Array එක අප්ඩේට් වන කොටස
+const handleClassCheckboxChange = (course: string, checked: boolean) => {
+  if (invalidGroups.classes) {
+    setInvalidGroups(prev => {
+      const next = { ...prev };
+      delete next.classes;
+      return next;
+    });
+  }
+  setIsSubmitButtonDisabled(false);
 
-    if (checked) {
-      setRegClassTypes(prev => [...prev, course]);
-    } else {
-      setRegClassTypes(prev => prev.filter(c => c !== course));
-    }
-  };
+  if (checked) {
+    setRegClassTypes(prev => [...prev, course]);
+  } else {
+    setRegClassTypes(prev => prev.filter(c => c !== course));
+  }
+};
 
   // Admin Cockpit authentication
   const handleAdminAuth = (e: React.FormEvent) => {
