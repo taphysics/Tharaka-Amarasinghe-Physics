@@ -2192,7 +2192,11 @@ if (isLoading) {
                     <AdminSiteConfig />
                   )}
 
-                  {activeAdminTab === 'planner' && <AdminCalendarPlanner />}
+                  {activeAdminTab === 'planner' && (
+  <div className="lg:col-span-12 w-full">
+    <AdminCalendarPlanner />
+  </div>
+)}
 
                   {activeAdminTab === 'broadcast' && (
                     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
