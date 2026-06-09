@@ -44,6 +44,7 @@ import AdminRegistryTable from './components/AdminRegistryTable';
 import AdminPaymentManager from './components/AdminPaymentManager';
 import AdminPaymentHistory from './components/AdminPaymentHistory';
 import AdminGlobalConfig from './components/AdminGlobalConfig';
+import AdminCalendarPlanner from './components/AdminCalendarPlanner';
 import AdminSiteConfig from './components/AdminSiteConfig';
 import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
 import AdminPasswordReset from './components/AdminPasswordReset';
@@ -288,12 +289,6 @@ export default function App() {
   const [manWhatsApp, setManWhatsApp] = useState('');
   const [manMobile, setManMobile] = useState('');
   const [generatedJSON, setGeneratedJSON] = useState('');
-
-  // Calendar event manager form fields
-  const [planDate, setPlanDate] = useState('2026-05-28');
-  const [planTitle, setPlanTitle] = useState('');
-  const [planStatus, setPlanStatus] = useState<'active' | 'past' | 'cancelled'>('active');
-  const [planWarning, setPlanWarning] = useState('');
 
   // Broadcast Alert fields
   const [notType, setNotType] = useState<'public' | 'private'>('public');
@@ -843,86 +838,6 @@ export default function App() {
     alert("නොමිලේ ලබාදෙන ලිපිගොනුව එක් කරන ලදී.");
   };
 
-  // Schedule class events
-  const handleScheduleClass = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!planTitle.trim()) {
-      alert("කරුණාකර පන්තියේ මාතෘකාව ඇතුළත් කරන්න.");
-      return;
-    }
-
-    // Form එකෙන් සෘජුවම අලුත් Input දත්ත ලබා ගැනීම
-    const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const classType = formData.get('class_type')?.toString() || '';
-    const startTime = formData.get('start_time')?.toString() || '';
-    const rescheduledTo = formData.get('rescheduled_to')?.toString() || '';
-
-    if (!classType || !startTime) {
-      alert("කරුණාකර පන්ති වර්ගය සහ ආරම්භක වේලාව ඇතුළත් කරන්න.");
-      return;
-    }
-
-    try {
-      // පන්තිය කල් දමා (cancelled) සහ විකල්ප දිනයක් ලබා දී ඇත්නම්
-      if (planStatus === 'cancelled' && rescheduledTo) {
-        
-        // 1. පැරණි දිනය කල් දැමූ බව දන්වා ඇතුළත් කිරීම
-        const originalEvent = {
-          date: planDate,
-          title: `${planTitle.trim()} (කල් දමා ඇත)`,
-          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
-          status: 'cancelled',
-          warning_message: planWarning.trim() || `⚠️ මෙම පන්තිය වෙනත් දිනකට කල් දමා ඇත. අලුත් දිනය: ${rescheduledTo}`,
-          class_type: classType,
-          start_time: startTime,
-          rescheduled_to: rescheduledTo
-        };
-        
-        const { error: err1 } = await supabase.from('calendar_events').insert([originalEvent]);
-        if (err1) throw err1;
-
-        // 2. අලුත් විකල්ප දිනයට Makeup Class එකක් ලෙස ඇතුළත් කිරීම
-        const makeupEvent = {
-          date: rescheduledTo,
-          title: `${planTitle.trim()} (විකල්ප පන්තිය)`,
-          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
-          status: 'Makeup_Class',
-          warning_message: `🔄 ${planDate} දින පැවැත්වීමට තිබූ පන්තිය අද දින පැවැත්වේ.`,
-          class_type: classType,
-          start_time: startTime,
-          rescheduled_from: planDate
-        };
-
-        const { error: err2 } = await supabase.from('calendar_events').insert([makeupEvent]);
-        if (err2) throw err2;
-
-      } else {
-        // සාමාන්‍ය සක්‍රීය හෝ පැරණි පන්තියක් නම්
-        const newEvent = {
-          date: planDate,
-          title: planTitle.trim(),
-          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
-          status: planStatus,
-          warning_message: null,
-          class_type: classType,
-          start_time: startTime
-        };
-
-        const { error } = await supabase.from('calendar_events').insert([newEvent]);
-        if (error) throw error;
-      }
-
-      setPlanTitle('');
-      setPlanWarning('');
-      // Uncontrolled inputs (time, text) රීසෙට් කිරීම
-      (e.target as HTMLFormElement).reset();
-      
-      alert(`පන්ති දර්ශකයට සාර්ථකව ඇතුළත් කරන ලදී: ${planDate}`);
-    } catch (error) {
-      console.error(error);
-      alert('Error scheduling class.');
-    }
-  };
 
   // Broadcast Alert notification creator
   const handleBroadcastAlert = async (e: React.FormEvent) => {
@@ -1269,15 +1184,7 @@ if (isLoading) {
                 </p>
               </div>
 
-              <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:bg-slate-800/60 hover:border-blue-500/50 transition-all shadow-lg">
-                <div className="w-12 h-12 rounded-2xl bg-amber-500/15 flex items-center justify-center text-amber-400 group-hover:bg-amber-500/20 transition-all">
-                  <Clock size={22} />
-                </div>
-                <h4 className="text-lg font-bold text-white font-display">Interactive Calendar</h4>
-                <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  {siteConfig.feat3Desc || "ඊළඟ පන්ති පැවැත්වෙන දිනය, පැය සහ කිසියම් හේතුවක් නිසා පන්තිය කල් දමන්නේ නම් ඒ පිළිබඳ warning ඇලර්ට් දින දර්ශනයෙන් දැකගත හැක."}
-                </p>
-              </div>
+              
             </div>
 
 
@@ -2283,147 +2190,6 @@ if (isLoading) {
 
                   {activeAdminTab === 'site_configs' && (
                     <AdminSiteConfig />
-                  )}
-
-                  {activeAdminTab === 'planner' && (
-                    <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                    <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                      <CalendarIcon size={16} className="text-blue-400" /> Class Calendar Planner Controls
-                    </h3>
-
-                    <form onSubmit={handleScheduleClass} className="space-y-3.5 text-xs">
-                      
-                      {/* Class Type සහ Date එකවර ලබා ගැනීමට එක පෙළට සැකසීම */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-slate-400 font-sans">Class Type (පන්ති වර්ගය)</label>
-                          <input 
-                            type="text"
-                            name="class_type"
-                            required
-                            placeholder="e.g. 2026 Revision / 2026 Theory"
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-slate-400 font-sans">Class Date (අවුරුද්ද / මාසය / දිනය)</label>
-                          <input 
-                            type="date"
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                            value={planDate}
-                            onChange={(e) => setPlanDate(e.target.value)}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Start Time සහ Status එක පෙළට */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-slate-400 font-sans">Start Time (ආරම්භක වේලාව)</label>
-                          <input 
-                            type="time"
-                            name="start_time"
-                            required
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-slate-400 font-sans">Class Date Status (තත්ත්වය)</label>
-                          <select 
-                            value={planStatus}
-                            onChange={(e) => setPlanStatus(e.target.value as any)}
-                            className="w-full bg-slate-950 text-white border border-slate-800 p-1.5 rounded focus:outline-none"
-                          >
-                            <option value="active" className="text-black bg-white">Active Class (Glowing Highlight - පන්තිය පවත්වයි)</option>
-                            <option value="past" className="text-black bg-white">Past Class (Disabled/Gray - අවසන් වූ පන්ති)</option>
-                            <option value="cancelled" className="text-black bg-white">Postponed (Warning Alert Animation - කල් දමනවා)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-slate-400 font-sans">Class Topic / Session Title</label>
-                        <input 
-                          type="text"
-                          required
-                          placeholder="e.g. Core Mechanics Unit 3"
-                          value={planTitle}
-                          onChange={(e) => setPlanTitle(e.target.value)}
-                          className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                        />
-                      </div>
-
-                      {planStatus === 'cancelled' && (
-                        <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-xl space-y-3 animate-slide-up">
-                          <div className="space-y-1">
-                            <label className="text-red-400 font-bold">Class Warning Advice / Memo (හේතුව/පණිවිඩය)</label>
-                            <input 
-                              type="text"
-                              placeholder="e.g. ⚠️ පන්තිය කල් දමා ඇත. විකල්ප දිනය පහතින් බලන්න."
-                              value={planWarning}
-                              onChange={(e) => setPlanWarning(e.target.value)}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs text-red-300 focus:outline-none"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-orange-400 font-bold">Rescheduled Date (නැවත පවත්වන නව දිනය)</label>
-                            <input 
-                              type="date"
-                              name="rescheduled_to"
-                              required
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <button 
-                        type="submit"
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md"
-                      >
-                        Schedule/Alert Class Date
-                      </button>
-                    </form>
-
-                    <div className="pt-4 border-t border-slate-800">
-                      <h4 className="font-bold text-sm text-slate-300 mb-3">Manage Scheduled Classes</h4>
-                      <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700">
-                        {calendarEvents.map((c) => (
-                          <div key={c.id} className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex justify-between items-center gap-4">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-700">{c.class_type || 'General'}</span>
-                                <h5 className="font-bold text-xs text-white">{c.title}</h5>
-                              </div>
-                              <p className="text-[10px] text-slate-400 font-mono">📅 {c.date} | 🕒 {c.start_time || 'N/A'}</p>
-                              {(c.status === 'cancelled' || c.status === 'Makeup_Class') && (
-                                <div className="text-[9px] text-red-400 font-sans">{c.warning_message || c.warningMessage}</div>
-                              )}
-                            </div>
-                            <div className="flex flex-col items-end gap-1.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${c.status === 'active' ? 'bg-blue-500/20 text-blue-400' : c.status === 'past' ? 'bg-slate-700/50 text-slate-300' : c.status === 'Makeup_Class' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}`}>{c.status}</span>
-                              <button
-                                onClick={async () => {
-                                  if(confirm("මෙම දින සැලසුම මකාදැමීමට අවශ්‍යද?")) {
-                                    await supabase.from('calendar_events').delete().eq('id', c.id);
-                                  }
-                                }}
-                                className="text-[10px] text-red-400 bg-red-500/10 px-2 py-1 rounded hover:bg-red-500/20 transition cursor-pointer"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                        {calendarEvents.length === 0 && (
-                          <div className="text-[11px] text-slate-500 text-center py-4">No scheduled class dates available.</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
                   )}
 
                   {activeAdminTab === 'broadcast' && (
