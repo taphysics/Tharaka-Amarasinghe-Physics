@@ -73,7 +73,7 @@ export default function PaymentManager() {
     let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
     let whatsappStatus = existingPayment ? existingPayment.whatsapp_sent : false;
 
-    if (status === 'paid' || status === 'free' || status === 'deactivated') {
+    if (status === 'paid' || status === 'free' || status === 'absent') {
       reminderStatus = false;
       whatsappStatus = false;
       
@@ -130,7 +130,7 @@ export default function PaymentManager() {
       const existing = payments.find((p: any) => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
-      if (currentStatus !== 'paid' && currentStatus !== 'free' && currentStatus !== 'deactivated') {
+      if (currentStatus !== 'paid' && currentStatus !== 'free' && currentStatus !== 'absent') {
         const { error } = await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: studentId,
@@ -176,7 +176,7 @@ export default function PaymentManager() {
 
     if (hasError) alert('සමහර සිහිකැඳවීම් Save වීමේදී ගැටළුවක් ඇති විය.');
     else if (sentCount > 0) alert('Dashboard සිහිකැඳවීම සාර්ථකව යවන ලදී!');
-    else alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත, නැතහොත් අක්‍රිය කර ඇත.');
+    else alert('මෙම පන්ති සඳහා දැනටමත් ගෙවීම් කර ඇත, නැතහොත් සිසුවා Absent වේ.');
   };
 
   const sendWhatsApp = async (student: any, monthKey: string, specificClass: string | null = null) => {
@@ -188,7 +188,7 @@ export default function PaymentManager() {
       const existing = payments.find((p: any) => p.record_id === recordId);
       const currentStatus = existing ? existing.status : 'unpaid';
 
-      if (currentStatus !== 'paid' && currentStatus !== 'free' && currentStatus !== 'deactivated') {
+      if (currentStatus !== 'paid' && currentStatus !== 'free' && currentStatus !== 'absent') {
         const { error } = await supabase.from('payments').upsert({
           record_id: recordId,
           student_id: student.id,
@@ -255,7 +255,7 @@ export default function PaymentManager() {
       const status = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
       if (status === 'paid') return '#10b981'; 
       if (status === 'free') return '#3b82f6'; 
-      if (status === 'deactivated') return '#475569'; // Deactivated සදහා අළු පැහැය
+      if (status === 'absent') return '#475569'; // Absent සදහා අළු පැහැය (Gray)
       return '#ef4444'; 
     });
     if (colors.length === 1) return { backgroundColor: colors[0] };
@@ -367,7 +367,7 @@ export default function PaymentManager() {
                   const paymentInfo = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`);
                   const status = paymentInfo?.status || 'unpaid';
                   
-                  if (status !== 'paid' && status !== 'free' && status !== 'deactivated') {
+                  if (status !== 'paid' && status !== 'free' && status !== 'absent') {
                     unpaidCount++;
                     if (paymentInfo?.reminder_sent) reminderCount++;
                     if (paymentInfo?.whatsapp_sent) whatsappCount++;
@@ -433,54 +433,54 @@ export default function PaymentManager() {
                 const status = paymentInfo?.status || 'unpaid';
                 const isReminderSent = paymentInfo?.reminder_sent;
                 const isWhatsAppSent = paymentInfo?.whatsapp_sent;
-                const isPaidFreeOrDeactivated = status === 'paid' || status === 'free' || status === 'deactivated';
+                const isPaidFreeOrAbsent = status === 'paid' || status === 'free' || status === 'absent';
 
                 return (
                   <div key={className} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-bold text-slate-200">{className}</span>
                       <div className="flex gap-1 items-center">
-                        {status === 'deactivated' && <span className="text-[9px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded flex items-center gap-0.5"><Ban size={10}/> Deactivated</span>}
+                        {status === 'absent' && <span className="text-[9px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded flex items-center gap-0.5"><Ban size={10}/> Absent</span>}
                         {isWhatsAppSent && status === 'unpaid' && <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded">WhatsApp Sent</span>}
                         {isReminderSent && status === 'unpaid' && <span className="text-[9px] bg-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded animate-pulse">Reminder Sent</span>}
                       </div>
                     </div>
                     
-                    {/* Status වෙනස් කිරීමේ Buttons (Deactivate ඇතුලුව 4 ක් ඇත) */}
+                    {/* Status වෙනස් කිරීමේ Buttons */}
                     <div className="grid grid-cols-4 gap-1">
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'paid')} className={`py-1 rounded-md text-[10px] font-bold transition-all ${status === 'paid' ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Paid</button>
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'free')} className={`py-1 rounded-md text-[10px] font-bold transition-all ${status === 'free' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Free</button>
                       <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'unpaid')} className={`py-1 rounded-md text-[10px] font-bold transition-all ${status === 'unpaid' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>Unpaid</button>
-                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'deactivated')} className={`py-1 rounded-md text-[9px] font-bold transition-all ${status === 'deactivated' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>Deactivate</button>
+                      <button onClick={() => handlePaymentStatusChange(activeModal.student.id, activeModal.month, className, 'absent')} className={`py-1 rounded-md text-[9px] font-bold transition-all ${status === 'absent' ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-500 hover:bg-slate-700'}`}>Absent</button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-1.5 mt-1">
                       <button 
                         onClick={() => sendWhatsApp(activeModal.student, activeModal.month, className)} 
-                        disabled={isPaidFreeOrDeactivated || isWhatsAppSent}
+                        disabled={isPaidFreeOrAbsent || isWhatsAppSent}
                         className={`w-full py-1.5 text-[10px] rounded-md flex flex-col items-center justify-center gap-0.5 border transition-all ${
-                          isPaidFreeOrDeactivated 
+                          isPaidFreeOrAbsent 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : isWhatsAppSent
                               ? 'bg-emerald-900/20 border-emerald-900/40 text-emerald-600 cursor-not-allowed'
                               : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-green-400'
                         }`}
                       >
-                        <MessageCircle size={12} /> {status === 'deactivated' ? 'Deactivated' : isPaidFreeOrDeactivated ? 'WhatsApp (අක්‍රියයි)' : isWhatsAppSent ? 'WhatsApp යවා ඇත' : 'WhatsApp යවන්න'}
+                        <MessageCircle size={12} /> {status === 'absent' ? 'Absent' : isPaidFreeOrAbsent ? 'WhatsApp (අක්‍රියයි)' : isWhatsAppSent ? 'WhatsApp යවා ඇත' : 'WhatsApp යවන්න'}
                       </button>
 
                       <button 
                         onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, className)} 
-                        disabled={isPaidFreeOrDeactivated || isReminderSent}
+                        disabled={isPaidFreeOrAbsent || isReminderSent}
                         className={`w-full py-1.5 text-[10px] rounded-md flex flex-col items-center justify-center gap-0.5 border transition-all ${
-                          isPaidFreeOrDeactivated 
+                          isPaidFreeOrAbsent 
                             ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                             : isReminderSent
                               ? 'bg-amber-900/30 border-amber-900/50 text-amber-600 cursor-not-allowed'
                               : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-amber-400'
                         }`}
                       >
-                        <LayoutDashboard size={12} /> {status === 'deactivated' ? 'Deactivated' : isPaidFreeOrDeactivated ? 'Dashboard (අක්‍රියයි)' : isReminderSent ? 'Reminder යවා ඇත' : 'Dashboard යවන්න'}
+                        <LayoutDashboard size={12} /> {status === 'absent' ? 'Absent' : isPaidFreeOrAbsent ? 'Dashboard (අක්‍රියයි)' : isReminderSent ? 'Reminder යවා ඇත' : 'Dashboard යවන්න'}
                       </button>
                     </div>
                   </div>
@@ -492,10 +492,10 @@ export default function PaymentManager() {
                 const studentClasses = activeModal.student.class_types || [];
                 const unpaidClasses = studentClasses.filter((c: string) => {
                   const status = payments.find((p: any) => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.status;
-                  return status !== 'paid' && status !== 'free' && status !== 'deactivated';
+                  return status !== 'paid' && status !== 'free' && status !== 'absent';
                 });
                 
-                const isFullyPaidOrDeactivated = unpaidClasses.length === 0;
+                const isFullyPaidOrAbsent = unpaidClasses.length === 0;
                 
                 const isAllWhatsAppSent = unpaidClasses.length > 0 && unpaidClasses.every((c: string) => {
                   return payments.find((p: any) => p.record_id === `${activeModal.student.id}_${activeModal.month}_${c}`)?.whatsapp_sent;
@@ -510,25 +510,25 @@ export default function PaymentManager() {
                     <span className="text-[10px] text-slate-500 mb-1 block text-center">සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග</span>
                     <button 
                       onClick={() => sendWhatsApp(activeModal.student, activeModal.month, null)} 
-                      disabled={isFullyPaidOrDeactivated || isAllWhatsAppSent}
+                      disabled={isFullyPaidOrAbsent || isAllWhatsAppSent}
                       className={`w-full py-1.5 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 border ${
-                        isFullyPaidOrDeactivated || isAllWhatsAppSent
+                        isFullyPaidOrAbsent || isAllWhatsAppSent
                           ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                           : 'bg-slate-800 hover:bg-slate-700 text-green-400 border-slate-700'
                       }`}
                     >
-                      <MessageCircle size={13} /> {isFullyPaidOrDeactivated ? 'ක්‍රියාකාරී පන්ති නැත' : isAllWhatsAppSent ? 'සියලුම පන්තිවලට WhatsApp යවා ඇත' : 'සියලුම පන්ති වලට WhatsApp บිල්පත'}
+                      <MessageCircle size={13} /> {isFullyPaidOrAbsent ? 'සියලුම පන්ති ගෙවා/Absent ඇත' : isAllWhatsAppSent ? 'සියලුම පන්තිවලට WhatsApp යවා ඇත' : 'සියලුම පන්ති වලට WhatsApp බිල්පත'}
                     </button>
                     <button 
                       onClick={() => sendDashboardReminder(activeModal.student.id, activeModal.month, null)} 
-                      disabled={isFullyPaidOrDeactivated || isAllRemindersSent}
+                      disabled={isFullyPaidOrAbsent || isAllRemindersSent}
                       className={`w-full py-1.5 font-bold text-[11px] rounded-lg flex items-center justify-center gap-1.5 border ${
-                        isFullyPaidOrDeactivated || isAllRemindersSent
+                        isFullyPaidOrAbsent || isAllRemindersSent
                           ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
                           : 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border-amber-500/30'
                       }`}
                     >
-                      <Bell size={13} /> {isFullyPaidOrDeactivated ? 'ක්‍රියාකාරී පන්ති නැත' : isAllRemindersSent ? 'සියලුම පන්තිවලට Reminder යවා ඇත' : 'සියලුම පන්ති වලට Dashboard Reminder'}
+                      <Bell size={13} /> {isFullyPaidOrAbsent ? 'සියලුම පන්ති ගෙවා/Absent ඇත' : isAllRemindersSent ? 'සියලුම පන්තිවලට Reminder යවා ඇත' : 'සියලුම පන්ති වලට Dashboard Reminder'}
                     </button>
                   </div>
                 );

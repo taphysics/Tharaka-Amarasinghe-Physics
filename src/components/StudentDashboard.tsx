@@ -70,9 +70,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
-  const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid'}[]>([]);
-  
-  const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' }[]>>({});
+  // 💡 'Absent' කියන status එක අලුතින්ම එකතු කර ඇත
+  const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -152,9 +152,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           .select('*')
           .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
 
-        let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid'}[] = [];
+        // 💡 'Absent' type එක මෙතනටත් අනිවාර්යයෙන්ම එකතු කළ යුතුය
+        let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[] = [];
         let extractedReminders: any[] = [];
-        let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' }[]> = {};
+        let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]> = {};
         let activeRemindersSum = 0;
 
         const isCurrentMonthMatch = (dbMonthValue: any) => {
@@ -215,12 +216,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
               });
 
-              let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
+              let statusValue: 'Paid' | 'Free' | 'Unpaid' | 'Absent' = 'Unpaid';
               const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
 
               if (record) {
                 if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
                 else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
+                // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
+                else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
               } else if (isMonthFree) {
                 statusValue = 'Free';
               }
@@ -245,10 +248,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 return pClass === sClass;
               });
 
-              let statusValue: 'Paid' | 'Free' | 'Unpaid' = 'Unpaid';
+              let statusValue: 'Paid' | 'Free' | 'Unpaid' | 'Absent' = 'Unpaid';
               if (paymentRecord) {
                 if (paymentRecord.status?.toLowerCase() === 'paid') statusValue = 'Paid';
                 else if (paymentRecord.status?.toLowerCase() === 'free') statusValue = 'Free';
+                else if (paymentRecord.status?.toLowerCase() === 'absent' || paymentRecord.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
               }
               return { name: cls, status: statusValue };
             });
@@ -413,68 +417,90 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       
       {/* Profile Modal */}
       {isProfileOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-[#0b101e] border border-slate-800 rounded-xl w-full max-w-[420px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 z-[100]">
+          <div className="bg-[#0b101e] border border-slate-800 rounded-2xl w-full max-w-[340px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Header */}
-            <div className="flex justify-between items-center p-4 border-b border-slate-800/60">
-              <h3 className="font-semibold text-[13px] text-white tracking-wide">Verify Student Profile Data</h3>
-              <button onClick={() => setIsProfileOpen(false)} className="text-slate-400 hover:text-white transition">
-                <X size={18} />
+            <div className="flex justify-between items-center p-4 border-b border-slate-800/60 bg-slate-900/30">
+              <h3 className="font-semibold text-[13px] text-white tracking-wide">Student Profile</h3>
+              <button onClick={() => setIsProfileOpen(false)} className="text-slate-400 hover:text-white transition bg-slate-800/50 p-1.5 rounded-lg">
+                <X size={16} />
               </button>
             </div>
             
-            <div className="p-6">
-              {/* Avatar & Name */}
-              <div className="flex flex-col items-center mb-6">
-                <div className="w-[68px] h-[68px] rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-2xl font-bold text-white mb-3 shadow-lg">
-                  {(fName.charAt(0) + (lName.charAt(0) || fName.charAt(1) || '')).toUpperCase()}
+            <div className="p-5">
+              {/* Avatar & ID */}
+              <div className="flex flex-col items-center mb-5">
+                <div className="w-[64px] h-[64px] rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-2xl font-black text-white mb-3 shadow-[0_0_15px_rgba(168,85,247,0.4)] ring-4 ring-slate-900">
+                  {liveStudentData?.name ? liveStudentData.name.substring(0, 2).toUpperCase() : 'ST'}
                 </div>
-                <h2 className="text-[17px] font-bold text-white">{studentDisplayName}</h2>
-                <p className="text-[10px] text-slate-500 tracking-[0.15em] mt-1 uppercase">Registration File Verified</p>
+                <h2 className="text-[15px] font-bold text-white text-center">
+                  {liveStudentData?.name 
+                    ? liveStudentData.name.split(' ').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') 
+                    : 'N/A'}
+                </h2>
+                <p className="text-[11px] text-fuchsia-400 font-bold tracking-widest mt-1 bg-fuchsia-500/10 px-3 py-1 rounded-full border border-fuchsia-500/20">
+                  {liveStudentData?.username || 'N/A'}
+                </p>
               </div>
 
               {/* Details List */}
-              <div className="space-y-0 text-[13px]">
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">STUDENT ID (Username):</span>
-                  <span className="text-fuchsia-400 font-bold">{liveStudentData?.username || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">First Name:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.first_name || liveStudentData?.name || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">Last Name:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.last_name || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">National ID (NIC) Number:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.nic || 'N/A'}</span>
-                </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">Enrolled Course Plan:</span>
-                  <span className="text-purple-400 font-bold text-right max-w-[200px] truncate">
-                    {Array.isArray(liveStudentData?.class_types) ? liveStudentData.class_types.join(', ') : (liveStudentData?.class_types || liveStudentData?.class || 'N/A')}
+              <div className="space-y-0 text-[12px]">
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                  <span className="text-slate-400">Name:</span>
+                  <span className="text-slate-200 font-medium text-right">
+                    {liveStudentData?.name 
+                      ? liveStudentData.name.split(' ').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') 
+                      : 'N/A'}
                   </span>
                 </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">Home District:</span>
+                
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                  <span className="text-slate-400">NIC:</span>
+                  <span className="text-slate-200 font-medium">{liveStudentData?.nic || 'N/A'}</span>
+                </div>
+                
+                {/* 💡 Class Types - ලේබල් ලෙස පෙන්වීම */}
+                <div className="flex flex-col py-3 border-b border-slate-800/60 gap-2.5">
+                  <span className="text-slate-400">Class :</span>
+                  <div className="flex flex-wrap gap-1.5 justify-start">
+                    {Array.isArray(liveStudentData?.class_types) && liveStudentData.class_types.length > 0 
+                      ? liveStudentData.class_types.map((c: string, i: number) => (
+                          <span key={i} className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
+                            {c}
+                          </span>
+                        ))
+                      : (liveStudentData?.class_types || liveStudentData?.class)
+                        ? <span className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
+                            {liveStudentData?.class_types || liveStudentData?.class}
+                          </span>
+                        : <span className="text-slate-500 text-[11px]">No Classes</span>
+                    }
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                  <span className="text-slate-400">District:</span>
                   <span className="text-slate-200 font-medium">{capitalize(liveStudentData?.district || 'N/A')}</span>
                 </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">WhatsApp Number:</span>
+                
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                  <span className="text-slate-400">WhatsApp:</span>
                   <span className="text-slate-200 font-medium">{liveStudentData?.WhatsApp || liveStudentData?.whatsapp || 'N/A'}</span>
                 </div>
-                <div className="flex justify-between py-[11px] border-b border-slate-800/60">
-                  <span className="text-slate-400">Mobile Voice Call:</span>
+                
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                  <span className="text-slate-400">Mobile:</span>
                   <span className="text-slate-200 font-medium">{liveStudentData?.mobile || 'N/A'}</span>
                 </div>
               </div>
 
-              {/* Close Button */}
-              <div className="mt-8 flex justify-center">
-                <button onClick={() => setIsProfileOpen(false)} className="px-5 py-2.5 rounded-lg border border-slate-700/80 text-slate-300 text-xs font-semibold hover:bg-slate-800 transition duration-200">
-                  Close Profile Details
+              {/* Action Buttons */}
+              <div className="mt-6 flex justify-between gap-3">
+                <button onClick={() => setIsProfileOpen(false)} className="flex-1 py-2.5 rounded-xl border border-slate-700/80 bg-slate-800/40 text-slate-300 text-[12px] font-bold hover:bg-slate-700 transition duration-200">
+                  Close
+                </button>
+                <button onClick={() => { setIsProfileOpen(false); handleStudentLogout(); }} className="flex-1 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-[12px] font-bold hover:bg-red-500 hover:text-white transition duration-200 flex items-center justify-center gap-2 shadow-lg shadow-red-500/10">
+                  <LogOut size={14} /> Logout
                 </button>
               </div>
             </div>
