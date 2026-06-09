@@ -2192,6 +2192,8 @@ if (isLoading) {
                     <AdminSiteConfig />
                   )}
 
+                  {activeAdminTab === 'planner' && <AdminCalendarPlanner />}
+
                   {activeAdminTab === 'broadcast' && (
                     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
                     <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
