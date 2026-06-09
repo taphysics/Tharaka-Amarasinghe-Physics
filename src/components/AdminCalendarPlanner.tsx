@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarDays, Plus, Trash2, AlertCircle } from 'lucide-react';
-// 💡 ඔබගේ Supabase client එක import කරන තැනට අදාළව පහත path එක වෙනස් කරගන්න
 import { supabase } from '../supabaseClient'; 
 
 const AdminCalendarPlanner = () => {
@@ -10,7 +9,6 @@ const AdminCalendarPlanner = () => {
   const [status, setStatus] = useState('active');
   const [warningMessage, setWarningMessage] = useState('');
   
-  // 💡 අලුත් States
   const [availableClassTypes, setAvailableClassTypes] = useState<{name: string, fee: number}[]>([]);
   const [selectedClassType, setSelectedClassType] = useState<string>('');
   
@@ -22,21 +20,22 @@ const AdminCalendarPlanner = () => {
     fetchEvents();
   }, []);
 
-  // 1. පන්ති වර්ග Database එකෙන් ලබා ගැනීම
+  // 1. පන්ති වර්ග Database එකෙන් ලබා ගැනීම (පෙරට වඩා සරල කර ඇත)
   const fetchClassTypes = async () => {
     const { data, error } = await supabase
       .from('class_types_config')
-      .select('class_name, monthly_fee')
-      .eq('is_active', true);
+      .select('class_name, monthly_fee');
+      // .eq('is_active', true) ඉවත් කර ඇත, සියලුම පන්ති පෙන්වීමට.
       
-    if (data && !error) {
-      setAvailableClassTypes(data.map(c => ({ name: c.class_name, fee: c.monthly_fee })));
-    } else {
+    if (error) {
       console.error("Error fetching class types:", error);
+    } else if (data) {
+      console.log("Fetched Classes:", data); // ගැටළුවක් ඇත්නම් Console එකේ බැලීමට
+      setAvailableClassTypes(data.map(c => ({ name: c.class_name, fee: c.monthly_fee })));
     }
   };
 
-  // පවතින ඉවෙන්ට් ලබා ගැනීම
+  // 2. පවතින ඉවෙන්ට් ලබා ගැනීම
   const fetchEvents = async () => {
     const { data, error } = await supabase
       .from('calendar_events')
@@ -46,7 +45,7 @@ const AdminCalendarPlanner = () => {
     if (data) setEvents(data);
   };
 
-  // 2. අලුත් Event එක Database එකට Save කිරීම
+  // 3. අලුත් Event එක Database එකට Save කිරීම
   const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassType) {
@@ -61,7 +60,7 @@ const AdminCalendarPlanner = () => {
       description,
       status,
       warning_message: warningMessage,
-      class_type: selectedClassType // 💡 අලුත් තීරුවට දත්ත යැවීම
+      class_type: selectedClassType
     };
 
     const { error } = await supabase.from('calendar_events').insert([newEvent]);
@@ -84,25 +83,25 @@ const AdminCalendarPlanner = () => {
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto">
-      <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+    // 💡 ඩිසයින් එක w-full කර මොබයිල් එකට ගැළපෙන සේ p-4 sm:p-6 ලෙස වෙනස් කර ඇත
+    <div className="w-full bg-slate-900 border border-slate-700 rounded-2xl p-4 sm:p-6 shadow-xl">
+      <h3 className="text-lg sm:text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
         <CalendarDays className="text-purple-400" /> Class Calendar Planner Controls
       </h3>
 
-      <form onSubmit={handleAddEvent} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 bg-slate-800/40 p-5 rounded-2xl border border-slate-700/60">
+      <form onSubmit={handleAddEvent} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 bg-slate-800/40 p-4 sm:p-5 rounded-2xl border border-slate-700/60">
         
         <div className="flex flex-col space-y-2">
           <label className="text-xs text-slate-400">Date (දිනය)</label>
-          <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500" />
+          <input type="date" required value={date} onChange={e => setDate(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500 w-full" />
         </div>
 
-        {/* 💡 අලුතින් එකතු කළ Class Type Dropdown එක */}
         <div className="flex flex-col space-y-2">
           <label className="text-xs text-slate-400">Class Type (පන්ති වර්ගය)</label>
           <select 
             value={selectedClassType}
             onChange={(e) => setSelectedClassType(e.target.value)}
-            className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:border-purple-500 outline-none"
+            className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white focus:border-purple-500 outline-none w-full"
             required
           >
             <option value="" disabled>පන්ති වර්ගය තෝරන්න...</option>
@@ -115,12 +114,12 @@ const AdminCalendarPlanner = () => {
 
         <div className="flex flex-col space-y-2">
           <label className="text-xs text-slate-400">Event Title (මාතෘකාව)</label>
-          <input type="text" required placeholder="e.g. Special Revision Class" value={title} onChange={e => setTitle(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500" />
+          <input type="text" required placeholder="e.g. Special Revision Class" value={title} onChange={e => setTitle(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500 w-full" />
         </div>
 
         <div className="flex flex-col space-y-2">
           <label className="text-xs text-slate-400">Status (තත්ත්වය)</label>
-          <select value={status} onChange={e => setStatus(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500">
+          <select value={status} onChange={e => setStatus(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-purple-500 w-full">
             <option value="active">Active (පැවැත්වේ)</option>
             <option value="cancelled">Cancelled (අවලංගුයි)</option>
             <option value="Makeup_Class">Makeup Class (විකල්ප පන්තියකි)</option>
@@ -129,7 +128,7 @@ const AdminCalendarPlanner = () => {
 
         <div className="flex flex-col space-y-2 md:col-span-2">
           <label className="text-xs text-slate-400 flex items-center gap-1"><AlertCircle size={14}/> Warning/Special Message (අත්‍යවශ්‍ය නම් පමණක්)</label>
-          <input type="text" placeholder="e.g. Please bring your past paper book..." value={warningMessage} onChange={e => setWarningMessage(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-orange-500" />
+          <input type="text" placeholder="e.g. Please bring your past paper book..." value={warningMessage} onChange={e => setWarningMessage(e.target.value)} className="p-2.5 bg-slate-900 border border-slate-700 rounded-xl text-sm text-white outline-none focus:border-orange-500 w-full" />
         </div>
 
         <div className="md:col-span-2 mt-2">
@@ -139,17 +138,18 @@ const AdminCalendarPlanner = () => {
         </div>
       </form>
 
-      {/* මෑතකදී දාපු Events ටික පෙන්වීම */}
       <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
         {events.map((ev, i) => (
-          <div key={i} className="flex items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded-xl">
+          <div key={i} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded-xl gap-3">
             <div>
-              <span className="text-[10px] bg-slate-800 text-blue-400 px-2 py-0.5 rounded border border-slate-700 mr-2">{ev.class_type || 'General'}</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold mr-2 ${ev.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{ev.status}</span>
-              <span className="text-sm font-bold text-white">{ev.title}</span>
+              <div className="flex flex-wrap gap-2 mb-1">
+                <span className="text-[10px] bg-slate-800 text-blue-400 px-2 py-0.5 rounded border border-slate-700">{ev.class_type || 'General'}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${ev.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{ev.status}</span>
+              </div>
+              <span className="text-sm font-bold text-white block">{ev.title}</span>
               <p className="text-xs text-slate-400 mt-1">📅 {ev.date}</p>
             </div>
-            <button onClick={() => handleDelete(ev.id)} className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition">
+            <button onClick={() => handleDelete(ev.id)} className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition self-end sm:self-auto">
               <Trash2 size={16} />
             </button>
           </div>
