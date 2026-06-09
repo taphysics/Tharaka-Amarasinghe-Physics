@@ -851,22 +851,76 @@ export default function App() {
       return;
     }
 
-    const newEvent = {
-      date: planDate,
-      title: planTitle.trim(),
-      description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
-      status: planStatus,
-      warning_message: planStatus === 'cancelled' ? (planWarning.trim() || '⚠️ පන්තිය කල් දමා ඇත. විකල්ප දින ඉක්මනින් දැනුම් දෙනු ලැබේ.') : null
-    };
+    // Form එකෙන් සෘජුවම අලුත් Input දත්ත ලබා ගැනීම
+    const formData = new FormData(e.currentTarget as HTMLFormElement);
+    const classType = formData.get('class_type')?.toString() || '';
+    const startTime = formData.get('start_time')?.toString() || '';
+    const rescheduledTo = formData.get('rescheduled_to')?.toString() || '';
 
-    const { error } = await supabase.from('calendar_events').insert([newEvent]);
-    if (error) {
-      console.error(error);
-      alert('Error scheduling class.');
-    } else {
+    if (!classType || !startTime) {
+      alert("කරුණාකර පන්ති වර්ගය සහ ආරම්භක වේලාව ඇතුළත් කරන්න.");
+      return;
+    }
+
+    try {
+      // පන්තිය කල් දමා (cancelled) සහ විකල්ප දිනයක් ලබා දී ඇත්නම්
+      if (planStatus === 'cancelled' && rescheduledTo) {
+        
+        // 1. පැරණි දිනය කල් දැමූ බව දන්වා ඇතුළත් කිරීම
+        const originalEvent = {
+          date: planDate,
+          title: `${planTitle.trim()} (කල් දමා ඇත)`,
+          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
+          status: 'cancelled',
+          warning_message: planWarning.trim() || `⚠️ මෙම පන්තිය වෙනත් දිනකට කල් දමා ඇත. අලුත් දිනය: ${rescheduledTo}`,
+          class_type: classType,
+          start_time: startTime,
+          rescheduled_to: rescheduledTo
+        };
+        
+        const { error: err1 } = await supabase.from('calendar_events').insert([originalEvent]);
+        if (err1) throw err1;
+
+        // 2. අලුත් විකල්ප දිනයට Makeup Class එකක් ලෙස ඇතුළත් කිරීම
+        const makeupEvent = {
+          date: rescheduledTo,
+          title: `${planTitle.trim()} (විකල්ප පන්තිය)`,
+          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
+          status: 'Makeup_Class',
+          warning_message: `🔄 ${planDate} දින පැවැත්වීමට තිබූ පන්තිය අද දින පැවැත්වේ.`,
+          class_type: classType,
+          start_time: startTime,
+          rescheduled_from: planDate
+        };
+
+        const { error: err2 } = await supabase.from('calendar_events').insert([makeupEvent]);
+        if (err2) throw err2;
+
+      } else {
+        // සාමාන්‍ය සක්‍රීය හෝ පැරණි පන්තියක් නම්
+        const newEvent = {
+          date: planDate,
+          title: planTitle.trim(),
+          description: "weekly Physics lecture stream detailing rotational motions, mechanics models and kinematics packs.",
+          status: planStatus,
+          warning_message: null,
+          class_type: classType,
+          start_time: startTime
+        };
+
+        const { error } = await supabase.from('calendar_events').insert([newEvent]);
+        if (error) throw error;
+      }
+
       setPlanTitle('');
       setPlanWarning('');
+      // Uncontrolled inputs (time, text) රීසෙට් කිරීම
+      (e.target as HTMLFormElement).reset();
+      
       alert(`පන්ති දර්ශකයට සාර්ථකව ඇතුළත් කරන ලදී: ${planDate}`);
+    } catch (error) {
+      console.error(error);
+      alert('Error scheduling class.');
     }
   };
 
@@ -2238,14 +2292,55 @@ if (isLoading) {
                     </h3>
 
                     <form onSubmit={handleScheduleClass} className="space-y-3.5 text-xs">
-                      <div className="space-y-1">
-                        <label className="text-slate-400 font-sans">Class Date (May 2026 Grid)</label>
-                        <input 
-                          type="date"
-                          value={planDate}
-                          onChange={(e) => setPlanDate(e.target.value)}
-                          className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                        />
+                      
+                      {/* Class Type සහ Date එකවර ලබා ගැනීමට එක පෙළට සැකසීම */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-slate-400 font-sans">Class Type (පන්ති වර්ගය)</label>
+                          <input 
+                            type="text"
+                            name="class_type"
+                            required
+                            placeholder="e.g. 2026 Revision / 2026 Theory"
+                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-slate-400 font-sans">Class Date (අවුරුද්ද / මාසය / දිනය)</label>
+                          <input 
+                            type="date"
+                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
+                            value={planDate}
+                            onChange={(e) => setPlanDate(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Start Time සහ Status එක පෙළට */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-slate-400 font-sans">Start Time (ආරම්භක වේලාව)</label>
+                          <input 
+                            type="time"
+                            name="start_time"
+                            required
+                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-slate-400 font-sans">Class Date Status (තත්ත්වය)</label>
+                          <select 
+                            value={planStatus}
+                            onChange={(e) => setPlanStatus(e.target.value as any)}
+                            className="w-full bg-slate-950 text-white border border-slate-800 p-1.5 rounded focus:outline-none"
+                          >
+                            <option value="active" className="text-black bg-white">Active Class (Glowing Highlight - පන්තිය පවත්වයි)</option>
+                            <option value="past" className="text-black bg-white">Past Class (Disabled/Gray - අවසන් වූ පන්ති)</option>
+                            <option value="cancelled" className="text-black bg-white">Postponed (Warning Alert Animation - කල් දමනවා)</option>
+                          </select>
+                        </div>
                       </div>
 
                       <div className="space-y-1">
@@ -2260,29 +2355,27 @@ if (isLoading) {
                         />
                       </div>
 
-                      <div className="space-y-1">
-                        <label className="text-slate-400 font-sans">Class Date Status</label>
-                        <select 
-                          value={planStatus}
-                          onChange={(e) => setPlanStatus(e.target.value as any)}
-                          className="w-full bg-slate-950 text-white border border-slate-800 p-1.5 rounded focus:outline-none"
-                        >
-                          <option value="active" className="text-black bg-white">Active Class (Glowing Highlight)</option>
-                          <option value="past" className="text-black bg-white">Past Class (Disabled/Gray)</option>
-                          <option value="cancelled" className="text-black bg-white">Postponed (Warning Alert Animation)</option>
-                        </select>
-                      </div>
-
                       {planStatus === 'cancelled' && (
-                        <div className="space-y-1 animate-slide-up">
-                          <label className="text-red-400">Class Warning Advice / Memo</label>
-                          <input 
-                            type="text"
-                            placeholder="e.g. ⚠️ කල් දමන ලද පන්තිය පැවැත්වෙන විකල්ප දින ඉක්මනින් දැනුම් දෙනු ලැබේ."
-                            value={planWarning}
-                            onChange={(e) => setPlanWarning(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs text-red-300 focus:outline-none"
-                          />
+                        <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-xl space-y-3 animate-slide-up">
+                          <div className="space-y-1">
+                            <label className="text-red-400 font-bold">Class Warning Advice / Memo (හේතුව/පණිවිඩය)</label>
+                            <input 
+                              type="text"
+                              placeholder="e.g. ⚠️ පන්තිය කල් දමා ඇත. විකල්ප දිනය පහතින් බලන්න."
+                              value={planWarning}
+                              onChange={(e) => setPlanWarning(e.target.value)}
+                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs text-red-300 focus:outline-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-orange-400 font-bold">Rescheduled Date (නැවත පවත්වන නව දිනය)</label>
+                            <input 
+                              type="date"
+                              name="rescheduled_to"
+                              required
+                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
+                            />
+                          </div>
                         </div>
                       )}
 
@@ -2300,12 +2393,17 @@ if (isLoading) {
                         {calendarEvents.map((c) => (
                           <div key={c.id} className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex justify-between items-center gap-4">
                             <div className="space-y-1">
-                              <h5 className="font-bold text-xs text-white">{c.title}</h5>
-                              <p className="text-[10px] text-slate-400 font-mono">{c.date}</p>
-                              {c.status === 'cancelled' && <div className="text-[9px] text-red-500">{c.warningMessage}</div>}
+                              <div className="flex items-center gap-2">
+                                <span className="bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded text-[9px] font-bold border border-slate-700">{c.class_type || 'General'}</span>
+                                <h5 className="font-bold text-xs text-white">{c.title}</h5>
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-mono">📅 {c.date} | 🕒 {c.start_time || 'N/A'}</p>
+                              {(c.status === 'cancelled' || c.status === 'Makeup_Class') && (
+                                <div className="text-[9px] text-red-400 font-sans">{c.warning_message || c.warningMessage}</div>
+                              )}
                             </div>
                             <div className="flex flex-col items-end gap-1.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${c.status === 'active' ? 'bg-blue-500/20 text-blue-400' : c.status === 'past' ? 'bg-slate-700/50 text-slate-300' : 'bg-red-500/20 text-red-400'}`}>{c.status}</span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${c.status === 'active' ? 'bg-blue-500/20 text-blue-400' : c.status === 'past' ? 'bg-slate-700/50 text-slate-300' : c.status === 'Makeup_Class' ? 'bg-orange-500/20 text-orange-400' : 'bg-red-500/20 text-red-400'}`}>{c.status}</span>
                               <button
                                 onClick={async () => {
                                   if(confirm("මෙම දින සැලසුම මකාදැමීමට අවශ්‍යද?")) {

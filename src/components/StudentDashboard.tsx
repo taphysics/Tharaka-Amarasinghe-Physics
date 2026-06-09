@@ -75,6 +75,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
+  // 💡 Event Modal එක සහ තෝරාගත් දවසේ දත්ත ගබඩා කිරීමට අලුතින්ම එක්කළ State එක
+  const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<any | null>(null);
+
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   // ශ්‍රී ලංකා වේලාවෙන් වත්මන් මාසය ලබා ගැනීම
@@ -382,35 +385,159 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
 
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
-        <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
-          <CalendarDays className="text-purple-400" /> පන්ති කාලසටහන ({currentMonthKey})
-        </h3>
-        <div className="grid grid-cols-7 gap-2 text-center text-sm font-bold text-slate-400 mb-2">
-          <div className="text-rose-500">Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
-        </div>
-        <div className="grid grid-cols-7 gap-2">
-          {days.map((day, index) => {
-            if (day === null) return <div key={`empty-${index}`} className="p-4"></div>;
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl p-4 md:p-6 shadow-2xl max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+        
+        {/* වම් සහ දකුණු පැති දෙක බෙදා වෙන් කිරීම (Responsive Grid) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          {/* වම්පස කොටස: කුඩා කරන ලද කැලැන්ඩරය */}
+          <div className="lg:col-span-8 border-b lg:border-b-0 lg:border-r border-slate-800 pb-6 lg:pb-0 lg:pr-6">
+            <h3 className="text-md font-bold mb-4 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+              <CalendarDays size={18} className="text-purple-400" /> පන්ති කාලසටහන ({currentMonthKey})
+            </h3>
             
-            const dateStr = `${cYear}-${cMonthPadded}-${String(day).padStart(2, '0')}`;
-            const dayEvents = calendarEvents.filter(e => e.date === dateStr);
-            const isToday = day === new Date().getDate();
+            <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-bold text-slate-400 mb-2">
+              <div className="text-rose-500">Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+            </div>
+            
+            <div className="grid grid-cols-7 gap-1.5">
+              {days.map((day, index) => {
+                if (day === null) return <div key={`empty-${index}`} className="p-2"></div>;
+                
+                const dateStr = `${cYear}-${cMonthPadded}-${String(day).padStart(2, '0')}`;
+                const dayEvents = calendarEvents.filter(e => e.date === dateStr);
+                const isToday = day === new Date().getDate();
 
-            return (
-              <div key={index} className={`min-h-[90px] p-2 rounded-xl border flex flex-col justify-between transition-all ${isToday ? 'bg-purple-950/30 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-slate-800/40 border-slate-700/60 hover:border-slate-600'}`}>
-                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md self-start ${isToday ? 'bg-purple-500 text-white' : 'text-slate-300'}`}>{day}</span>
-                <div className="mt-1 space-y-1 w-full overflow-y-auto max-h-[50px] custom-scrollbar">
-                  {dayEvents.map((ev, i) => (
-                     <div key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 truncate w-full text-center font-medium" title={ev.title}>
-                       {ev.title}
-                     </div>
-                  ))}
+                return (
+                  <div 
+                    key={index} 
+                    onClick={() => {
+                      if (dayEvents.length > 0) setSelectedCalendarEvent(dayEvents[0]);
+                    }}
+                    className={`min-h-[75px] p-1.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer ${
+                      isToday 
+                        ? 'bg-purple-950/30 border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.15)]' 
+                        : 'bg-slate-800/20 border-slate-800 hover:border-slate-600 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded self-start ${isToday ? 'bg-purple-500 text-white' : 'text-slate-400'}`}>{day}</span>
+                    <div className="mt-1 space-y-1 w-full overflow-y-auto max-h-[45px] custom-scrollbar">
+                      {dayEvents.map((ev, i) => (
+                        <div 
+                          key={i} 
+                          className={`text-[9px] px-1 py-0.5 rounded border truncate w-full text-center font-medium ${
+                            ev.status === 'cancelled' 
+                              ? 'bg-red-500/10 text-red-400 border-red-500/20' 
+                              : ev.status === 'Makeup_Class' 
+                              ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' 
+                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          }`}
+                          title={ev.title}
+                        >
+                          {ev.title}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* දකුණුපස කොටස: එදිනට ඇති පන්තිවල ඉක්මන් දර්ශනය (Quick View Section) */}
+          <div className="lg:col-span-4 flex flex-col justify-start space-y-4">
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Upcoming Schedule Stream</h4>
+            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 scrollbar-thin">
+              {calendarEvents.slice(0, 4).map((ev, idx) => (
+                <div 
+                  key={idx} 
+                  onClick={() => setSelectedCalendarEvent(ev)}
+                  className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl hover:border-slate-700 transition cursor-pointer space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded border border-slate-700 font-bold">{ev.class_type || 'General'}</span>
+                    <span className={`text-[9px] font-mono px-1 rounded uppercase font-bold ${ev.status === 'active' ? 'text-emerald-400' : ev.status === 'Makeup_Class' ? 'text-orange-400' : 'text-red-400'}`}>{ev.status}</span>
+                  </div>
+                  <h5 className="text-xs font-bold text-white truncate">{ev.title}</h5>
+                  <p className="text-[10px] text-slate-400 font-mono">📅 {ev.date} | 🕒 {ev.start_time || 'N/A'}</p>
                 </div>
-              </div>
-            );
-          })}
+              ))}
+              {calendarEvents.length === 0 && (
+                <div className="text-xs text-slate-500 italic text-center py-8">No events lined up for this grid.</div>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* ==================== POP-UP EVENT DETAIL MODAL ==================== */}
+        {selectedCalendarEvent && (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl relative animate-in zoom-in-95 duration-200 text-sm">
+              
+              <div className="flex justify-between items-start border-b border-slate-800 pb-3">
+                <div>
+                  <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide">
+                    {selectedCalendarEvent.class_type || 'General Physics Session'}
+                  </span>
+                  <h4 className="text-md font-bold text-white mt-1.5">{selectedCalendarEvent.title}</h4>
+                </div>
+                <button 
+                  onClick={() => setSelectedCalendarEvent(null)}
+                  className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-1 rounded-lg transition text-xs px-2.5 py-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-3 font-sans text-xs text-slate-300">
+                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                  <span className="text-slate-400">Class Date (දිනය):</span>
+                  <span className="font-mono font-bold text-white">📅 {selectedCalendarEvent.date}</span>
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                  <span className="text-slate-400">Start Time (වේලාව):</span>
+                  <span className="font-mono font-bold text-white">🕒 {selectedCalendarEvent.start_time || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
+                  <span className="text-slate-400">Status (තත්ත්වය):</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    selectedCalendarEvent.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 
+                    selectedCalendarEvent.status === 'Makeup_Class' ? 'bg-orange-500/20 text-orange-400' : 
+                    'bg-red-500/20 text-red-400'
+                  }`}>
+                    {selectedCalendarEvent.status}
+                  </span>
+                </div>
+
+                {/* කල් දැමූ පන්තියක් නම් විකල්ප දිනය පෙන්වීම */}
+                {selectedCalendarEvent.rescheduled_to && (
+                  <div className="p-3 bg-orange-500/10 border border-orange-500/20 text-orange-400 rounded-xl font-medium">
+                    🔄 Rescheduled To (නව දිනය): <span className="font-mono font-bold underline ml-1">{selectedCalendarEvent.rescheduled_to}</span>
+                  </div>
+                )}
+
+                {/* විශේෂ දැනුම්දීම් හෝ පණිවිඩ තිබේ නම් */}
+                {(selectedCalendarEvent.warning_message || selectedCalendarEvent.warningMessage) && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] leading-relaxed">
+                    {selectedCalendarEvent.warning_message || selectedCalendarEvent.warningMessage}
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2">
+                <button 
+                  onClick={() => setSelectedCalendarEvent(null)}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl text-xs transition"
+                >
+                  Close Window
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -684,12 +811,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                            <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
                              m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                              m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                             m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
                              'bg-red-500/10 text-red-400 border-red-500/20'
                            }`}>
                              <span>{m.monthName} ({m.monthKey})</span>
                              <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/30 font-medium">
                                {m.status === 'Paid' && '🟢 Paid'}
                                {m.status === 'Free' && '🔵 Free'}
+                               {m.status === 'Absent' && '🟡 Absent (පන්තියට පැමිණ නැත)'}
                                {m.status === 'Unpaid' && '🔴 මෙම මාසය සදහා මෙම පන්තියට මුදල් ගෙවා නෑ'}
                              </span>
                            </div>
