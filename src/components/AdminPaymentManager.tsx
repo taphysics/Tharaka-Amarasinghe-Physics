@@ -27,42 +27,10 @@ export default function PaymentManager() {
 
   useEffect(() => {
     fetchData();
-
-    // class_types_config ටේබල් එක සඳහා සජීවී (Real-time) යාවත්කාලීන කිරීම් ලබා ගැනීම
-    const classTypesChannel = supabase
-      .channel('payment_manager_class_types')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'class_types_config' },
-        (payload) => {
-          console.log('Class types updated, fetching new data...', payload);
-          fetchClassTypes(); 
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(classTypesChannel);
-    };
   }, []);
 
-  const fetchClassTypes = async () => {
-    // නව class_types_config ටේබල් එකෙන් දත්ත ලබා ගැනීම
-    const { data, error } = await supabase
-      .from('class_types_config')
-      .select('class_type')
-      .eq('is_active', true) // Active පන්ති පමණක් ලබා ගනී
-      .order('class_type', { ascending: true });
-
-    if (data && !error) {
-      // දත්ත Array of Strings බවට පත් කිරීම (Dropdown Error එක මින් මගහැරේ)
-      setAllClasses(data.map((c: any) => c.class_type));
-    } else if (error) {
-      console.error("Error fetching class types for payments:", error);
-    }
-  };
-
   const fetchData = async () => {
+    // 1. Fetch Students
     const { data: stdData, error: stdError } = await supabase.from('students').select('*').order('name');
     if (stdError) console.error("Error fetching students:", stdError);
     if (stdData) {
@@ -73,12 +41,20 @@ export default function PaymentManager() {
       setStudents(formattedStudents);
     }
 
+    // 2. Fetch Payments
     const { data: payData, error: payError } = await supabase.from('payments').select('*');
     if (payError) console.error("Error fetching payments:", payError);
     if (payData) setPayments(payData);
 
-    // පන්ති ලැයිස්තුව ලබා ගැනීමේ Function එක Call කිරීම
-    await fetchClassTypes();
+    // 3. Fetch Classes Directly from class_types_config
+    const { data: configData, error: configError } = await supabase.from('class_types_config').select('*');
+    if (configError) {
+      console.error("Error fetching class types from config:", configError);
+    } else if (configData) {
+      // මෙහිදී 'class_name' හෝ 'name' යන දෙකෙන් ඔබේ Database එකේ ඇති Column එකට ගැලපෙන ලෙස දත්ත ලබා ගනී
+      const classesList = configData.map((item: any) => item.class_name || item.name).filter(Boolean);
+      setAllClasses(classesList);
+    }
   };
 
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
@@ -248,11 +224,17 @@ export default function PaymentManager() {
   };
 
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
+    // Update local state instantly for UI
     setStudents(prev => prev.map((s: any) => s.id === studentId ? { ...s, class_types: newClasses } : s));
-    const { error } = await supabase.from('students').update({ class_types: newClasses }).eq('id', studentId);
+    
+    // Convert array to JSON string to prevent database type mismatch error
+    const formattedClasses = JSON.stringify(newClasses);
+
+    const { error } = await supabase.from('students').update({ class_types: formattedClasses }).eq('id', studentId);
     
     if (error) {
       console.error("Error updating student classes:", error);
+      alert("පන්ති ඇතුළත් කිරීමේදී දෝෂයක් මතු විය.");
     } else {
       const channel = supabase.channel(`student_dashboard_${studentId}`);
       await channel.send({
