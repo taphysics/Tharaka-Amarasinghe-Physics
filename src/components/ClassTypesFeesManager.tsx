@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient';
 
 interface ClassType {
   id?: string;
-  class_name: string;
+  class_types: string; // Database එකේ ඇති Column නමට හරියටම ගළපා ඇත
   monthly_fee: number;
   is_active: boolean;
 }
@@ -46,7 +46,7 @@ const ClassTypesFeesManager = () => {
     const { data, error } = await supabase
       .from('class_types_config')
       .select('*')
-      .order('class_name', { ascending: true });
+      .order('class_types', { ascending: true }); // මෙතැනත් class_types ලෙස වෙනස් කර ඇත
 
     if (data && !error) {
       setClassTypes(data);
@@ -66,26 +66,24 @@ const ClassTypesFeesManager = () => {
 
     setIsLoading(true);
     const payload = {
-      class_name: className.trim(),
+      class_types: className.trim(), // Database Column එකට ගැළපෙන ලෙස සකසා ඇත
       monthly_fee: parseFloat(monthlyFee),
       is_active: isActive
     };
 
     if (editingId) {
-      // මිල හෝ නම එඩිට් කිරීම (මෙය වෙනස් කළ සැනින් ON UPDATE CASCADE හරහා මුළු වෙබ් අඩවියේම මෙම ක්ලාස් එක ඇති තැන් ඔටෝම අප්ඩේට් වේ!)
       const { error } = await supabase
         .from('class_types_config')
         .update(payload)
         .eq('id', editingId);
 
       if (!error) {
-        alert('පන්ති විස්තර සහ එයට අදාළ මුළු වෙබ් අඩවියේම ඇති සියලුම දත්ත සජීවීව යාවත්කාලීන කරන ලදී!');
+        alert('පන්ති විස්තර සජීවීව යාවත්කාලීන කරන ලදී!');
         resetForm();
       } else {
         alert('යාවත්කාලීන කිරීමේදී දෝෂයක්: ' + error.message);
       }
     } else {
-      // අලුතින් ඇතුළත් කිරීම (මෙය ඇතුළත් කළ සැනින් රෙජිස්ට්‍රේෂන් පෝම් ආදී හැම තැනකම ඔටෝම පෙන්වයි)
       const { error } = await supabase
         .from('class_types_config')
         .insert([payload]);
@@ -103,7 +101,7 @@ const ClassTypesFeesManager = () => {
   // එඩිට් මෝඩ් එකට දත්ත යැවීම
   const handleEdit = (cls: ClassType) => {
     setEditingId(cls.id || null);
-    setClassName(cls.class_name);
+    setClassName(cls.class_types); // State එකට දත්ත ඇදීම නිවැරදි කර ඇත
     setMonthlyFee(cls.monthly_fee.toString());
     setIsActive(cls.is_active);
   };
@@ -118,7 +116,7 @@ const ClassTypesFeesManager = () => {
         .eq('id', id);
 
       if (error) {
-        alert('මකා දැමීමේදී දෝෂයක් (මෙම පන්තියට අදාළ සිසුන්/ගෙවීම් දැනටමත් පද්ධතියේ තිබිය හැක): ' + error.message);
+        alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
       }
       setIsLoading(false);
     }
@@ -161,7 +159,7 @@ const ClassTypesFeesManager = () => {
         <div className="lg:col-span-1 bg-slate-900/80 border border-slate-800 p-5 rounded-2xl h-fit">
           <h4 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
             {editingId ? <Edit2 size={16} className="text-amber-400" /> : <Plus size={16} className="text-emerald-400" />}
-            {editingId ? 'Edit Class & Cascade' : 'Add New Class Type'}
+            {editingId ? 'Edit Class details' : 'Add New Class Type'}
           </h4>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -257,7 +255,7 @@ const ClassTypesFeesManager = () => {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-slate-200">{cls.class_name}</span>
+                        <span className="font-bold text-sm text-slate-200">{cls.class_types}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase tracking-wide ${
                           cls.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
                         }`}>
