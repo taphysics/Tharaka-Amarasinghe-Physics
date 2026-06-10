@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient';
 
 interface ClassType {
   id?: string;
-  class_type: string; // Database එකේ ඇති Column නමට හරියටම ගළපා ඇත
+  class_type: string; 
   monthly_fee: number;
   is_active: boolean;
 }
@@ -43,94 +43,116 @@ const ClassTypesFeesManager = () => {
   // Database එකෙන් සියලුම පන්ති වර්ග ලබා ගැනීම
   const fetchClassTypes = async () => {
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from('class_types_config')
-      .select('*')
-      .order('class_type', { ascending: true }); // මෙතැනත් class_types ලෙස වෙනස් කර ඇත
+    try {
+      const { data, error } = await supabase
+        .from('class_types_config')
+        .select('*')
+        .order('class_type', { ascending: true });
 
-    if (data && !error) {
-      setClassTypes(data);
-    } else {
-      console.error("Error fetching class types:", error);
+      if (error) throw error;
+      if (data) setClassTypes(data);
+    } catch (error: any) {
+      console.error("Error fetching class types:", error.message);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   // නව පන්ති ඇතුළත් කිරීම සහ යාවත්කාලීන කිරීම (Insert / Update)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!className || !monthlyFee) {
+    if (!className.trim() || !monthlyFee) {
       alert("කරුණාකර පන්ති වර්ගය සහ මාසික ගාස්තුව ඇතුළත් කරන්න!");
+      return;
+    }
+
+    const parsedFee = parseFloat(monthlyFee);
+    if (isNaN(parsedFee)) {
+      alert("කරුණාකර වලංගු මාසික ගාස්තුවක් ඇතුළත් කරන්න!");
       return;
     }
 
     setIsLoading(true);
     const payload = {
-      class_type: className.trim(), // Database Column එකට ගැළපෙන ලෙස සකසා ඇත
-      monthly_fee: parseFloat(monthlyFee),
+      class_type: className.trim(),
+      monthly_fee: parsedFee,
       is_active: isActive
     };
 
-    if (editingId) {
-      const { error } = await supabase
-        .from('class_types_config')
-        .update(payload)
-        .eq('id', editingId);
+    try {
+      if (editingId) {
+        // Update Operation
+        const { error } = await supabase
+          .from('class_types_config')
+          .update(payload)
+          .eq('id', editingId);
 
-      if (!error) {
+        if (error) throw error;
         alert('පන්ති විස්තර සජීවීව යාවත්කාලීන කරන ලදී!');
-        resetForm();
       } else {
-        alert('යාවත්කාලීන කිරීමේදී දෝෂයක්: ' + error.message);
-      }
-    } else {
-      const { error } = await supabase
-        .from('class_types_config')
-        .insert([payload]);
+        // Insert Operation
+        const { error } = await supabase
+          .from('class_types_config')
+          .insert([payload]);
 
-      if (!error) {
+        if (error) throw error;
         alert('නව පන්ති වර්ගය සාර්ථකව පද්ධතියට එකතු කරන ලදී!');
-        resetForm();
-      } else {
-        alert('ඇතුළත් කිරීමේදී දෝෂයක්: ' + error.message);
       }
+      
+      resetForm();
+      await fetchClassTypes(); // Realtime වැඩ නොකලත් UI එක Update වීමට Fallback එකක් ලෙස
+    } catch (error: any) {
+      alert('ක්‍රියාවලියේදී දෝෂයක් ඇතිවිය: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   // එඩිට් මෝඩ් එකට දත්ත යැවීම
   const handleEdit = (cls: ClassType) => {
     setEditingId(cls.id || null);
-    setClassName(cls.class_type); // State එකට දත්ත ඇදීම නිවැරදි කර ඇත
+    setClassName(cls.class_type); 
     setMonthlyFee(cls.monthly_fee.toString());
     setIsActive(cls.is_active);
   };
 
   // පන්ති වර්ගයක් සම්පූර්ණයෙන්ම මකා දැමීම
   const handleDelete = async (id: string) => {
-    if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? මෙය වෙනත් ටේබල් වල දත්ත වලට බලපා ඇත්නම් මකා දැමීමට ඉඩ නොදෙනු ඇත.")) {
+    if (!id) return;
+    if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? වෙනත් ටේබල් වල දත්ත වලට බලපා ඇත්නම් මකා දැමීමට ඉඩ නොදෙනු ඇත.")) {
       setIsLoading(true);
-      const { error } = await supabase
-        .from('class_types_config')
-        .delete()
-        .eq('id', id);
+      try {
+        const { error } = await supabase
+          .from('class_types_config')
+          .delete()
+          .eq('id', id);
 
-      if (error) {
+        if (error) throw error;
+        await fetchClassTypes();
+      } catch (error: any) {
         alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     }
   };
 
   // Active / Inactive තත්ත්වය ඉක්මනින් වෙනස් කිරීම
   const toggleActiveStatus = async (id: string, currentStatus: boolean) => {
-    const { error } = await supabase
-      .from('class_types_config')
-      .update({ is_active: !currentStatus })
-      .eq('id', id);
+    if (!id) return;
+    setIsLoading(true);
+    try {
+      const { error } = await supabase
+        .from('class_types_config')
+        .update({ is_active: !currentStatus })
+        .eq('id', id);
 
-    if (error) {
+      if (error) throw error;
+      await fetchClassTypes();
+    } catch (error: any) {
       alert('තත්ත්වය වෙනස් කිරීමට නොහැකි විය: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -275,8 +297,9 @@ const ClassTypesFeesManager = () => {
                     {/* Toggle Activation Button */}
                     <button
                       onClick={() => toggleActiveStatus(cls.id!, cls.is_active)}
+                      disabled={isLoading}
                       title={cls.is_active ? "Click to Hide" : "Click to Show"}
-                      className={`p-2 rounded-lg border transition-all text-xs flex items-center gap-1 ${
+                      className={`p-2 rounded-lg border transition-all text-xs flex items-center gap-1 cursor-pointer ${
                         cls.is_active 
                           ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/10 hover:bg-emerald-500/20' 
                           : 'bg-red-500/5 text-red-400 border-red-500/10 hover:bg-red-500/20'
@@ -289,7 +312,8 @@ const ClassTypesFeesManager = () => {
                     {/* Edit Button */}
                     <button
                       onClick={() => handleEdit(cls)}
-                      className="p-2 bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white border border-amber-500/10 rounded-lg transition-all text-xs flex items-center gap-1"
+                      disabled={isLoading}
+                      className="p-2 bg-amber-500/10 text-amber-400 hover:bg-amber-500 hover:text-white border border-amber-500/10 rounded-lg transition-all text-xs flex items-center gap-1 cursor-pointer"
                     >
                       <Edit2 size={14} /> <span className="hidden md:inline">Edit</span>
                     </button>
@@ -297,7 +321,8 @@ const ClassTypesFeesManager = () => {
                     {/* Delete Button */}
                     <button
                       onClick={() => handleDelete(cls.id!)}
-                      className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/10 rounded-lg transition-all text-xs flex items-center gap-1"
+                      disabled={isLoading}
+                      className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/10 rounded-lg transition-all text-xs flex items-center gap-1 cursor-pointer"
                     >
                       <Trash2 size={14} /> <span className="hidden md:inline">Delete</span>
                     </button>
