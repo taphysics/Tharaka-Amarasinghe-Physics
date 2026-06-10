@@ -12,21 +12,6 @@ const parseStudentClasses = (classTypes: any): string[] => {
   }
 };
 
-const parseAllClassesConfig = (configText: string): string[] => {
-  if (!configText) return [];
-  try {
-    const parsed = JSON.parse(configText);
-    if (Array.isArray(parsed)) {
-      return parsed.map((item: any) => item.name || item.class_name || item).filter(Boolean);
-    } else if (parsed.classes && Array.isArray(parsed.classes)) {
-      return parsed.classes.map((item: any) => item.name || item.class_name).filter(Boolean);
-    }
-  } catch (e) {
-    return configText.split(',').map((c: string) => c.split(':')[0].trim()).filter(Boolean);
-  }
-  return [];
-};
-
 export default function PaymentManager() {
   const [students, setStudents] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -42,7 +27,40 @@ export default function PaymentManager() {
 
   useEffect(() => {
     fetchData();
+
+    // class_types_config ටේබල් එක සඳහා සජීවී (Real-time) යාවත්කාලීන කිරීම් ලබා ගැනීම
+    const classTypesChannel = supabase
+      .channel('payment_manager_class_types')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'class_types_config' },
+        (payload) => {
+          console.log('Class types updated, fetching new data...', payload);
+          fetchClassTypes(); 
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(classTypesChannel);
+    };
   }, []);
+
+  const fetchClassTypes = async () => {
+    // නව class_types_config ටේබල් එකෙන් දත්ත ලබා ගැනීම
+    const { data, error } = await supabase
+      .from('class_types_config')
+      .select('class_type')
+      .eq('is_active', true) // Active පන්ති පමණක් ලබා ගනී
+      .order('class_type', { ascending: true });
+
+    if (data && !error) {
+      // දත්ත Array of Strings බවට පත් කිරීම (Dropdown Error එක මින් මගහැරේ)
+      setAllClasses(data.map((c: any) => c.class_type));
+    } else if (error) {
+      console.error("Error fetching class types for payments:", error);
+    }
+  };
 
   const fetchData = async () => {
     const { data: stdData, error: stdError } = await supabase.from('students').select('*').order('name');
@@ -59,10 +77,8 @@ export default function PaymentManager() {
     if (payError) console.error("Error fetching payments:", payError);
     if (payData) setPayments(payData);
 
-    const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
-    if (config?.class_rates_text) {
-      setAllClasses(parseAllClassesConfig(config.class_rates_text));
-    }
+    // පන්ති ලැයිස්තුව ලබා ගැනීමේ Function එක Call කිරීම
+    await fetchClassTypes();
   };
 
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
@@ -255,7 +271,7 @@ export default function PaymentManager() {
       const status = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
       if (status === 'paid') return '#10b981'; 
       if (status === 'free') return '#3b82f6'; 
-      if (status === 'absent') return '#475569'; // Absent සදහා අළු පැහැය (Gray)
+      if (status === 'absent') return '#475569'; 
       return '#ef4444'; 
     });
     if (colors.length === 1) return { backgroundColor: colors[0] };
