@@ -4,7 +4,7 @@ import { supabase } from '../supabaseClient';
 
 interface ClassType {
   id?: string;
-  class_types: string; // Database එකේ ඇති Column නමට හරියටම ගළපා ඇත
+  class_type: string; // Database එකේ ඇති Column නමට හරියටම ගළපා ඇත
   monthly_fee: number;
   is_active: boolean;
 }
@@ -46,7 +46,7 @@ const ClassTypesFeesManager = () => {
     const { data, error } = await supabase
       .from('class_types_config')
       .select('*')
-      .order('class_types', { ascending: true }); // මෙතැනත් class_types ලෙස වෙනස් කර ඇත
+      .order('class_type', { ascending: true }); // මෙතැනත් class_types ලෙස වෙනස් කර ඇත
 
     if (data && !error) {
       setClassTypes(data);
@@ -66,7 +66,7 @@ const ClassTypesFeesManager = () => {
 
     setIsLoading(true);
     const payload = {
-      class_types: className.trim(), // Database Column එකට ගැළපෙන ලෙස සකසා ඇත
+      class_type: className.trim(), // Database Column එකට ගැළපෙන ලෙස සකසා ඇත
       monthly_fee: parseFloat(monthlyFee),
       is_active: isActive
     };
@@ -101,7 +101,7 @@ const ClassTypesFeesManager = () => {
   // එඩිට් මෝඩ් එකට දත්ත යැවීම
   const handleEdit = (cls: ClassType) => {
     setEditingId(cls.id || null);
-    setClassName(cls.class_types); // State එකට දත්ත ඇදීම නිවැරදි කර ඇත
+    setClassName(cls.class_type); // State එකට දත්ත ඇදීම නිවැරදි කර ඇත
     setMonthlyFee(cls.monthly_fee.toString());
     setIsActive(cls.is_active);
   };
@@ -255,7 +255,7 @@ const ClassTypesFeesManager = () => {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-slate-200">{cls.class_types}</span>
+                        <span className="font-bold text-sm text-slate-200">{cls.class_type}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase tracking-wide ${
                           cls.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
                         }`}>
