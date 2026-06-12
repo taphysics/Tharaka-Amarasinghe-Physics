@@ -514,7 +514,42 @@ useEffect(() => {
     }
     return false; 
   };
+// Supabase එකෙන් පන්ති ලැයිස්තුව ගෙන්වා ගැනීමේ Function එක
+async function loadActiveClassesForRegistration() {
+  const container = document.getElementById('dynamicClassList');
+  if (!container) return; // Registration ෆෝම් එක නැත්නම් මුකුත් කරන්නේ නෑ
 
+  try {
+    // Supabase එකෙන් active පන්ති ටික පමණක් ලබාගැනීම
+    const { data, error } = await supabase // 'supabase' වෙනුවට ඔයාගේ db client එකේ නම (උදා: supabaseClient) තියෙනවද බලන්න
+      .from('class_types_config')
+      .select('class_type')
+      .eq('is_active', true);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      // දත්ත තිබෙනවා නම් අර checkbox HTML එක හදලා container එක ඇතුළට දානවා
+      container.innerHTML = data.map(cls => `
+        <label>
+          <input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='${cls.class_type}' /> 
+          ${cls.class_type}
+        </label>
+      `).join('');
+    } else {
+      // පන්ති කිසිවක් නැත්නම් පෙන්වන පණිවිඩය
+      container.innerHTML = '<span style="color: #ef4444; font-size: 0.9rem;">දැනට සක්‍රීය පන්ති කිසිවක් පද්ධතියේ නොමැත.</span>';
+    }
+  } catch (error) {
+    console.error('Error fetching classes:', error);
+    container.innerHTML = '<span style="color: #ef4444; font-size: 0.9rem;">පන්ති ලැයිස්තුව ලබාගැනීමේදී දෝෂයක් ඇතිවිය.</span>';
+  }
+}
+
+// වෙබ් අඩවිය Load වෙද්දිම මේ Function එක Call කිරීම
+document.addEventListener('DOMContentLoaded', () => {
+  loadActiveClassesForRegistration();
+});
   // Student direct registration submission from student app view
 const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
   e.preventDefault(); // ෆෝම් එක සබ්මිට් වෙද්දී පේජ් එක රීලෝඩ් වීම නවත්වයි
@@ -626,7 +661,7 @@ const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
   setModalContent(
     <div className="space-y-4">
       <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300">
-        ඔබගේ විස්තර ගුරුවරයා වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
+        ඔබගේ විස්තර Admin වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
       </div>
       <div className="flex gap-3 pt-2">
         <button 

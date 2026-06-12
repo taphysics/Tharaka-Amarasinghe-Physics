@@ -1330,16 +1330,10 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
 
               <div class='form-group' id='grpClassType' style='grid-column: span 2;'>
                 <label style='margin-bottom:0.5rem;'>Class Type (Select one or more)</label>
-                <div class='check-stack' style='display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px;'>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2027 Theory' /> 2027 Theory</label>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2027 Revision' /> 2027 Revision</label>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2027 Paper Class' /> 2027 Paper Class</label>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2028 Theory' /> 2028 Theory</label>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2028 Revision' /> 2028 Revision</label>
-                  <label><input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='2028 Paper Class' /> 2028 Paper Class</label>
+                <div id='dynamicClassList' class='check-stack' style='display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px;'>
+                  <span style='color: #94a3b8; font-size: 0.9rem;'>පන්ති ලැයිස්තුව ලබාගනිමින් පවතී...</span>
                 </div>
               </div>
-
               <div class='form-group' id='grpWhatsApp'>
                 <label>WhatsApp Number (10 digits starting with 0)</label>
                 <input id='regWhatsApp' maxlength='10' oninput='clearInvalidState("grpWhatsApp")' placeholder='0711234567' required='required' type='text' />
