@@ -74,6 +74,7 @@ const ClassTypesFeesManager = () => {
     
     // Database එකේ ඇති කොලම් වල නම් වලට හරියටම ගැලපෙන Payload එක
     const payload = {
+      class_name: className.trim(),
       class_type: className.trim(),
       monthly_fee: parsedFee,
       is_active: isActive
