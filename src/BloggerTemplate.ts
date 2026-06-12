@@ -1844,6 +1844,7 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       const whatsapp = document.getElementById("regWhatsApp").value.trim();
       const mobile = document.getElementById("regMobile").value.trim();
       const pass = document.getElementById("regPass").value.trim();
+      
 
       // Get multi-select checked classes
       const selectedClasses = [];
@@ -1938,17 +1939,17 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       saveState();
 
       // Formulate beautifully stylized WhatsApp text
-      const waMessage = "*New Student Registration - TA Physics Online Hub*\\n\\n" +
-        "First Name: " + first + "\\n" +
-        "Last Name: " + last + "\\n" +
-        "NIC: " + nic + "\\n" +
-        "District: " + dist + "\\n" +
-        "Classes: " + selectedClasses.join(", ") + "\\n" +
-        "WhatsApp: " + whatsapp + "\\n" +
-        "Mobile: " + mobile + "\\n\\n" +
-        "*Auto-Generated Credentials*:\\n" +
-        "Username: *" + generatedUsername + "*\\n" +
-        "Password: *" + nic + "*\\n\\n" +
+      const waMessage = "*New Student Registration - TA Physics Online Hub*\n\n" +
+        "First Name: " + first + "\n" +
+        "Last Name: " + last + "\n" +
+        "NIC: " + nic + "\n" +
+        "District: " + dist + "\n" +
+        "Classes: " + selectedClasses.join(", ") + "\n" +
+        "WhatsApp: " + whatsapp + "\n" +
+        "Mobile: " + mobile + "\n\n" +
+        "*Auto-Generated Credentials*:\n" +
+        "Username: *" + generatedUsername + "*\n" +
+        "Password: *" + nic + "*\n\n" +
         "Please approve and activate my physics student dashboard!";
 
       // Open WhatsApp Web/App Link
@@ -1967,6 +1968,46 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
       document.getElementById("registerForm").reset();
       return true;
     }
+
+// ---------------------------------------------------------
+// අලුතින් එකතු කළ කොටස: Database එකෙන් පන්ති ලැයිස්තුව ගෙන්වා ගැනීම
+// ---------------------------------------------------------
+async function loadActiveClassesForRegistration() {
+  const container = document.getElementById('dynamicClassList');
+  if (!container) return; // Registration ෆෝම් එක නැත්නම් මුකුත් කරන්නේ නෑ
+
+  try {
+    // Supabase එකෙන් active පන්ති ටික පමණක් ලබාගැනීම
+    const { data, error } = await supabase 
+      .from('class_types_config')
+      .select('class_type')
+      .eq('is_active', true);
+
+    if (error) throw error;
+
+    if (data && data.length > 0) {
+      // දත්ත තිබෙනවා නම් checkbox HTML එක හදලා container එක ඇතුළට දානවා (Backticks වෙනුවට සාමාන්‍ය Quotes භාවිත කර ඇත)
+      container.innerHTML = data.map(function(cls) {
+        return "<label style='display:flex; align-items:center; gap:5px; font-size:0.9rem; cursor:pointer;'>" +
+                 "<input name='classOption' type='checkbox' value='" + cls.class_type + "' /> " +
+                 cls.class_type +
+               "</label>";
+      }).join('');
+    } else {
+      // පන්ති කිසිවක් නැත්නම් පෙන්වන පණිවිඩය
+      container.innerHTML = "<span style='color: #ef4444; font-size: 0.9rem;'>දැනට සක්‍රීය පන්ති කිසිවක් පද්ධතියේ නොමැත.</span>";
+    }
+  } catch (error) {
+    console.error('Error fetching classes:', error);
+    container.innerHTML = "<span style='color: #ef4444; font-size: 0.9rem;'>පන්ති ලැයිස්තුව ලබාගැනීමේදී දෝෂයක් ඇතිවිය.</span>";
+  }
+}
+
+// වෙබ් අඩවිය Load වෙද්දිම මේ Function එක Call කිරීම
+document.addEventListener('DOMContentLoaded', () => {
+  loadActiveClassesForRegistration();
+});
+// ---------------------------------------------------------
 
     // Student Login flow
     function handleStudentLogin(e) {
