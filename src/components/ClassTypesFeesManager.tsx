@@ -18,10 +18,8 @@ const ClassTypesFeesManager = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // 1. මුලින්ම තියෙන දත්ත ටික ලෝඩ් කරගැනීම
     fetchClassTypes();
 
-    // 2. සජීවීව (Live Realtime) දත්ත අප්ඩේට් වීම සඳහා Supabase Realtime චැනල් එකක් සක්‍රීය කිරීම
     const classTypesChannel = supabase
       .channel('live_class_types_changes')
       .on(
@@ -29,18 +27,16 @@ const ClassTypesFeesManager = () => {
         { event: '*', schema: 'public', table: 'class_types_config' },
         (payload) => {
           console.log('Realtime update received:', payload);
-          fetchClassTypes(); // ඩේටාබේස් එකේ වෙනසක් වුණු සැණින් UI එක ඔටෝ අප්ඩේට් වේ
+          fetchClassTypes(); 
         }
       )
       .subscribe();
 
-    // Component එක අයින් වන විට Subscription එක ඉවත් කිරීම
     return () => {
       supabase.removeChannel(classTypesChannel);
     };
   }, []);
 
-  // Database එකෙන් සියලුම පන්ති වර්ග ලබා ගැනීම
   const fetchClassTypes = async () => {
     setIsLoading(true);
     try {
@@ -49,7 +45,10 @@ const ClassTypesFeesManager = () => {
         .select('*')
         .order('class_type', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Fetch Error:", error);
+        throw error;
+      }
       if (data) setClassTypes(data);
     } catch (error: any) {
       console.error("Error fetching class types:", error.message);
@@ -58,7 +57,6 @@ const ClassTypesFeesManager = () => {
     }
   };
 
-  // නව පන්ති ඇතුළත් කිරීම සහ යාවත්කාලීන කිරීම (Insert / Update)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!className.trim() || !monthlyFee) {
@@ -73,6 +71,8 @@ const ClassTypesFeesManager = () => {
     }
 
     setIsLoading(true);
+    
+    // Database එකේ ඇති කොලම් වල නම් වලට හරියටම ගැලපෙන Payload එක
     const payload = {
       class_type: className.trim(),
       monthly_fee: parsedFee,
@@ -81,7 +81,6 @@ const ClassTypesFeesManager = () => {
 
     try {
       if (editingId) {
-        // Update Operation
         const { error } = await supabase
           .from('class_types_config')
           .update(payload)
@@ -90,7 +89,6 @@ const ClassTypesFeesManager = () => {
         if (error) throw error;
         alert('පන්ති විස්තර සජීවීව යාවත්කාලීන කරන ලදී!');
       } else {
-        // Insert Operation
         const { error } = await supabase
           .from('class_types_config')
           .insert([payload]);
@@ -100,15 +98,16 @@ const ClassTypesFeesManager = () => {
       }
       
       resetForm();
-      await fetchClassTypes(); // Realtime වැඩ නොකලත් UI එක Update වීමට Fallback එකක් ලෙස
+      await fetchClassTypes(); 
     } catch (error: any) {
-      alert('ක්‍රියාවලියේදී දෝෂයක් ඇතිවිය: ' + error.message);
+      // මෙතනින් අපිට හරියටම Supabase Error එක Console එකේ බලාගන්න පුළුවන්
+      console.error("Supabase Save Error Object:", error);
+      alert('ක්‍රියාවලියේදී දෝෂයක් ඇතිවිය: ' + error.message + '\n(Inspect Console එක පරීක්ෂා කරන්න)');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // එඩිට් මෝඩ් එකට දත්ත යැවීම
   const handleEdit = (cls: ClassType) => {
     setEditingId(cls.id || null);
     setClassName(cls.class_type); 
@@ -116,7 +115,6 @@ const ClassTypesFeesManager = () => {
     setIsActive(cls.is_active);
   };
 
-  // පන්ති වර්ගයක් සම්පූර්ණයෙන්ම මකා දැමීම
   const handleDelete = async (id: string) => {
     if (!id) return;
     if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? වෙනත් ටේබල් වල දත්ත වලට බලපා ඇත්නම් මකා දැමීමට ඉඩ නොදෙනු ඇත.")) {
@@ -130,6 +128,7 @@ const ClassTypesFeesManager = () => {
         if (error) throw error;
         await fetchClassTypes();
       } catch (error: any) {
+        console.error("Delete Error:", error);
         alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
       } finally {
         setIsLoading(false);
@@ -137,7 +136,6 @@ const ClassTypesFeesManager = () => {
     }
   };
 
-  // Active / Inactive තත්ත්වය ඉක්මනින් වෙනස් කිරීම
   const toggleActiveStatus = async (id: string, currentStatus: boolean) => {
     if (!id) return;
     setIsLoading(true);
@@ -150,6 +148,7 @@ const ClassTypesFeesManager = () => {
       if (error) throw error;
       await fetchClassTypes();
     } catch (error: any) {
+      console.error("Toggle Status Error:", error);
       alert('තත්ත්වය වෙනස් කිරීමට නොහැකි විය: ' + error.message);
     } finally {
       setIsLoading(false);
@@ -166,7 +165,6 @@ const ClassTypesFeesManager = () => {
   return (
     <div className="lg:col-span-12 w-full bg-slate-900/40 border border-slate-800 rounded-3xl p-4 md:p-6 shadow-xl backdrop-blur-sm">
       
-      {/* Header */}
       <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-3">
         <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 text-white font-display">
           <BookOpen className="text-emerald-400" size={22} /> Class Types &amp; Fees Manager
@@ -174,10 +172,8 @@ const ClassTypesFeesManager = () => {
         {isLoading && <RefreshCw className="animate-spin text-slate-400" size={18} />}
       </div>
 
-      {/* Control Form & List Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left Side: Form Controls */}
         <div className="lg:col-span-1 bg-slate-900/80 border border-slate-800 p-5 rounded-2xl h-fit">
           <h4 className="text-sm font-bold text-slate-300 mb-4 flex items-center gap-2">
             {editingId ? <Edit2 size={16} className="text-amber-400" /> : <Plus size={16} className="text-emerald-400" />}
@@ -186,7 +182,6 @@ const ClassTypesFeesManager = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             
-            {/* Class Name Input */}
             <div className="flex flex-col space-y-1.5">
               <label className="text-xs text-slate-400 font-medium">Class Name (පන්ති වර්ගය)</label>
               <input 
@@ -199,7 +194,6 @@ const ClassTypesFeesManager = () => {
               />
             </div>
 
-            {/* Fee Input */}
             <div className="flex flex-col space-y-1.5">
               <label className="text-xs text-slate-400 font-medium">Monthly Fee (මාසික පන්ති ගාස්තුව)</label>
               <div className="relative">
@@ -215,7 +209,6 @@ const ClassTypesFeesManager = () => {
               </div>
             </div>
 
-            {/* Status Dropdown */}
             <div className="flex flex-col space-y-1.5">
               <label className="text-xs text-slate-400 font-medium">Registration Availability (ලියාපදිංචිය)</label>
               <select
@@ -228,7 +221,6 @@ const ClassTypesFeesManager = () => {
               </select>
             </div>
 
-            {/* Action Buttons */}
             <div className="flex gap-2 pt-2">
               <button
                 type="submit"
@@ -245,7 +237,7 @@ const ClassTypesFeesManager = () => {
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2.5 rounded-xl text-xs transition"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2.5 rounded-xl text-xs transition cursor-pointer"
                 >
                   <X size={15} />
                 </button>
@@ -255,7 +247,6 @@ const ClassTypesFeesManager = () => {
           </form>
         </div>
 
-        {/* Right Side: Responsive Table/List View */}
         <div className="lg:col-span-2 space-y-3">
           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configured Classes &amp; Fees (Live View)</h4>
           
@@ -270,7 +261,6 @@ const ClassTypesFeesManager = () => {
                     cls.is_active ? 'border-slate-800/80' : 'border-red-950/40 bg-red-950/5'
                   }`}
                 >
-                  {/* Left Side Info */}
                   <div className="flex items-start gap-3">
                     <div className={`p-2 rounded-lg mt-0.5 ${cls.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                       <BookOpen size={16} />
@@ -291,10 +281,8 @@ const ClassTypesFeesManager = () => {
                     </div>
                   </div>
 
-                  {/* Right Side Control Buttons */}
                   <div className="flex items-center gap-2 self-end sm:self-center">
                     
-                    {/* Toggle Activation Button */}
                     <button
                       onClick={() => toggleActiveStatus(cls.id!, cls.is_active)}
                       disabled={isLoading}
@@ -309,7 +297,6 @@ const ClassTypesFeesManager = () => {
                       <span className="hidden md:inline">{cls.is_active ? 'Active' : 'Disabled'}</span>
                     </button>
 
-                    {/* Edit Button */}
                     <button
                       onClick={() => handleEdit(cls)}
                       disabled={isLoading}
@@ -318,7 +305,6 @@ const ClassTypesFeesManager = () => {
                       <Edit2 size={14} /> <span className="hidden md:inline">Edit</span>
                     </button>
 
-                    {/* Delete Button */}
                     <button
                       onClick={() => handleDelete(cls.id!)}
                       disabled={isLoading}
