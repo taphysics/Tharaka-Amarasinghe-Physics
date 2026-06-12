@@ -514,43 +514,34 @@ useEffect(() => {
     }
     return false; 
   };
-// Supabase එකෙන් පන්ති ලැයිස්තුව ගෙන්වා ගැනීමේ Function එක
-async function loadActiveClassesForRegistration() {
-  const container = document.getElementById('dynamicClassList');
-  if (!container) return; // Registration ෆෝම් එක නැත්නම් මුකුත් කරන්නේ නෑ
 
-  try {
-    // Supabase එකෙන් active පන්ති ටික පමණක් ලබාගැනීම
-    const { data, error } = await supabase // 'supabase' වෙනුවට ඔයාගේ db client එකේ නම (උදා: supabaseClient) තියෙනවද බලන්න
-      .from('class_types_config')
-      .select('class_type')
-      .eq('is_active', true);
-
-    if (error) throw error;
-
-    if (data && data.length > 0) {
-      // දත්ත තිබෙනවා නම් අර checkbox HTML එක හදලා container එක ඇතුළට දානවා
-      container.innerHTML = data.map(cls => `
-        <label>
-          <input name='classOption' onchange='clearInvalidState("grpClassType")' type='checkbox' value='${cls.class_type}' /> 
-          ${cls.class_type}
-        </label>
-      `).join('');
-    } else {
-      // පන්ති කිසිවක් නැත්නම් පෙන්වන පණිවිඩය
-      container.innerHTML = '<span style="color: #ef4444; font-size: 0.9rem;">දැනට සක්‍රීය පන්ති කිසිවක් පද්ධතියේ නොමැත.</span>';
-    }
-  } catch (error) {
-    console.error('Error fetching classes:', error);
-    container.innerHTML = '<span style="color: #ef4444; font-size: 0.9rem;">පන්ති ලැයිස්තුව ලබාගැනීමේදී දෝෂයක් ඇතිවිය.</span>';
-  }
-}
-
-// වෙබ් අඩවිය Load වෙද්දිම මේ Function එක Call කිරීම
-document.addEventListener('DOMContentLoaded', () => {
-  loadActiveClassesForRegistration();
-});
   // Student direct registration submission from student app view
+  // පන්ති ලැයිස්තුව තබා ගැනීමට අලුතින් state එකක්
+  const [dbClasses, setDbClasses] = useState<string[]>([]);
+
+  // Component එක ලෝඩ් වෙද්දිම Supabase එකෙන් පන්ති ටික ගෙන්වා ගැනීම
+  useEffect(() => {
+    const fetchClasses = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('class_types_config')
+          .select('class_name') // මෙතන class_name විය යුතුයි
+          .eq('is_active', true);
+
+        if (error) throw error;
+        
+        if (data) {
+          // දත්ත ආවා නම් ඒවා array එකකට දාලා state එකට සෙට් කරනවා
+          setDbClasses(data.map(item => item.class_name));
+        }
+      } catch (error) {
+        console.error('Error fetching classes:', error);
+      }
+    };
+
+    fetchClasses();
+  }, []); // හිස් array එකක් දැම්මම මේක run වෙන්නේ එක පාරයි
+
 const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
   e.preventDefault(); // ෆෝම් එක සබ්මිට් වෙද්දී පේජ් එක රීලෝඩ් වීම නවත්වයි
   setIsSubmitButtonDisabled(true);
@@ -1600,18 +1591,24 @@ if (isLoading) {
                   </label>
                   
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-950/60 border border-slate-850 rounded-2xl p-4">
-                    {globalClassNames.map((item, idx) => (
-                      <label key={idx} className="flex items-center gap-2.5 text-xs text-slate-350 hover:text-white cursor-pointer select-none font-medium">
-                        <input 
-                          type="checkbox"
-                          value={item}
-                          checked={regClassTypes.includes(item)}
-                          onChange={(e) => handleClassCheckboxChange(item, e.target.checked)}
-                          className="w-4 h-4 rounded text-blue-600 bg-slate-905 border-slate-700 focus:ring-blue-500"
-                        />
-                        {item}
-                      </label>
-                    ))}
+                    {/* අලුතින් වෙනස් කළ කොටස මෙතැන් සිට */}
+                    {dbClasses.length > 0 ? (
+                      dbClasses.map((item, idx) => (
+                        <label key={idx} className="flex items-center gap-2.5 text-xs text-slate-350 hover:text-white cursor-pointer select-none font-medium">
+                          <input 
+                            type="checkbox"
+                            value={item}
+                            checked={regClassTypes.includes(item)}
+                            onChange={(e) => handleClassCheckboxChange(item, e.target.checked)}
+                            className="w-4 h-4 rounded text-blue-600 bg-slate-905 border-slate-700 focus:ring-blue-500"
+                          />
+                          {item}
+                        </label>
+                      ))
+                    ) : (
+                      <span className="text-slate-400 text-xs col-span-2">පන්ති ලැයිස්තුව පූරණය වෙමින් පවතී...</span>
+                    )}
+                    {/* මෙතනින් අවසන් */}
                   </div>
                   {invalidGroups.classes && <span className="text-[10px] text-red-400 block mt-0.5">අවම වශයෙන් එක් පන්ති වර්ගයක් තෝරන්න</span>}
                 </div>
