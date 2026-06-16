@@ -65,7 +65,6 @@ export default function PaymentManager() {
     }
   };
 
-  // Real-time Update යවන ප්‍රධාන ක්‍රියාවලිය
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
     const student = students.find((s: any) => s.id === studentId);
@@ -88,19 +87,18 @@ export default function PaymentManager() {
       }
     }
 
-    // Optimistic UI Update (Admin panel එකේ ක්ෂණිකව වෙනස් වීමට)
     setPayments(prev => {
       const exists = prev.find((p: any) => p.record_id === recordId);
+      // FIXED: class_name වෙනුවට class_type යෙදීම
       if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
-      return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
+      return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
     });
 
-    // Database Update with Error Handling
     const { error } = await supabase.from('payments').upsert({
       record_id: recordId,
       student_id: studentId,
       month: monthKey,
-      class_name: className,
+      class_type: className, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
       status: status,
       reminder_sent: reminderStatus,
       whatsapp_sent: whatsappStatus
@@ -110,8 +108,6 @@ export default function PaymentManager() {
       console.error("Payment status save failed:", error);
       alert("දත්ත සුරැකීමේදී දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
     } else {
-      // --- REALTIME BROADCAST ---
-      // මෙය මගින් සිසුවා ලෝකේ කොහේ සිටියත් එම තත්පරයේම සංඥාව යවයි
       const channel = supabase.channel(`student_dashboard_${studentId}`);
       await channel.send({
         type: 'broadcast',
@@ -140,7 +136,7 @@ export default function PaymentManager() {
           record_id: recordId,
           student_id: studentId,
           month: monthKey,
-          class_name: cName,
+          class_type: cName, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
           status: currentStatus,
           reminder_sent: true
         }, { onConflict: 'record_id' });
@@ -152,7 +148,7 @@ export default function PaymentManager() {
           setPayments(prev => {
             const exists = prev.find((p: any) => p.record_id === recordId);
             if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, reminder_sent: true } : p);
-            return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_name: cName, status: currentStatus, reminder_sent: true }];
+            return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: cName, status: currentStatus, reminder_sent: true }];
           });
 
           if (student?.username) {
@@ -166,7 +162,6 @@ export default function PaymentManager() {
             });
           }
           
-          // --- REALTIME BROADCAST FOR REMINDER ---
           const channel = supabase.channel(`student_dashboard_${studentId}`);
           await channel.send({
             type: 'broadcast',
@@ -189,6 +184,25 @@ export default function PaymentManager() {
     const classesToSend = specificClass ? [specificClass] : (student.class_types || []);
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
+    // 1. WhatsApp විවෘත කිරීම Browser එකෙන් Block වීම වැළැක්වීමට එය මුලින්ම (Synchronously) විවෘත කරමු
+    const baseUrl = window.location.origin; 
+    let link = `${baseUrl}/invoice?s=${student.id}&m=${monthKey}`;
+    let message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසය සඳහා පන්ති ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
+    
+    if (specificClass) {
+      link += `&c=${encodeURIComponent(specificClass)}`;
+      message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසයේ [${specificClass}] පන්තිය සඳහා ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
+    }
+    message += `\n🔗 Link: ${link}\n\nස්තූතියි!`;
+    
+    // දුරකථන අංකය නිවැරදිව Format කිරීම (077 හෝ +9477 ආදී ඕනෑම එකකට ගැළපෙන පරිදි)
+    const phoneStr = (student.whatsapp || '').replace(/[^0-9]/g, '');
+    const cleanPhone = phoneStr.startsWith('94') ? phoneStr : phoneStr.startsWith('0') ? `94${phoneStr.substring(1)}` : `94${phoneStr}`;
+    
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank'); // දැන් කිසිම වෙලාවක Browser එකෙන් Popup එක බ්ලොක් කරන්නේ නැත
+
+    // 2. ඉන්පසුව Database එක අප්ඩේට් කිරීමේ කටයුතු පසුබිමෙන් (Background) සිදුකෙරේ
     for (const cName of classesToSend) {
       const recordId = `${student.id}_${monthKey}_${cName}`;
       const existing = payments.find((p: any) => p.record_id === recordId);
@@ -199,22 +213,21 @@ export default function PaymentManager() {
           record_id: recordId,
           student_id: student.id,
           month: monthKey,
-          class_name: cName,
+          class_type: cName, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
           status: currentStatus,
           whatsapp_sent: true
         }, { onConflict: 'record_id' });
 
         if (error) {
           console.error("WhatsApp status save failed:", error);
-          alert("WhatsApp තත්වය Save කිරීම අසාර්ථක විය!");
         } else {
           setPayments(prev => {
             const exists = prev.find((p: any) => p.record_id === recordId);
             if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
-            return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_name: cName, status: currentStatus, whatsapp_sent: true }];
+            // FIXED: State එකේදීත් class_type යෙදීම
+            return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_type: cName, status: currentStatus, whatsapp_sent: true }];
           });
           
-          // --- REALTIME BROADCAST FOR WHATSAPP STATUS ---
           const channel = supabase.channel(`student_dashboard_${student.id}`);
           await channel.send({
             type: 'broadcast',
@@ -225,17 +238,6 @@ export default function PaymentManager() {
         }
       }
     }
-
-    const baseUrl = window.location.origin; 
-    let link = `${baseUrl}/invoice?s=${student.id}&m=${monthKey}`;
-    let message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසය සඳහා පන්ති ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
-    if (specificClass) {
-      link += `&c=${encodeURIComponent(specificClass)}`;
-      message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසයේ [${specificClass}] පන්තිය සඳහා ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
-    }
-    message += `\n🔗 Link: ${link}\n\nස්තූතියි!`;
-    const whatsappUrl = `https://wa.me/94${student.whatsapp?.substring(1)}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
   };
 
   const updateStudentClasses = async (studentId: string, newClasses: string[]) => {
@@ -245,7 +247,6 @@ export default function PaymentManager() {
     if (error) {
       console.error("Error updating student classes:", error);
     } else {
-      // --- REALTIME BROADCAST FOR CLASS UPDATES ---
       const channel = supabase.channel(`student_dashboard_${studentId}`);
       await channel.send({
         type: 'broadcast',
