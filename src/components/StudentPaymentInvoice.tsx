@@ -19,7 +19,6 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
-  // Config එකෙන් එන මිල ගණන් Text එක JSON හෝ String විදිහට හරියටම ගලවා ගන්නා Function එක
   const parseRatesText = (classRatesText: string): { [key: string]: number } => {
     const tempRatesMap: { [key: string]: number } = {};
     if (!classRatesText) return tempRatesMap;
@@ -60,7 +59,7 @@ export default function StudentPaymentInvoice() {
     }
   };
 
-  // 1. මුලින්ම දත්ත සාමාන්‍ය පරිදි Fetch කරගැනීම
+  // 1. Initial Data Fetching
   useEffect(() => {
     const fetchInvoiceData = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -75,37 +74,47 @@ export default function StudentPaymentInvoice() {
       const [year, monthPart] = monthKey.split('-');
       setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
 
-      const { data: studentData } = await supabase
-        .from('students')
-        .select('id, name, nic, username, class_types')
-        .eq('id', studentId)
-        .single();
+      try {
+        // ශිෂ්‍යයාගේ තොරතුරු
+        const { data: studentData } = await supabase
+          .from('students')
+          .select('id, name, nic, username, class_types')
+          .eq('id', studentId)
+          .single();
 
-      const { data: configData } = await supabase
-        .from('site_config')
-        .select('class_rates_text')
-        .eq('id', 1)
-        .single();
+        // ගෝලීය මිල ගණන් (Fallback එකක් ලෙස තබා ගැනීමට)
+        const { data: configData } = await supabase
+          .from('site_config')
+          .select('class_rates_text')
+          .eq('id', 1)
+          .single();
 
-      const { data: paymentsData } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('student_id', studentId)
-        .eq('month', monthKey);
+        // ✅ payments ටේබල් එකෙන් class_type සහ amount ඇතුළු සියලු දත්ත නිවැරදිව ලබා ගැනීම
+        const { data: paymentsData } = await supabase
+          .from('payments')
+          .select('id, record_id, student_id, month, class_type, amount, status')
+          .eq('student_id', studentId)
+          .eq('month', monthKey);
 
-      if (paymentsData) setPayments(paymentsData);
+        if (paymentsData) {
+          console.log("Fetched Payments Data Successfully:", paymentsData);
+          setPayments(paymentsData);
+        }
 
-      if (studentData && configData?.class_rates_text) {
-        setStudent(studentData);
-        setRatesMap(parseRatesText(configData.class_rates_text));
+        if (studentData) setStudent(studentData);
+        if (configData?.class_rates_text) setRatesMap(parseRatesText(configData.class_rates_text));
+
+      } catch (err) {
+        console.error("Error loading invoice components:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     fetchInvoiceData();
   }, []);
 
-  // 2. 🔥 SUPER REALTIME: මිල ගණන් සහ පන්ති සියල්ලම එසැනින් අප්ඩේට් වීමේ කොටස
+  // 2. 🔥 REALTIME UPDATES: ඩේටාබේස් එකේ සිදුවන වෙනස්කම් ලයිව් අප්ඩේට් වීම
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const studentId = urlParams.get('s');
@@ -113,31 +122,30 @@ export default function StudentPaymentInvoice() {
 
     if (!studentId || !monthKey) return;
 
-    // A. ඇඩ්මින් පැනල් එකෙන් එන ලයිව් Broadcast සිග්නල් වලට සවන් දීම
+    // A. Broadcast සිග්නල්ස්
     const channel = supabase.channel(`student_dashboard_${studentId}`);
     channel
       .on('broadcast', { event: 'payment_updated' }, (payload: any) => {
-        const { monthKey: msgMonth, className, status } = payload.payload;
+        const { monthKey: msgMonth, className, status, amount } = payload.payload;
         if (msgMonth === monthKey) {
           setPayments(prev => {
             const recordId = `${studentId}_${monthKey}_${className}`;
-            const exists = prev.find(p => p.record_id === recordId);
+            const exists = prev.find(p => p.class_type === className);
             if (exists) {
-              return prev.map(p => p.record_id === recordId ? { ...p, status } : p);
+              return prev.map(p => p.class_type === className ? { ...p, status, amount: amount ?? p.amount } : p);
             }
-            return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status }];
+            return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status, amount }];
           });
         }
       })
       .on('broadcast', { event: 'student_classes_updated' }, (payload: any) => {
-        const { newClasses } = payload.payload;
-        setStudent((prev: any) => prev ? { ...prev, class_types: newClasses } : prev);
+        setStudent((prev: any) => prev ? { ...prev, class_types: payload.payload.newClasses } : prev);
       })
       .subscribe();
 
-    // B. payments ටේබල් එකේ amount හෝ වෙනත් දත්ත වෙනස් වූ සැනින් අප්ඩේට් වීම (Postgres Changes)
+    // B. ✅ Payments ටේබල් එකේ amount/class_type වෙනස් වූ සැණින් සිදුවන ලයිව් අප්ඩේට් එක
     const dbPaymentsSub = supabase
-      .channel('realtime-payments-invoice')
+      .channel('realtime-payments-invoice-channel')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -148,28 +156,15 @@ export default function StudentPaymentInvoice() {
           const newRec = payload.new;
           if (newRec.month === monthKey) {
             setPayments(prev => {
-              const exists = prev.find(p => p.record_id === newRec.record_id);
-              if (exists) return prev.map(p => p.record_id === newRec.record_id ? newRec : p);
+              const exists = prev.find(p => p.class_type === newRec.class_type);
+              if (exists) {
+                return prev.map(p => p.class_type === newRec.class_type ? newRec : p);
+              }
               return [...prev, newRec];
             });
           }
         } else if (payload.eventType === 'DELETE') {
-          setPayments(prev => prev.filter(p => p.record_id !== payload.old.record_id));
-        }
-      })
-      .subscribe();
-
-    // C. 🎯 නව විශේෂාංගය: ඇඩ්මින් පොදු මිල ගණන් (site_config) වෙනස් කළ සැනින් ලයිව් අප්ඩේට් වීම
-    const dbConfigSub = supabase
-      .channel('realtime-site-config')
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'site_config',
-        filter: 'id=eq.1'
-      }, (payload) => {
-        if (payload.new && payload.new.class_rates_text) {
-          setRatesMap(parseRatesText(payload.new.class_rates_text));
+          setPayments(prev => prev.filter(p => p.class_type !== payload.old.class_type));
         }
       })
       .subscribe();
@@ -177,39 +172,36 @@ export default function StudentPaymentInvoice() {
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(dbPaymentsSub);
-      supabase.removeChannel(dbConfigSub);
     };
   }, []);
 
-  // 3. 💳 මිල ගණන් හෝ පේමන්ට්ස් වෙනස් වන සෑම විටම බිල්පත නැවත හැදීම
+  // 3. 💳 මුදල් ගණනය කිරීමේ කොටස (Calculation Logic)
   useEffect(() => {
-    if (!student || !ratesMap) return;
+    if (!student) return;
 
     const urlParams = new URLSearchParams(window.location.search);
     const rawSpecificClass = urlParams.get('c');
     const specificClass = rawSpecificClass ? decodeURIComponent(rawSpecificClass).trim() : null;
 
     let activeClasses: string[] = parseStudentClasses(student.class_types);
-    
     if (specificClass) {
       activeClasses = activeClasses.filter(c => c === specificClass);
     }
 
     let total = 0;
     const calculatedClasses = activeClasses.map(cName => {
+      // ✅ payments ටේබල් එකෙන් අදාළ class_type එකට ගැලපෙන රෙකෝඩය සෙවීම
       const paymentInfo = payments.find(p => p.class_type === cName);
       const status = paymentInfo?.status || 'unpaid';
       
-      // 🎯 ප්‍රමුඛතාවය 01: payments ටේබල් එකේ amount එකක් තිබේ නම් එය ගනී. 
-      // ප්‍රමුඛතාවය 02: නැතහොත් global site_config එකේ මිල ගනී.
+      // ✅ ප්‍රමුඛතාවය 01: payments ටේබල් එකේ amount එකක් (int4) තිබේ නම් එය කෙලින්ම ගනී.
+      // ප්‍රමුඛතාවය 02: නැතහොත් පොදු ratesMap එකෙන් ගනී.
       const hasCustomAmount = paymentInfo && paymentInfo.amount !== undefined && paymentInfo.amount !== null;
       const originalFee = hasCustomAmount ? Number(paymentInfo.amount) : (ratesMap[cName] || 0);
       
       let finalFee = originalFee;
-
-      // Paid හෝ Free කාඩ්පත් හිමියන්ට බිල්පතේ මුදල 0 ලෙස පෙන්වයි
       if (status === 'paid' || status === 'free') {
-        finalFee = 0;
+        finalFee = 0; // ගෙවා ඇත්නම් බිලට එකතු වන්නේ රු. 0 කි.
       }
 
       total += finalFee;
@@ -245,20 +237,20 @@ export default function StudentPaymentInvoice() {
     <div className="min-h-screen bg-slate-950 text-slate-100 py-10 px-4 flex items-center justify-center">
       <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 md:p-8 space-y-6">
         
-        {/* 🏛️ Header */}
+        {/* Header */}
         <div className="text-center space-y-1 border-b border-slate-800 pb-4">
           <h2 className="text-lg font-bold text-blue-400">පන්ති ගාස්තු නිල බිල්පත</h2>
           <p className="text-slate-400 text-xs font-medium font-mono">{monthText} මාසය සඳහා</p>
         </div>
 
-        {/* 👤 ශිෂ්‍ය විස්තර */}
+        {/* Student Details */}
         <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/60 space-y-2 text-xs">
           <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">NIC අංකය:</span> <span className="font-mono text-slate-300">{student.nic || 'N/A'}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username}</span></div>
         </div>
 
-        {/* 💳 බිඳුණු විස්තර සහ මුළු එකතුව */}
+        {/* Bill breakdown */}
         <div className="space-y-2">
           <span className="text-xs text-slate-400 font-bold block">අයදුම් කළ පන්ති සහ ගාස්තු තත්ත්වය:</span>
           <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-4 divide-y divide-slate-800/60">
@@ -290,7 +282,7 @@ export default function StudentPaymentInvoice() {
           </div>
         </div>
 
-        {/* 🏆 සියල්ල ගෙවා ඇත්නම් පෙන්වන ලස්සන Success බැනරය */}
+        {/* Payment Completed View */}
         {isAllPaid ? (
           <div className="bg-emerald-500/10 border border-emerald-500/20 p-5 rounded-2xl text-center space-y-2 animate-fade-in">
             <CheckCircle className="text-emerald-400 mx-auto" size={32} />
@@ -299,7 +291,7 @@ export default function StudentPaymentInvoice() {
           </div>
         ) : (
           <>
-            {/* 🔄 පේමන්ට් මෙතඩ් තේරීම */}
+            {/* Payment Method Selector */}
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => setPaymentMethod('bank')}
@@ -321,9 +313,9 @@ export default function StudentPaymentInvoice() {
               </button>
             </div>
 
-            {/* 🏦 Method 01: Direct Bank Transfer */}
+            {/* Bank Details */}
             {paymentMethod === 'bank' && (
-              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4 animate-fade-in">
+              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
                   <span className="text-xs text-slate-400 font-bold">බැංකු ගිණුම් විස්තර:</span>
                   <img src="/Peoples-bank-logo.jpg" alt="People's Bank" className="h-6 w-auto object-contain rounded-sm" />
@@ -342,9 +334,9 @@ export default function StudentPaymentInvoice() {
               </div>
             )}
 
-            {/* 📱 Method 02: QR Payment */}
+            {/* QR Payment */}
             {paymentMethod === 'qr' && (
-              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 text-center space-y-3 animate-fade-in">
+              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 text-center space-y-3">
                 <span className="text-xs text-slate-400 font-bold block text-left">LankaQR හෝ ඕනෑම බැංකු ඇප් එකකින් ස්කෑන් කරන්න:</span>
                 <div className="relative inline-block bg-white p-3 rounded-2xl border border-slate-800 mx-auto group">
                   <img 
@@ -360,13 +352,12 @@ export default function StudentPaymentInvoice() {
                     <Maximize2 size={16} />
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-500 italic">QR කේතය විශාල කර ගැනීමට ඒ මත ක්ලික් කරන්න.</p>
               </div>
             )}
           </>
         )}
 
-        {/* 🔒 Security Footer */}
+        {/* Security Footer */}
         <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500 bg-slate-950/40 py-2 rounded-xl border border-slate-800/40">
           <ShieldCheck size={12} className="text-emerald-500" />
           <span>මෙය පද්ධතිය විසින් ස්වයංක්‍රීයව උත්පාදනය කරන ලද නිල බිල්පතකි.</span>
@@ -374,15 +365,14 @@ export default function StudentPaymentInvoice() {
 
       </div>
 
-      {/* 🔍 Fullscreen QR Modal view */}
+      {/* QR Modal */}
       {isQrModalOpen && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 animate-fade-in" onClick={() => setIsQrModalOpen(false)}>
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setIsQrModalOpen(false)}>
           <button className="absolute top-4 right-4 text-slate-400 hover:text-white p-2" onClick={() => setIsQrModalOpen(false)}>
             <X size={24} />
           </button>
           <div className="bg-white p-4 rounded-3xl max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <img src="/qr-payment.png" alt="QR Large" className="w-full h-auto object-contain rounded-xl" />
-            <div className="text-center text-slate-900 font-bold text-xs mt-3 font-sans">Scan & Pay</div>
           </div>
         </div>
       )}
