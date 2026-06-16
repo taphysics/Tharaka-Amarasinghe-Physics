@@ -19,6 +19,35 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
+  // Config එකෙන් එන මිල ගණන් Text එක JSON හෝ String විදිහට හරියටම ගලවා ගන්නා Function එක
+  const parseRatesText = (classRatesText: string): { [key: string]: number } => {
+    const tempRatesMap: { [key: string]: number } = {};
+    if (!classRatesText) return tempRatesMap;
+    
+    try {
+      const parsedConfig = JSON.parse(classRatesText);
+      if (parsedConfig && Array.isArray(parsedConfig.classes)) {
+        parsedConfig.classes.forEach((c: any) => {
+          if (c.name && c.fee !== undefined) {
+            tempRatesMap[c.name.trim()] = Number(c.fee);
+          }
+        });
+      }
+    } catch (error) {
+      classRatesText.split(',').forEach((item: string) => {
+        const parts = item.split(':');
+        if (parts.length >= 2) {
+          const className = parts[0].trim();
+          const classFee = parseInt(parts[1].trim());
+          if (className && !isNaN(classFee)) {
+            tempRatesMap[className] = classFee;
+          }
+        }
+      });
+    }
+    return tempRatesMap;
+  };
+
   const parseStudentClasses = (classTypes: any): string[] => {
     if (!classTypes) return [];
     if (Array.isArray(classTypes)) return classTypes.map(c => c.trim());
@@ -31,7 +60,7 @@ export default function StudentPaymentInvoice() {
     }
   };
 
-  // 1. මුලින්ම දත්ත Fetch කරගැනීම
+  // 1. මුලින්ම දත්ත සාමාන්‍ය පරිදි Fetch කරගැනීම
   useEffect(() => {
     const fetchInvoiceData = async () => {
       const urlParams = new URLSearchParams(window.location.search);
@@ -46,21 +75,18 @@ export default function StudentPaymentInvoice() {
       const [year, monthPart] = monthKey.split('-');
       setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
 
-      // ශිෂ්‍යයාගේ තොරතුරු ලබා ගැනීම
       const { data: studentData } = await supabase
         .from('students')
         .select('id, name, nic, username, class_types')
         .eq('id', studentId)
         .single();
 
-      // පන්ති වල මිල ගණන් (Config) ලබා ගැනීම
       const { data: configData } = await supabase
         .from('site_config')
         .select('class_rates_text')
         .eq('id', 1)
         .single();
 
-      // FIXED: payments ටේබල් එකෙන් මෙම සිසුවාගේ අදාළ මාසයේ දැනට පවතින පේමන්ට් තත්ත්වයන් ලබා ගැනීම
       const { data: paymentsData } = await supabase
         .from('payments')
         .select('*')
@@ -71,30 +97,7 @@ export default function StudentPaymentInvoice() {
 
       if (studentData && configData?.class_rates_text) {
         setStudent(studentData);
-
-        const tempRatesMap: { [key: string]: number } = {};
-        try {
-          const parsedConfig = JSON.parse(configData.class_rates_text);
-          if (parsedConfig && Array.isArray(parsedConfig.classes)) {
-            parsedConfig.classes.forEach((c: any) => {
-              if (c.name && c.fee !== undefined) {
-                tempRatesMap[c.name.trim()] = Number(c.fee);
-              }
-            });
-          }
-        } catch (error) {
-          configData.class_rates_text.split(',').forEach((item: string) => {
-            const parts = item.split(':');
-            if (parts.length >= 2) {
-              const className = parts[0].trim();
-              const classFee = parseInt(parts[1].trim());
-              if (className && !isNaN(classFee)) {
-                tempRatesMap[className] = classFee;
-              }
-            }
-          });
-        }
-        setRatesMap(tempRatesMap);
+        setRatesMap(parseRatesText(configData.class_rates_text));
       }
       setLoading(false);
     };
@@ -102,7 +105,7 @@ export default function StudentPaymentInvoice() {
     fetchInvoiceData();
   }, []);
 
-  // 2. FIXED & OPTIMIZED: Realtime සබඳතාවය සැකසීම (ඇඩ්මින් වෙනස් කල සැනින් බිල වෙනස් වේ)
+  // 2. 🔥 SUPER REALTIME: මිල ගණන් සහ පන්ති සියල්ලම එසැනින් අප්ඩේට් වීමේ කොටස
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const studentId = urlParams.get('s');
@@ -110,9 +113,8 @@ export default function StudentPaymentInvoice() {
 
     if (!studentId || !monthKey) return;
 
-    // ඇඩ්මින් පැනල් එකෙන් එවන Broadcast ලයිව් සිග්නල් වලට සවන් දීම
+    // A. ඇඩ්මින් පැනල් එකෙන් එන ලයිව් Broadcast සිග්නල් වලට සවන් දීම
     const channel = supabase.channel(`student_dashboard_${studentId}`);
-
     channel
       .on('broadcast', { event: 'payment_updated' }, (payload: any) => {
         const { monthKey: msgMonth, className, status } = payload.payload;
@@ -123,7 +125,6 @@ export default function StudentPaymentInvoice() {
             if (exists) {
               return prev.map(p => p.record_id === recordId ? { ...p, status } : p);
             }
-            // FIXED: class_type ලෙස නව රෙකෝඩය එකතු කිරීම
             return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status }];
           });
         }
@@ -134,9 +135,9 @@ export default function StudentPaymentInvoice() {
       })
       .subscribe();
 
-    // Database එකට සෘජුවම සිදුවන වෙනස්කම් (Postgres Changes) වලටද සවන් දීම (වැඩි ආරක්ෂාවට)
-    const dbSubscription = supabase
-      .channel('payments-invoice-changes')
+    // B. payments ටේබල් එකේ amount හෝ වෙනත් දත්ත වෙනස් වූ සැනින් අප්ඩේට් වීම (Postgres Changes)
+    const dbPaymentsSub = supabase
+      .channel('realtime-payments-invoice')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -144,30 +145,43 @@ export default function StudentPaymentInvoice() {
         filter: `student_id=eq.${studentId}`
       }, (payload) => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          const newRecord = payload.new;
-          if (newRecord.month === monthKey) {
+          const newRec = payload.new;
+          if (newRec.month === monthKey) {
             setPayments(prev => {
-              const exists = prev.find(p => p.record_id === newRecord.record_id);
-              if (exists) {
-                return prev.map(p => p.record_id === newRecord.record_id ? newRecord : p);
-              }
-              return [...prev, newRecord];
+              const exists = prev.find(p => p.record_id === newRec.record_id);
+              if (exists) return prev.map(p => p.record_id === newRec.record_id ? newRec : p);
+              return [...prev, newRec];
             });
           }
         } else if (payload.eventType === 'DELETE') {
-          const oldRecord = payload.old;
-          setPayments(prev => prev.filter(p => p.record_id !== oldRecord.record_id));
+          setPayments(prev => prev.filter(p => p.record_id !== payload.old.record_id));
+        }
+      })
+      .subscribe();
+
+    // C. 🎯 නව විශේෂාංගය: ඇඩ්මින් පොදු මිල ගණන් (site_config) වෙනස් කළ සැනින් ලයිව් අප්ඩේට් වීම
+    const dbConfigSub = supabase
+      .channel('realtime-site-config')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'site_config',
+        filter: 'id=eq.1'
+      }, (payload) => {
+        if (payload.new && payload.new.class_rates_text) {
+          setRatesMap(parseRatesText(payload.new.class_rates_text));
         }
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      supabase.removeChannel(dbSubscription);
+      supabase.removeChannel(dbPaymentsSub);
+      supabase.removeChannel(dbConfigSub);
     };
   }, []);
 
-  // 3. ශිෂ්‍යයා, පේමන්ට්ස් හෝ මිල ගණන් වෙනස් වන විට බිල්පත නැවත ගණනය කිරීම
+  // 3. 💳 මිල ගණන් හෝ පේමන්ට්ස් වෙනස් වන සෑම විටම බිල්පත නැවත හැදීම
   useEffect(() => {
     if (!student || !ratesMap) return;
 
@@ -183,14 +197,17 @@ export default function StudentPaymentInvoice() {
 
     let total = 0;
     const calculatedClasses = activeClasses.map(cName => {
-      // FIXED: class_name වෙනුවට අපේ නව class_type එකෙන් රෙකෝඩ් එක සෙවීම
       const paymentInfo = payments.find(p => p.class_type === cName);
       const status = paymentInfo?.status || 'unpaid';
       
-      const originalFee = ratesMap[cName] || 0;
+      // 🎯 ප්‍රමුඛතාවය 01: payments ටේබල් එකේ amount එකක් තිබේ නම් එය ගනී. 
+      // ප්‍රමුඛතාවය 02: නැතහොත් global site_config එකේ මිල ගනී.
+      const hasCustomAmount = paymentInfo && paymentInfo.amount !== undefined && paymentInfo.amount !== null;
+      const originalFee = hasCustomAmount ? Number(paymentInfo.amount) : (ratesMap[cName] || 0);
+      
       let finalFee = originalFee;
 
-      // Paid හෝ Free නම් සිසුවාගෙන් එම පන්තියට මුදල් අය නොකෙරේ (0 වේ)
+      // Paid හෝ Free කාඩ්පත් හිමියන්ට බිල්පතේ මුදල 0 ලෙස පෙන්වයි
       if (status === 'paid' || status === 'free') {
         finalFee = 0;
       }
@@ -236,7 +253,7 @@ export default function StudentPaymentInvoice() {
 
         {/* 👤 ශිෂ්‍ය විස්තර */}
         <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/60 space-y-2 text-xs">
-          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ นම:</span> <span className="font-bold text-white">{student.name}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">NIC අංකය:</span> <span className="font-mono text-slate-300">{student.nic || 'N/A'}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username}</span></div>
         </div>
@@ -282,7 +299,7 @@ export default function StudentPaymentInvoice() {
           </div>
         ) : (
           <>
-            {/* 🔄 පේමන්ට් මෙතඩ් තේරීම (ගෙවීමට ඇත්නම් පමණක් පෙන්වයි) */}
+            {/* 🔄 පේමන්ට් මෙතඩ් තේරීම */}
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => setPaymentMethod('bank')}
