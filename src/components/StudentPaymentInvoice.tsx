@@ -19,52 +19,9 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
-  const parseRatesText = (classRatesText: any): { [key: string]: number } => {
-    const tempRatesMap: { [key: string]: number } = {};
-    if (!classRatesText) return tempRatesMap;
-    
-    // Type එක Object එකක් නම් (Supabase JSONB return කළහොත්)
-    if (typeof classRatesText === 'object') {
-      if (classRatesText && Array.isArray(classRatesText.classes)) {
-        classRatesText.classes.forEach((c: any) => {
-          if (c.name && c.fee !== undefined) {
-            tempRatesMap[c.name.trim()] = Number(c.fee);
-          }
-        });
-      }
-      return tempRatesMap;
-    }
-
-    // Type එක String එකක් නම්
-    try {
-      const parsedConfig = JSON.parse(classRatesText);
-      if (parsedConfig && Array.isArray(parsedConfig.classes)) {
-        parsedConfig.classes.forEach((c: any) => {
-          if (c.name && c.fee !== undefined) {
-            tempRatesMap[c.name.trim()] = Number(c.fee);
-          }
-        });
-      }
-    } catch (error) {
-      if (typeof classRatesText === 'string') {
-        classRatesText.split(',').forEach((item: string) => {
-          const parts = item.split(':');
-          if (parts.length >= 2) {
-            const className = parts[0].trim();
-            const classFee = parseInt(parts[1].trim());
-            if (className && !isNaN(classFee)) {
-              tempRatesMap[className] = classFee;
-            }
-          }
-        });
-      }
-    }
-    return tempRatesMap;
-  };
-
   const parseStudentClasses = (classTypes: any): string[] => {
     if (!classTypes) return [];
-    if (Array.isArray(classTypes)) return classTypes.map(c => String(c).trim());
+    if (Array.isArray(classTypes)) return classTypes.map(c => c.trim());
     try {
       const parsed = JSON.parse(classTypes);
       if (Array.isArray(parsed)) return parsed.map((c: any) => String(c).trim());
@@ -86,27 +43,28 @@ export default function StudentPaymentInvoice() {
         return;
       }
 
-      // Safe split for monthKey (e.g., "2026-03")
-      const monthParts = monthKey.split('-');
-      if (monthParts.length === 2) {
-        setMonthText(`${monthParts[0]} ${monthsMap[monthParts[1]] || ''}`);
-      } else {
-        setMonthText(monthKey);
-      }
+      const [year, monthPart] = monthKey.split('-');
+      setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
 
       try {
+        // ශිෂ්‍යයාගේ තොරතුරු ලබා ගැනීම
         const { data: studentData } = await supabase
           .from('students')
           .select('id, name, nic, username, class_types')
           .eq('id', studentId)
           .single();
 
-        const { data: configData } = await supabase
-          .from('site_config')
-          .select('class_rates_text')
-          .eq('id', 1)
-          .single();
+        // ✅ class_types_config ටේබල් එකෙන් නවතම මිල ගණන් (Amounts) ලබා ගැනීම සහ එරර් එක ෆික්ස් කිරීම
+        const { data: globalRatesData, error: ratesError } = await supabase
+          .from('class_types_config')
+          .select('class_type, amount')
+          .order('class_type', { ascending: true });
 
+        if (ratesError) {
+          console.error("Error fetching class configs:", ratesError);
+        }
+
+        // ✅ payments ටේබල් එකෙන් අදාළ දත්ත ලබා ගැනීම
         const { data: paymentsData } = await supabase
           .from('payments')
           .select('id, record_id, student_id, month, class_type, amount, status')
@@ -114,11 +72,22 @@ export default function StudentPaymentInvoice() {
           .eq('month', monthKey);
 
         if (paymentsData) {
+          console.log("Fetched Payments Data Successfully:", paymentsData);
           setPayments(paymentsData);
         }
 
         if (studentData) setStudent(studentData);
-        if (configData?.class_rates_text) setRatesMap(parseRatesText(configData.class_rates_text));
+
+        // මිල ගණන් Map එකක් ලෙස සකසා ගැනීම
+        if (globalRatesData) {
+          const tempRatesMap: { [key: string]: number } = {};
+          globalRatesData.forEach((c: any) => {
+            if (c.class_type) {
+              tempRatesMap[c.class_type.trim()] = Number(c.amount || 0);
+            }
+          });
+          setRatesMap(tempRatesMap);
+        }
 
       } catch (err) {
         console.error("Error loading invoice components:", err);
@@ -128,9 +97,9 @@ export default function StudentPaymentInvoice() {
     };
 
     fetchInvoiceData();
-  }, []); // Empty dependency array as this runs once on mount
+  }, []);
 
-  // 2. 🔥 REALTIME UPDATES
+  // 2. REALTIME UPDATES: ඩේටාබේස් එකේ සිදුවන වෙනස්කම් ලයිව් අප්ඩේට් වීම
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const studentId = urlParams.get('s');
@@ -138,7 +107,6 @@ export default function StudentPaymentInvoice() {
 
     if (!studentId || !monthKey) return;
 
-    // A. Broadcast Signals
     const channel = supabase.channel(`student_dashboard_${studentId}`);
     channel
       .on('broadcast', { event: 'payment_updated' }, (payload: any) => {
@@ -159,9 +127,8 @@ export default function StudentPaymentInvoice() {
       })
       .subscribe();
 
-    // B. Postgres Changes - Unique channel name to avoid conflicts
     const dbPaymentsSub = supabase
-      .channel(`realtime-payments-invoice-${studentId}`)
+      .channel('realtime-payments-invoice-channel')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -209,12 +176,14 @@ export default function StudentPaymentInvoice() {
       const paymentInfo = payments.find(p => p.class_type === cName);
       const status = paymentInfo?.status || 'unpaid';
       
-      const hasCustomAmount = paymentInfo && paymentInfo.amount !== undefined && paymentInfo.amount !== null;
-      const originalFee = hasCustomAmount ? Number(paymentInfo.amount) : (ratesMap[cName] || 0);
+      // ✅ ප්‍රමුඛතාවය 01: class_types_config එකෙන් එන ලයිව් මිල මුලින්ම පරීක්ෂා කරයි (පරණ බිල් අප්ඩේට් වීමට මෙය අත්‍යවශ්‍ය වේ)
+      // ✅ ප්‍රමුඛතාවය 02: එහි නොමැති නම් පමණක් payments ටේබල් එකේ amount එක බලයි.
+      const configFee = ratesMap[cName];
+      const originalFee = configFee !== undefined ? configFee : (paymentInfo?.amount ? Number(paymentInfo.amount) : 0);
       
       let finalFee = originalFee;
       if (status === 'paid' || status === 'free') {
-        finalFee = 0;
+        finalFee = 0; 
       }
 
       total += finalFee;
@@ -258,17 +227,17 @@ export default function StudentPaymentInvoice() {
 
         {/* Student Details */}
         <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/60 space-y-2 text-xs">
-          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name || 'N/A'}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">NIC අංකය:</span> <span className="font-mono text-slate-300">{student.nic || 'N/A'}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username || 'N/A'}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username}</span></div>
         </div>
 
         {/* Bill breakdown */}
         <div className="space-y-2">
           <span className="text-xs text-slate-400 font-bold block">අයදුම් කළ පන්ති සහ ගාස්තු තත්ත්වය:</span>
           <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-4 divide-y divide-slate-800/60">
-            {classesWithFees.map((c) => (
-              <div key={c.name} className="flex justify-between items-center py-2.5 text-xs">
+            {classesWithFees.map((c, idx) => (
+              <div key={idx} className="flex justify-between items-center py-2.5 text-xs">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-slate-300 font-medium">{c.name}</span>
                   {c.status === 'paid' && <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1"><CheckCircle size={11} className="fill-emerald-500/10"/> ගෙවා ඇත (Paid)</span>}
