@@ -19,10 +19,23 @@ export default function StudentPaymentInvoice() {
     '09': 'සැප්තැම්බර්', '10': 'ඔක්තෝබර්', '11': 'නොවැම්බර්', '12': 'දෙසැම්බර්'
   };
 
-  const parseRatesText = (classRatesText: string): { [key: string]: number } => {
+  const parseRatesText = (classRatesText: any): { [key: string]: number } => {
     const tempRatesMap: { [key: string]: number } = {};
     if (!classRatesText) return tempRatesMap;
     
+    // Type එක Object එකක් නම් (Supabase JSONB return කළහොත්)
+    if (typeof classRatesText === 'object') {
+      if (classRatesText && Array.isArray(classRatesText.classes)) {
+        classRatesText.classes.forEach((c: any) => {
+          if (c.name && c.fee !== undefined) {
+            tempRatesMap[c.name.trim()] = Number(c.fee);
+          }
+        });
+      }
+      return tempRatesMap;
+    }
+
+    // Type එක String එකක් නම්
     try {
       const parsedConfig = JSON.parse(classRatesText);
       if (parsedConfig && Array.isArray(parsedConfig.classes)) {
@@ -33,23 +46,25 @@ export default function StudentPaymentInvoice() {
         });
       }
     } catch (error) {
-      classRatesText.split(',').forEach((item: string) => {
-        const parts = item.split(':');
-        if (parts.length >= 2) {
-          const className = parts[0].trim();
-          const classFee = parseInt(parts[1].trim());
-          if (className && !isNaN(classFee)) {
-            tempRatesMap[className] = classFee;
+      if (typeof classRatesText === 'string') {
+        classRatesText.split(',').forEach((item: string) => {
+          const parts = item.split(':');
+          if (parts.length >= 2) {
+            const className = parts[0].trim();
+            const classFee = parseInt(parts[1].trim());
+            if (className && !isNaN(classFee)) {
+              tempRatesMap[className] = classFee;
+            }
           }
-        }
-      });
+        });
+      }
     }
     return tempRatesMap;
   };
 
   const parseStudentClasses = (classTypes: any): string[] => {
     if (!classTypes) return [];
-    if (Array.isArray(classTypes)) return classTypes.map(c => c.trim());
+    if (Array.isArray(classTypes)) return classTypes.map(c => String(c).trim());
     try {
       const parsed = JSON.parse(classTypes);
       if (Array.isArray(parsed)) return parsed.map((c: any) => String(c).trim());
@@ -71,25 +86,27 @@ export default function StudentPaymentInvoice() {
         return;
       }
 
-      const [year, monthPart] = monthKey.split('-');
-      setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
+      // Safe split for monthKey (e.g., "2026-03")
+      const monthParts = monthKey.split('-');
+      if (monthParts.length === 2) {
+        setMonthText(`${monthParts[0]} ${monthsMap[monthParts[1]] || ''}`);
+      } else {
+        setMonthText(monthKey);
+      }
 
       try {
-        // ශිෂ්‍යයාගේ තොරතුරු
         const { data: studentData } = await supabase
           .from('students')
           .select('id, name, nic, username, class_types')
           .eq('id', studentId)
           .single();
 
-        // ගෝලීය මිල ගණන් (Fallback එකක් ලෙස තබා ගැනීමට)
         const { data: configData } = await supabase
           .from('site_config')
           .select('class_rates_text')
           .eq('id', 1)
           .single();
 
-        // ✅ payments ටේබල් එකෙන් class_type සහ amount ඇතුළු සියලු දත්ත නිවැරදිව ලබා ගැනීම
         const { data: paymentsData } = await supabase
           .from('payments')
           .select('id, record_id, student_id, month, class_type, amount, status')
@@ -97,7 +114,6 @@ export default function StudentPaymentInvoice() {
           .eq('month', monthKey);
 
         if (paymentsData) {
-          console.log("Fetched Payments Data Successfully:", paymentsData);
           setPayments(paymentsData);
         }
 
@@ -112,9 +128,9 @@ export default function StudentPaymentInvoice() {
     };
 
     fetchInvoiceData();
-  }, []);
+  }, []); // Empty dependency array as this runs once on mount
 
-  // 2. 🔥 REALTIME UPDATES: ඩේටාබේස් එකේ සිදුවන වෙනස්කම් ලයිව් අප්ඩේට් වීම
+  // 2. 🔥 REALTIME UPDATES
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const studentId = urlParams.get('s');
@@ -122,7 +138,7 @@ export default function StudentPaymentInvoice() {
 
     if (!studentId || !monthKey) return;
 
-    // A. Broadcast සිග්නල්ස්
+    // A. Broadcast Signals
     const channel = supabase.channel(`student_dashboard_${studentId}`);
     channel
       .on('broadcast', { event: 'payment_updated' }, (payload: any) => {
@@ -143,9 +159,9 @@ export default function StudentPaymentInvoice() {
       })
       .subscribe();
 
-    // B. ✅ Payments ටේබල් එකේ amount/class_type වෙනස් වූ සැණින් සිදුවන ලයිව් අප්ඩේට් එක
+    // B. Postgres Changes - Unique channel name to avoid conflicts
     const dbPaymentsSub = supabase
-      .channel('realtime-payments-invoice-channel')
+      .channel(`realtime-payments-invoice-${studentId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -190,18 +206,15 @@ export default function StudentPaymentInvoice() {
 
     let total = 0;
     const calculatedClasses = activeClasses.map(cName => {
-      // ✅ payments ටේබල් එකෙන් අදාළ class_type එකට ගැලපෙන රෙකෝඩය සෙවීම
       const paymentInfo = payments.find(p => p.class_type === cName);
       const status = paymentInfo?.status || 'unpaid';
       
-      // ✅ ප්‍රමුඛතාවය 01: payments ටේබල් එකේ amount එකක් (int4) තිබේ නම් එය කෙලින්ම ගනී.
-      // ප්‍රමුඛතාවය 02: නැතහොත් පොදු ratesMap එකෙන් ගනී.
       const hasCustomAmount = paymentInfo && paymentInfo.amount !== undefined && paymentInfo.amount !== null;
       const originalFee = hasCustomAmount ? Number(paymentInfo.amount) : (ratesMap[cName] || 0);
       
       let finalFee = originalFee;
       if (status === 'paid' || status === 'free') {
-        finalFee = 0; // ගෙවා ඇත්නම් බිලට එකතු වන්නේ රු. 0 කි.
+        finalFee = 0;
       }
 
       total += finalFee;
@@ -245,17 +258,17 @@ export default function StudentPaymentInvoice() {
 
         {/* Student Details */}
         <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/60 space-y-2 text-xs">
-          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">සිසුවාගේ නම:</span> <span className="font-bold text-white">{student.name || 'N/A'}</span></div>
           <div className="flex justify-between"><span className="text-slate-500">NIC අංකය:</span> <span className="font-mono text-slate-300">{student.nic || 'N/A'}</span></div>
-          <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">පරිශීලක නාමය:</span> <span className="font-mono text-blue-400">@{student.username || 'N/A'}</span></div>
         </div>
 
         {/* Bill breakdown */}
         <div className="space-y-2">
           <span className="text-xs text-slate-400 font-bold block">අයදුම් කළ පන්ති සහ ගාස්තු තත්ත්වය:</span>
           <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-4 divide-y divide-slate-800/60">
-            {classesWithFees.map((c, idx) => (
-              <div key={idx} className="flex justify-between items-center py-2.5 text-xs">
+            {classesWithFees.map((c) => (
+              <div key={c.name} className="flex justify-between items-center py-2.5 text-xs">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-slate-300 font-medium">{c.name}</span>
                   {c.status === 'paid' && <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1"><CheckCircle size={11} className="fill-emerald-500/10"/> ගෙවා ඇත (Paid)</span>}

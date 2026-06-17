@@ -12,21 +12,6 @@ const parseStudentClasses = (classTypes: any): string[] => {
   }
 };
 
-const parseAllClassesConfig = (configText: string): string[] => {
-  if (!configText) return [];
-  try {
-    const parsed = JSON.parse(configText);
-    if (Array.isArray(parsed)) {
-      return parsed.map((item: any) => item.name || item.class_name || item).filter(Boolean);
-    } else if (parsed.classes && Array.isArray(parsed.classes)) {
-      return parsed.classes.map((item: any) => item.name || item.class_name).filter(Boolean);
-    }
-  } catch (e) {
-    return configText.split(',').map((c: string) => c.split(':')[0].trim()).filter(Boolean);
-  }
-  return [];
-};
-
 export default function PaymentManager() {
   const [students, setStudents] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -45,6 +30,7 @@ export default function PaymentManager() {
   }, []);
 
   const fetchData = async () => {
+    // 1. Fetch Students
     const { data: stdData, error: stdError } = await supabase.from('students').select('*').order('name');
     if (stdError) console.error("Error fetching students:", stdError);
     if (stdData) {
@@ -55,13 +41,22 @@ export default function PaymentManager() {
       setStudents(formattedStudents);
     }
 
+    // 2. Fetch Payments
     const { data: payData, error: payError } = await supabase.from('payments').select('*');
     if (payError) console.error("Error fetching payments:", payError);
     if (payData) setPayments(payData);
 
-    const { data: config } = await supabase.from('site_config').select('class_rates_text').eq('id', 1).single();
-    if (config?.class_rates_text) {
-      setAllClasses(parseAllClassesConfig(config.class_rates_text));
+    // 3. Fetch Classes from NEW class_types_config table
+    const { data: classesData, error: classesError } = await supabase
+      .from('class_types_config')
+      .select('class_types')
+      .eq('is_active', true)
+      .order('class_types', { ascending: true }); // Use class_types here instead of class_name
+
+    if (classesError) {
+      console.error("Error fetching class configs:", classesError);
+    } else if (classesData) {
+      setAllClasses(classesData.map((c: any) => c.class_types).filter(Boolean));
     }
   };
 
@@ -89,7 +84,6 @@ export default function PaymentManager() {
 
     setPayments(prev => {
       const exists = prev.find((p: any) => p.record_id === recordId);
-      // FIXED: class_name වෙනුවට class_type යෙදීම
       if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
       return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
     });
@@ -98,7 +92,7 @@ export default function PaymentManager() {
       record_id: recordId,
       student_id: studentId,
       month: monthKey,
-      class_type: className, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
+      class_type: className, 
       status: status,
       reminder_sent: reminderStatus,
       whatsapp_sent: whatsappStatus
@@ -136,7 +130,7 @@ export default function PaymentManager() {
           record_id: recordId,
           student_id: studentId,
           month: monthKey,
-          class_type: cName, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
+          class_type: cName,
           status: currentStatus,
           reminder_sent: true
         }, { onConflict: 'record_id' });
@@ -184,7 +178,6 @@ export default function PaymentManager() {
     const classesToSend = specificClass ? [specificClass] : (student.class_types || []);
     const monthName = monthsNames[parseInt(monthKey.split('-')[1]) - 1];
     
-    // 1. WhatsApp විවෘත කිරීම Browser එකෙන් Block වීම වැළැක්වීමට එය මුලින්ම (Synchronously) විවෘත කරමු
     const baseUrl = window.location.origin; 
     let link = `${baseUrl}/invoice?s=${student.id}&m=${monthKey}`;
     let message = `ආයුබෝවන් ${student.name},\n\nඔබගේ ${monthName} මාසය සඳහා පන්ති ගාස්තු ගෙවීම් බිල්පත පහත ලින්ක් එකෙන් ලබා ගන්න:\n`;
@@ -195,14 +188,12 @@ export default function PaymentManager() {
     }
     message += `\n🔗 Link: ${link}\n\nස්තූතියි!`;
     
-    // දුරකථන අංකය නිවැරදිව Format කිරීම (077 හෝ +9477 ආදී ඕනෑම එකකට ගැළපෙන පරිදි)
     const phoneStr = (student.whatsapp || '').replace(/[^0-9]/g, '');
     const cleanPhone = phoneStr.startsWith('94') ? phoneStr : phoneStr.startsWith('0') ? `94${phoneStr.substring(1)}` : `94${phoneStr}`;
     
     const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank'); // දැන් කිසිම වෙලාවක Browser එකෙන් Popup එක බ්ලොක් කරන්නේ නැත
+    window.open(whatsappUrl, '_blank'); 
 
-    // 2. ඉන්පසුව Database එක අප්ඩේට් කිරීමේ කටයුතු පසුබිමෙන් (Background) සිදුකෙරේ
     for (const cName of classesToSend) {
       const recordId = `${student.id}_${monthKey}_${cName}`;
       const existing = payments.find((p: any) => p.record_id === recordId);
@@ -213,7 +204,7 @@ export default function PaymentManager() {
           record_id: recordId,
           student_id: student.id,
           month: monthKey,
-          class_type: cName, // FIXED: මෙතැන class_name වෙනුවට class_type යෙදීම
+          class_type: cName,
           status: currentStatus,
           whatsapp_sent: true
         }, { onConflict: 'record_id' });
@@ -224,7 +215,6 @@ export default function PaymentManager() {
           setPayments(prev => {
             const exists = prev.find((p: any) => p.record_id === recordId);
             if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, whatsapp_sent: true } : p);
-            // FIXED: State එකේදීත් class_type යෙදීම
             return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_type: cName, status: currentStatus, whatsapp_sent: true }];
           });
           
@@ -299,7 +289,6 @@ export default function PaymentManager() {
 
   return (
     <div id="payment-manager-container" className="p-4 md:p-8 space-y-6 relative">
-      
       <div className="flex gap-4 items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
         <Search className="text-slate-500" />
         <input 
@@ -365,7 +354,6 @@ export default function PaymentManager() {
             <div className="xl:w-2/3 grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
               {months.map((m, idx) => {
                 const monthKey = `${selectedYear}-${m}`;
-                
                 const studentClasses = student.class_types || [];
                 let reminderCount = 0;
                 let whatsappCount = 0;
@@ -384,7 +372,6 @@ export default function PaymentManager() {
 
                 const showReminder = reminderCount > 0;
                 const reminderText = (reminderCount === unpaidCount && unpaidCount > 0) ? 'A' : reminderCount.toString();
-                
                 const showWhatsApp = whatsappCount > 0;
                 const whatsappText = (whatsappCount === unpaidCount && unpaidCount > 0) ? 'A' : whatsappCount.toString();
 
@@ -396,7 +383,6 @@ export default function PaymentManager() {
                     className="h-12 rounded-xl text-xs font-bold text-white shadow-lg transition-transform hover:scale-105 active:scale-95 flex flex-col items-center justify-center gap-0.5 opacity-90 hover:opacity-100 relative p-1"
                   >
                     <span>{monthsNames[idx]}</span>
-                    
                     <div className="flex gap-2 items-center justify-center h-3 mt-0.5">
                       {showReminder && (
                         <div className="flex items-center gap-0.5 text-amber-200">
@@ -492,7 +478,6 @@ export default function PaymentManager() {
                 );
               })}
 
-              {/* සියලුම පන්ති සඳහා පොදු ක්‍රියාමාර්ග */}
               {(activeModal.student.class_types || []).length > 1 && (() => {
                 const studentClasses = activeModal.student.class_types || [];
                 const unpaidClasses = studentClasses.filter((c: string) => {
