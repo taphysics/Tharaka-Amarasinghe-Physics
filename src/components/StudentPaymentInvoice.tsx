@@ -4,6 +4,7 @@ import { CreditCard, QrCode, CheckCircle, ShieldCheck, Maximize2, X, AlertCircle
 
 export default function StudentPaymentInvoice() {
   const [loading, setLoading] = useState(true);
+  const [dataFetched, setDataFetched] = useState(false);
   const [student, setStudent] = useState<any>(null);
   const [payments, setPayments] = useState<any[]>([]);
   const [ratesMap, setRatesMap] = useState<{ [key: string]: number }>({});
@@ -12,6 +13,7 @@ export default function StudentPaymentInvoice() {
   const [paymentMethod, setPaymentMethod] = useState<'bank' | 'qr'>('bank');
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const [monthText, setMonthText] = useState('');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   const monthsMap: { [key: string]: string } = {
     '01': 'ජනවාරි', '02': 'පෙබරවාරි', '03': 'මාර්තු', '04': 'අප්‍රේල්',
@@ -31,12 +33,12 @@ export default function StudentPaymentInvoice() {
     }
   };
 
-  // 1. Initial Data Fetching
+  // 1. Initial Data Fetching (ක්ෂණිකව සියලුම දත්ත එකවර ලබා ගැනීම)
   useEffect(() => {
     const fetchInvoiceData = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const studentId = urlParams.get('s');
-      const monthKey = urlParams.get('m'); 
+      const monthKey = urlParams.get('m');
 
       if (!studentId || !monthKey) {
         setLoading(false);
@@ -47,51 +49,36 @@ export default function StudentPaymentInvoice() {
       setMonthText(`${year} ${monthsMap[monthPart] || ''}`);
 
       try {
-        // ශිෂ්‍යයාගේ තොරතුරු ලබා ගැනීම
-        const { data: studentData } = await supabase
-          .from('students')
-          .select('id, name, nic, username, class_types')
-          .eq('id', studentId)
-          .single();
+        // Promise.all භාවිතයෙන් තත්පරයෙන් සියලුම දත්ත එකවර අදිනවා
+        const [studentRes, ratesRes, paymentsRes, authRes] = await Promise.all([
+          supabase.from('students').select('id, name, nic, username, class_types').eq('id', studentId).single(),
+          supabase.from('class_types_config').select('*'), // Error එක මඟහරවා ගැනීමට select('*') භාවිතය
+          supabase.from('payments').select('id, record_id, student_id, month, class_type, amount, status').eq('student_id', studentId).eq('month', monthKey),
+          supabase.auth.getSession()
+        ]);
 
-        // ✅ class_types_config ටේබල් එකෙන් නවතම මිල ගණන් (Amounts) ලබා ගැනීම සහ එරර් එක ෆික්ස් කිරීම
-        const { data: globalRatesData, error: ratesError } = await supabase
-          .from('class_types_config')
-          .select('class_type, amount')
-          .order('class_type', { ascending: true });
+        if (studentRes.data) setStudent(studentRes.data);
+        if (paymentsRes.data) setPayments(paymentsRes.data);
+        setIsLoggedIn(!!authRes.data?.session);
 
-        if (ratesError) {
-          console.error("Error fetching class configs:", ratesError);
-        }
-
-        // ✅ payments ටේබල් එකෙන් අදාළ දත්ත ලබා ගැනීම
-        const { data: paymentsData } = await supabase
-          .from('payments')
-          .select('id, record_id, student_id, month, class_type, amount, status')
-          .eq('student_id', studentId)
-          .eq('month', monthKey);
-
-        if (paymentsData) {
-          console.log("Fetched Payments Data Successfully:", paymentsData);
-          setPayments(paymentsData);
-        }
-
-        if (studentData) setStudent(studentData);
-
-        // මිල ගණන් Map එකක් ලෙස සකසා ගැනීම
-        if (globalRatesData) {
+        // රු.0 එන ගැටලුව විසඳීම සඳහා වඩාත් නිවැරදි Map කිරීමක්
+        if (ratesRes.data) {
           const tempRatesMap: { [key: string]: number } = {};
-          globalRatesData.forEach((c: any) => {
+          ratesRes.data.forEach((c: any) => {
             if (c.class_type) {
-              tempRatesMap[c.class_type.trim()] = Number(c.amount || 0);
+              // amount, fee, monthly_fee ඕනෑම Column නමකට සහය දක්වයි
+              const feeAmount = c.amount ?? c.monthly_fee ?? c.fee ?? c.price ?? 0;
+              // Class name එක Simple අකුරුවලට හරවා ගබඩා කරයි (Miss match වීම වැළැක්වීමට)
+              tempRatesMap[c.class_type.trim().toLowerCase()] = Number(feeAmount);
             }
           });
           setRatesMap(tempRatesMap);
         }
 
+        setDataFetched(true); // දත්ත ගෙන අවසන් බව තහවුරු කිරීම
+
       } catch (err) {
         console.error("Error loading invoice components:", err);
-      } finally {
         setLoading(false);
       }
     };
@@ -158,9 +145,13 @@ export default function StudentPaymentInvoice() {
     };
   }, []);
 
-  // 3. 💳 මුදල් ගණනය කිරීමේ කොටස (Calculation Logic)
+  // 3. 💳 මුදල් ගණනය කිරීමේ කොටස (Calculation Logic - Runs instantly after fetch)
   useEffect(() => {
-    if (!student) return;
+    if (!dataFetched) return;
+    if (!student) {
+      setLoading(false);
+      return;
+    }
 
     const urlParams = new URLSearchParams(window.location.search);
     const rawSpecificClass = urlParams.get('c');
@@ -176,9 +167,8 @@ export default function StudentPaymentInvoice() {
       const paymentInfo = payments.find(p => p.class_type === cName);
       const status = paymentInfo?.status || 'unpaid';
       
-      // ✅ ප්‍රමුඛතාවය 01: class_types_config එකෙන් එන ලයිව් මිල මුලින්ම පරීක්ෂා කරයි (පරණ බිල් අප්ඩේට් වීමට මෙය අත්‍යවශ්‍ය වේ)
-      // ✅ ප්‍රමුඛතාවය 02: එහි නොමැති නම් පමණක් payments ටේබල් එකේ amount එක බලයි.
-      const configFee = ratesMap[cName];
+      // ✅ මෙතනදීත් Class Name එක Lowercase කරලා බලනවා නිවැරදිම ගාන ගන්න
+      const configFee = ratesMap[cName.trim().toLowerCase()];
       const originalFee = configFee !== undefined ? configFee : (paymentInfo?.amount ? Number(paymentInfo.amount) : 0);
       
       let finalFee = originalFee;
@@ -192,7 +182,17 @@ export default function StudentPaymentInvoice() {
 
     setClassesWithFees(calculatedClasses);
     setGrandTotal(total);
-  }, [student, payments, ratesMap]);
+    setLoading(false); // ගණනය කර අවසන් වූ පසු පමණක් Loading ඉවත් කරයි
+  }, [dataFetched, student, payments, ratesMap]);
+
+  // Navigation Function
+  const handleNavigation = () => {
+    if (isLoggedIn) {
+      window.location.href = '/dashboard';
+    } else {
+      window.location.href = '/';
+    }
+  };
 
   if (loading) {
     return (
@@ -213,8 +213,33 @@ export default function StudentPaymentInvoice() {
     );
   }
 
+  // සියලුම ගෙවීම් අවසන් කර ඇත්දැයි බැලීම
   const isAllPaid = classesWithFees.length > 0 && classesWithFees.every(c => c.status === 'paid' || c.status === 'free');
 
+  // ✅ 4. සම්පූර්ණයෙන්ම මුදල් ගෙවා ඇත්නම් පෙන්වන වෙනමම පිටුව (Full Page Success View)
+  if (isAllPaid) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
+        <div className="bg-slate-900 border border-emerald-500/30 p-8 rounded-3xl shadow-2xl max-w-md w-full text-center space-y-5 animate-fade-in">
+          <div className="bg-emerald-500/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-2">
+            <CheckCircle className="text-emerald-400" size={40} />
+          </div>
+          <h2 className="text-2xl text-emerald-400 font-bold">සාර්ථකයි!</h2>
+          <p className="text-slate-300 text-sm leading-relaxed">
+            ඔබ <b>{monthText}</b> මාසය සඳහා සියලුම පන්ති ගාස්තු සාර්ථකව ගෙවා අවසන් කර ඇත. ඔබට තවදුරටත් ගෙවීම් කිරීමට කිසිවක් නොමැත.
+          </p>
+          <button 
+            onClick={handleNavigation}
+            className="w-full mt-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 px-4 rounded-xl transition duration-200 shadow-lg shadow-emerald-500/20"
+          >
+            {isLoggedIn ? 'Dashboard එකට යන්න' : 'Home Page එකට යන්න'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ගෙවා නොමැතිනම් පමණක් බිල්පත පෙන්වයි
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 py-10 px-4 flex items-center justify-center">
       <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 md:p-8 space-y-6">
@@ -264,79 +289,68 @@ export default function StudentPaymentInvoice() {
           </div>
         </div>
 
-        {/* Payment Completed View */}
-        {isAllPaid ? (
-          <div className="bg-emerald-500/10 border border-emerald-500/20 p-5 rounded-2xl text-center space-y-2 animate-fade-in">
-            <CheckCircle className="text-emerald-400 mx-auto" size={32} />
-            <h4 className="text-emerald-400 font-bold text-sm">මෙම මාසය සඳහා සියලුම ගෙවීම් සම්පූර්ණයි!</h4>
-            <p className="text-slate-400 text-xs">ඔබ මෙම මාසය සඳහා පන්ති ගාස්තු සාර්ථකව ගෙවා අවසන් කර ඇත. ස්තූතියි!</p>
-          </div>
-        ) : (
-          <>
-            {/* Payment Method Selector */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => setPaymentMethod('bank')}
-                className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
-                  paymentMethod === 'bank' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'
-                }`}
-              >
-                <CreditCard size={18} />
-                <span className="text-xs font-bold">Bank Deposit</span>
-              </button>
-              <button
-                onClick={() => setPaymentMethod('qr')}
-                className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
-                  paymentMethod === 'qr' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'
-                }`}
-              >
-                <QrCode size={18} />
-                <span className="text-xs font-bold">QR Payment</span>
-              </button>
+        {/* Payment Method Selector */}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => setPaymentMethod('bank')}
+            className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
+              paymentMethod === 'bank' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'
+            }`}
+          >
+            <CreditCard size={18} />
+            <span className="text-xs font-bold">Bank Deposit</span>
+          </button>
+          <button
+            onClick={() => setPaymentMethod('qr')}
+            className={`p-3 rounded-2xl border transition-all flex flex-col items-center gap-1.5 cursor-pointer ${
+              paymentMethod === 'qr' ? 'bg-blue-600/10 border-blue-500 text-blue-400' : 'bg-slate-950 border-slate-800 text-slate-500'
+            }`}
+          >
+            <QrCode size={18} />
+            <span className="text-xs font-bold">QR Payment</span>
+          </button>
+        </div>
+
+        {/* Bank Details */}
+        {paymentMethod === 'bank' && (
+          <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
+              <span className="text-xs text-slate-400 font-bold">බැංකු ගිණුම් විස්තර:</span>
+              <img src="/Peoples-bank-logo.jpg" alt="People's Bank" className="h-6 w-auto object-contain rounded-sm" />
             </div>
-
-            {/* Bank Details */}
-            {paymentMethod === 'bank' && (
-              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-                  <span className="text-xs text-slate-400 font-bold">බැංකු ගිණුම් විස්තර:</span>
-                  <img src="/Peoples-bank-logo.jpg" alt="People's Bank" className="h-6 w-auto object-contain rounded-sm" />
-                </div>
-                <div className="space-y-3 text-xs font-mono">
-                  <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40 flex justify-between items-center">
-                    <div><span className="text-[10px] text-slate-500 block font-sans">Account Number</span><span className="text-sm font-bold text-white select-all">015200130036285</span></div>
-                  </div>
-                  <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40">
-                    <span className="text-[10px] text-slate-500 block font-sans">Account Name</span><span className="text-white font-sans text-xs font-medium">S K S Tharaka Amarasinghe</span>
-                  </div>
-                  <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40">
-                    <span className="text-[10px] text-slate-500 block font-sans">Bank & Branch</span><span className="text-slate-300 font-sans text-xs">People's Bank - Ampara</span>
-                  </div>
-                </div>
+            <div className="space-y-3 text-xs font-mono">
+              <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40 flex justify-between items-center">
+                <div><span className="text-[10px] text-slate-500 block font-sans">Account Number</span><span className="text-sm font-bold text-white select-all">015200130036285</span></div>
               </div>
-            )}
-
-            {/* QR Payment */}
-            {paymentMethod === 'qr' && (
-              <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 text-center space-y-3">
-                <span className="text-xs text-slate-400 font-bold block text-left">LankaQR හෝ ඕනෑම බැංකු ඇප් එකකින් ස්කෑන් කරන්න:</span>
-                <div className="relative inline-block bg-white p-3 rounded-2xl border border-slate-800 mx-auto group">
-                  <img 
-                    src="/qr-payment.png" 
-                    alt="QR Payment" 
-                    className="w-40 h-40 object-contain cursor-zoom-in"
-                    onClick={() => setIsQrModalOpen(true)}
-                  />
-                  <div 
-                    onClick={() => setIsQrModalOpen(true)}
-                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition rounded-2xl cursor-pointer"
-                  >
-                    <Maximize2 size={16} />
-                  </div>
-                </div>
+              <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40">
+                <span className="text-[10px] text-slate-500 block font-sans">Account Name</span><span className="text-white font-sans text-xs font-medium">S K S Tharaka Amarasinghe</span>
               </div>
-            )}
-          </>
+              <div className="bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/40">
+                <span className="text-[10px] text-slate-500 block font-sans">Bank & Branch</span><span className="text-slate-300 font-sans text-xs">People's Bank - Ampara</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* QR Payment */}
+        {paymentMethod === 'qr' && (
+          <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 text-center space-y-3">
+            <span className="text-xs text-slate-400 font-bold block text-left">LankaQR හෝ ඕනෑම බැංකු ඇප් එකකින් ස්කෑන් කරන්න:</span>
+            <div className="relative inline-block bg-white p-3 rounded-2xl border border-slate-800 mx-auto group">
+              <img 
+                src="/qr-payment.png" 
+                alt="QR Payment" 
+                className="w-40 h-40 object-contain cursor-zoom-in"
+                onClick={() => setIsQrModalOpen(true)}
+              />
+              <div 
+                onClick={() => setIsQrModalOpen(true)}
+                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition rounded-2xl cursor-pointer"
+              >
+                <Maximize2 size={16} />
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Security Footer */}
