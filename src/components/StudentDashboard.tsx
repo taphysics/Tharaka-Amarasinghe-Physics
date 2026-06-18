@@ -213,7 +213,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
               const record = paymentData.find((p: any) => {
-                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
                 return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
@@ -249,7 +249,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           } else {
             statuses = enrolledClasses.map((cls) => {
               const paymentRecord = currentMonthPayments.find((p: any) => {
-                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 return pClass === sClass;
               });
