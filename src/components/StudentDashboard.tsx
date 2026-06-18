@@ -142,33 +142,34 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     
     if (supabase) {
       try {
-        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම (ID එකෙන්)
+        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම 
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
-          .eq('id', currentStudent.id) // 👈 username වෙනුවට id එකෙන් සොයයි
+          .eq('student_id', currentStudent.student_id || currentStudent.id) 
           .single();
 
         const studentToUse = freshStudentData || currentStudent;
         setLiveStudentData(studentToUse);
 
         let enrolledClasses: string[] = [];
-        if (studentToUse.class_type) {
-          if (Array.isArray(studentToUse.class_type)) enrolledClasses = studentToUse.class_type;
-          else if (typeof studentToUse.class_type === 'string') {
-            try { enrolledClasses = JSON.parse(studentToUse.class_type); } catch(e) { enrolledClasses = [studentToUse.class_type]; }
+        // DB එකේ තියෙන්නේ class_type
+        const classInfo = studentToUse.class_type || studentToUse.class;
+        if (classInfo) {
+          if (Array.isArray(classInfo)) enrolledClasses = classInfo;
+          else if (typeof classInfo === 'string') {
+            try { enrolledClasses = JSON.parse(classInfo); } catch(e) { enrolledClasses = [classInfo]; }
           }
         }
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත කියවීම සහ සැසඳීම (student_id එකෙන්)
+        // 2. Payments දත්ත කියවීම 
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
+          .eq('student_id', studentToUse.student_id || studentToUse.id);
 
-        // 💡 'Absent' type එක මෙතනටත් අනිවාර්යයෙන්ම එකතු කළ යුතුය
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[] = [];
         let extractedReminders: any[] = [];
         let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]> = {};
@@ -189,7 +190,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         };
 
         if (paymentData && paymentData.length > 0) {
-          // Reminders සහ Reminders Count එක එකතු කිරීම
           paymentData.forEach((p: any) => {
             if (p.reminder_massage && p.reminder_massage.trim() !== '') {
               extractedReminders.push({
@@ -200,14 +200,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
-          // 📜 History එක සැකසීම සහ අනාගත මාස ඉවත් කිරීම (වත්මන් මාසය දක්වා පමණක් පෙන්වීම)
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
             return { key: `${cYear}-${pad}`, name, monthIndex: index + 1 };
           }).filter(m => m.monthIndex <= cMonthNum);
 
-          // ඇඩ්මින් විසින් ඩීඇක්ටිවේට් කරන ලද මාස ලැයිස්තුව කියවීම
           let deactivatedList: string[] = [];
           if (studentToUse.deactivated_months) {
             if (Array.isArray(studentToUse.deactivated_months)) deactivatedList = studentToUse.deactivated_months;
@@ -219,14 +217,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
-              // ඇඩ්මින් පැනලයෙන් ඩීඇක්ටිවේට් කර ඇත්නම් එම මාසය පෙන්වීම මඟ හරියි
               if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
                 return;
               }
 
-              // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
               const record = paymentData.find((p: any) => {
-                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
                 return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
@@ -238,20 +234,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               if (record) {
                     if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
                     else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
-                    // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
                     else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
                   } else if (isMonthFree) {
                     statusValue = 'Free';
                   }
 
-                  // 💡 වෙනස: statusValue එක 'Absent' නොවේ නම් පමණක් History එකට ඇතුලත් කරන්න
                   if (statusValue !== 'Absent') {
                     pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
                   }
                 });
               });
 
-          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
           const currentMonthPayments = paymentData.filter((p: any) => 
             isCurrentMonthMatch(p.month) || isCurrentMonthMatch(p.target_month)
           );
@@ -262,7 +255,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           } else {
             statuses = enrolledClasses.map((cls) => {
               const paymentRecord = currentMonthPayments.find((p: any) => {
-                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 return pClass === sClass;
               });
@@ -283,7 +276,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
           setIsPaidCurrentMonth(isFreeStudent);
           
-          // පේමන්ට් කිසිවක් නැති විට මුළු අවුරුද්දම Unpaid/Free ලෙස සෑදීම
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
@@ -314,11 +306,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setPaymentHistory(pHistory);
         setTotalRemindersCount(activeRemindersSum);
 
-        // 3. Announcements කියවීම (පන්ති වර්ගය අනුව)
+        // 3. Announcements කියවීම
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
-          .or(`target_class_type.eq.${studentToUse.class},target_user.eq.all`);
+          .or(`target_class_type.eq.${studentToUse.class_type || studentToUse.class},target_user.eq.all`);
 
         if (announcementData) {
           const generalAlerts = announcementData.map((a: any) => ({
@@ -330,28 +322,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
         setDbReminders(extractedReminders);
 
-        // ================= අලුතින් එකතු වූ කොටස (Schema එකට අනුකූලව) =================
-        // 3.5 Payment Reminders කියවීම (payments ටේබල් එකෙන්)
+        // 3.5 Payment Reminders කියවීම
         const { data: remindersData } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_id', studentToUse.id) 
-          .eq('class_type', studentToUse.class) 
-          .eq('status', 'Unpaid'); // මුදල් ගෙවා නැති රෙකෝඩ් පමණක් ගනී
+          .eq('student_id', studentToUse.student_id || studentToUse.id) 
+          .eq('class_type', studentToUse.class_type || studentToUse.class) 
+          .eq('status', 'Unpaid');
 
         if (remindersData) {
           setPaymentReminders(remindersData);
         } else {
           setPaymentReminders([]);
         }
-        // =======================================================
 
-        // 4. Calendar Events කියවීම (Schema එකේ ඇති පරිදි 'calender_events' ලෙස යොදා ඇත)
+        // 4. Calendar Events කියවීම
         const { data: eventsData } = await supabase
           .from('calender_events')
           .select('*')
           .like('date', `${currentMonthKey}%`)
-          .eq('target_class_type', studentToUse.class);
+          .eq('target_class_type', studentToUse.class_type || studentToUse.class);
         
         if (eventsData) setCalendarEvents(eventsData);
 
