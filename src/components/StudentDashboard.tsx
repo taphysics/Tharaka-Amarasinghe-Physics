@@ -74,7 +74,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
-  
 
   // 💡 Event Modal එක සහ තෝරාගත් දවසේ දත්ත ගබඩා කිරීමට අලුතින්ම එක්කළ State එක
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<any | null>(null);
@@ -141,10 +140,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setLiveStudentData(studentToUse);
 
         let enrolledClasses: string[] = [];
-        if (studentToUse.class_type) {
-          if (Array.isArray(studentToUse.class_type)) enrolledClasses = studentToUse.class_type;
-          else if (typeof studentToUse.class_type === 'string') {
-            try { enrolledClasses = JSON.parse(studentToUse.class_type); } catch(e) { enrolledClasses = [studentToUse.class_type]; }
+        if (studentToUse.class_types) {
+          if (Array.isArray(studentToUse.class_types)) enrolledClasses = studentToUse.class_types;
+          else if (typeof studentToUse.class_types === 'string') {
+            try { enrolledClasses = JSON.parse(studentToUse.class_types); } catch(e) { enrolledClasses = [studentToUse.class_types]; }
           }
         }
 
@@ -214,7 +213,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
               const record = paymentData.find((p: any) => {
-                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
                 return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
@@ -250,7 +249,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           } else {
             statuses = enrolledClasses.map((cls) => {
               const paymentRecord = currentMonthPayments.find((p: any) => {
-                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 return pClass === sClass;
               });
@@ -594,15 +593,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex flex-col py-3 border-b border-slate-800/60 gap-2.5">
                   <span className="text-slate-400">Class :</span>
                   <div className="flex flex-wrap gap-1.5 justify-start">
-                    {Array.isArray(liveStudentData?.class_type) && liveStudentData.class_type.length > 0 
-                      ? liveStudentData.class_type.map((c: string, i: number) => (
+                    {Array.isArray(liveStudentData?.class_types) && liveStudentData.class_types.length > 0 
+                      ? liveStudentData.class_types.map((c: string, i: number) => (
                           <span key={i} className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
                             {c}
                           </span>
                         ))
-                      : (liveStudentData?.class_type || liveStudentData?.class)
+                      : (liveStudentData?.class_types || liveStudentData?.class)
                         ? <span className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
-                            {liveStudentData?.class_type || liveStudentData?.class}
+                            {liveStudentData?.class_types || liveStudentData?.class}
                           </span>
                         : <span className="text-slate-500 text-[11px]">No Classes</span>
                     }
