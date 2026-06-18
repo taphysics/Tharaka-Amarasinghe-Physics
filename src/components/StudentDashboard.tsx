@@ -1,9 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { 
-  Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, 
-  Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
-  AlertOctagon, Info, BellRing // අලුතින් එකතු කළ අයිකන මෙහි ඇත
-} from 'lucide-react';
+import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
@@ -78,7 +74,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
-
+  
 
   // 💡 Event Modal එක සහ තෝරාගත් දවසේ දත්ත ගබඩා කිරීමට අලුතින්ම එක්කළ State එක
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<any | null>(null);
@@ -102,74 +98,65 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
-// අලුතින් එකතු විය යුතු State එක
-  const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
 
   // 🔄 ඇඩ්මින් පැනලයෙන් කරන වෙනස්කම් ක්ෂණිකව (Realtime) අප්ඩේට් වන කොටස
   useEffect(() => {
-    // පළමුවෙන්ම දත්ත ලබාගැනීම සඳහා
     fetchDashboardData();
 
-    if (supabase && currentStudent?.id) {
+    if (supabase) {
       const channel = supabase.channel('student_dashboard_realtime')
-        // Payments ටේබල් එකේ වෙනස්කම් (Payment Reminders සහ Status වෙනස්වීම් සඳහා)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
           fetchDashboardData();
         })
-        // Students ටේබල් එකේ මෙම සිසුවාට අදාල වෙනස්කම් සඳහා
         .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `id=eq.${currentStudent.id}` }, () => {
           fetchDashboardData();
         })
-        // Calender Events ටේබල් එකේ වෙනස්කම් (Schema එකට අනුව අක්ෂර වින්‍යාසය calender_events ලෙස වෙනස් කර ඇත)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
           fetchDashboardData();
         })
-        // Announcements ටේබල් එකේ වෙනස්කම් සඳහා
         .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
           fetchDashboardData();
         })
         .subscribe();
 
-      // Component එක Unmount වීමේදී Channel එක remove කිරීම
       return () => {
         supabase.removeChannel(channel);
       };
     }
-  }, [currentStudent?.id, supabase]);
+  }, [currentStudent.id, supabase]);
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
     
     if (supabase) {
       try {
-        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම 
+        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම (ID එකෙන්)
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
-          .eq('student_id', currentStudent.student_id || currentStudent.id) 
+          .eq('id', currentStudent.id) // 👈 username වෙනුවට id එකෙන් සොයයි
           .single();
 
         const studentToUse = freshStudentData || currentStudent;
         setLiveStudentData(studentToUse);
 
         let enrolledClasses: string[] = [];
-        // DB එකේ තියෙන්නේ class_type
-        const classInfo = studentToUse.class_type || studentToUse.class;
-        if (classInfo) {
-          if (Array.isArray(classInfo)) enrolledClasses = classInfo;
-          else if (typeof classInfo === 'string') {
-            try { enrolledClasses = JSON.parse(classInfo); } catch(e) { enrolledClasses = [classInfo]; }
+        if (studentToUse.class_type) {
+          if (Array.isArray(studentToUse.class_type)) enrolledClasses = studentToUse.class_type;
+          else if (typeof studentToUse.class_type === 'string') {
+            try { enrolledClasses = JSON.parse(studentToUse.class_type); } catch(e) { enrolledClasses = [studentToUse.class_type]; }
           }
         }
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත කියවීම 
+        // 2. Payments දත්ත කියවීම සහ සැසඳීම (student_id එකෙන්)
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_id', studentToUse.student_id || studentToUse.id);
+          .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
 
+        // 💡 'Absent' type එක මෙතනටත් අනිවාර්යයෙන්ම එකතු කළ යුතුය
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[] = [];
         let extractedReminders: any[] = [];
         let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]> = {};
@@ -190,6 +177,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         };
 
         if (paymentData && paymentData.length > 0) {
+          // Reminders සහ Reminders Count එක එකතු කිරීම
           paymentData.forEach((p: any) => {
             if (p.reminder_massage && p.reminder_massage.trim() !== '') {
               extractedReminders.push({
@@ -200,12 +188,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             }
           });
 
+          // 📜 History එක සැකසීම සහ අනාගත මාස ඉවත් කිරීම (වත්මන් මාසය දක්වා පමණක් පෙන්වීම)
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
             return { key: `${cYear}-${pad}`, name, monthIndex: index + 1 };
           }).filter(m => m.monthIndex <= cMonthNum);
 
+          // ඇඩ්මින් විසින් ඩීඇක්ටිවේට් කරන ලද මාස ලැයිස්තුව කියවීම
           let deactivatedList: string[] = [];
           if (studentToUse.deactivated_months) {
             if (Array.isArray(studentToUse.deactivated_months)) deactivatedList = studentToUse.deactivated_months;
@@ -217,12 +207,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
+              // ඇඩ්මින් පැනලයෙන් ඩීඇක්ටිවේට් කර ඇත්නම් එම මාසය පෙන්වීම මඟ හරියි
               if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
                 return;
               }
 
+              // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
               const record = paymentData.find((p: any) => {
-                const pClass = (p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
                 return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
@@ -234,17 +226,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               if (record) {
                     if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
                     else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
+                    // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
                     else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
                   } else if (isMonthFree) {
                     statusValue = 'Free';
                   }
 
+                  // 💡 වෙනස: statusValue එක 'Absent' නොවේ නම් පමණක් History එකට ඇතුලත් කරන්න
                   if (statusValue !== 'Absent') {
                     pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
                   }
                 });
               });
 
+          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
           const currentMonthPayments = paymentData.filter((p: any) => 
             isCurrentMonthMatch(p.month) || isCurrentMonthMatch(p.target_month)
           );
@@ -255,7 +250,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           } else {
             statuses = enrolledClasses.map((cls) => {
               const paymentRecord = currentMonthPayments.find((p: any) => {
-                const pClass = (p.class_type || '').toString().trim().toLowerCase();
+                const pClass = (p.class_type || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
                 return pClass === sClass;
               });
@@ -276,6 +271,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
           setIsPaidCurrentMonth(isFreeStudent);
           
+          // පේමන්ට් කිසිවක් නැති විට මුළු අවුරුද්දම Unpaid/Free ලෙස සෑදීම
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
@@ -306,42 +302,27 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setPaymentHistory(pHistory);
         setTotalRemindersCount(activeRemindersSum);
 
-        // 3. Announcements කියවීම
+        // 3. Announcements කියවීම (පන්ති වර්ගය අනුව)
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
-          .or(`target_class_type.eq.${studentToUse.class_type || studentToUse.class},target_user.eq.all`);
+          .or(`target_class_type.eq.${studentToUse.class},target_user.eq.all`);
 
         if (announcementData) {
           const generalAlerts = announcementData.map((a: any) => ({
             title: a.title || 'විශේෂ නිවේදනයයි',
-            message: a.content,
-            type: 'announcement'
+            message: a.content
           }));
           extractedReminders = [...extractedReminders, ...generalAlerts];
         }
         setDbReminders(extractedReminders);
 
-        // 3.5 Payment Reminders කියවීම
-        const { data: remindersData } = await supabase
-          .from('payments')
-          .select('*')
-          .eq('student_id', studentToUse.student_id || studentToUse.id) 
-          .eq('class_type', studentToUse.class_type || studentToUse.class) 
-          .eq('status', 'Unpaid');
-
-        if (remindersData) {
-          setPaymentReminders(remindersData);
-        } else {
-          setPaymentReminders([]);
-        }
-
-        // 4. Calendar Events කියවීම
+        // 4. Calendar Events කියවීම (පන්ති වර්ගය අනුව)
         const { data: eventsData } = await supabase
-          .from('calender_events')
+          .from('calendar_events')
           .select('*')
           .like('date', `${currentMonthKey}%`)
-          .eq('target_class_type', studentToUse.class_type || studentToUse.class);
+          .eq('target_class_type', studentToUse.class);
         
         if (eventsData) setCalendarEvents(eventsData);
 
@@ -359,10 +340,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }, 150);
   };
 
-  // Bell Icon ක්ලික් කළ විට Notifications tab එකට මාරු වීම
   const handleBellClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDashboardTab('notifications'); 
+    setDashboardTab('history');
     setTimeout(() => {
       mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 150);
@@ -374,13 +354,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const studentDisplayName = fName || lName ? `${fName} ${lName}`.trim() : liveStudentData?.username;
 
   const allReminders = [...dbReminders, ...studentAlerts];
-  
-  // මුළු නොටිෆිකේෂන් ගණන ගණනය කිරීම
-  const totalNotificationsCount = allReminders.length + paymentReminders.length;
 
   const generateProfileBorderGradient = () => {
-    // Payment Reminder එකක් ඇවිත් තියෙනවා නම් කෙලින්ම රතු පාට Alert එකක් පෙන්වයි
-    if (!isPaidCurrentMonth || paymentReminders.length > 0) {
+    if (!isPaidCurrentMonth) {
       return 'conic-gradient(#ef4444 0% 100%)'; 
     }
     if (classPaymentStatuses.length === 0) {
@@ -698,15 +674,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <User size={16} />
             </div>
 
-            {/* Bell Icon Notification Badge */}
-            {totalNotificationsCount > 0 && (
+            {totalRemindersCount > 0 && (
               <div 
                 onClick={handleBellClick}
                 className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-amber-500 text-white font-black text-xs rounded-full h-7 w-7 flex items-center justify-center shadow-[0_0_15px_rgba(239,68,68,0.5)] border border-white/20 animate-[bounce_1s_infinite] cursor-pointer hover:scale-110 transition-transform z-20"
-                title={`${totalNotificationsCount} නව දැනුම්දීම් ඇත. ක්ලික් කර බලන්න.`}
+                title={`${totalRemindersCount} ගෙවීම් මතක් කිරීම් ඇත. ක්ලික් කර බලන්න.`}
               >
                 <Bell size={12} className="animate-pulse mr-[1px]" />
-                <span className="text-[10px]">{totalNotificationsCount}</span>
+                <span className="text-[10px]">{totalRemindersCount}</span>
               </div>
             )}
           </div>
@@ -775,32 +750,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       </div>
 
-      {/* ================= අතිශය වැදගත් Payment Reminders මුදුනින්ම පෙන්වීම ================= */}
-      {paymentReminders.length > 0 && dashboardTab !== 'notifications' && (
-        <div className="mb-6 space-y-4">
-          {paymentReminders.map((reminder, index) => (
-            <div key={index} className="p-5 bg-red-950/80 border-2 border-red-500 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.4)] flex items-center gap-4 animate-pulse">
-              <AlertOctagon className="text-red-500 shrink-0 w-10 h-10" />
-              <div>
-                <h3 className="font-bold text-red-400 text-base md:text-lg tracking-wide uppercase">ගෙවීම් සිහිකැඳවීමයි!</h3>
-                {/* ඩේටාබේස් එකේ ඇති reminder_massage මෙහි පෙන්වයි */}
-                <p className="text-sm md:text-base text-red-100 mt-1 font-medium">
-                  {reminder.reminder_massage || `ඔබ තවමත් ${reminder.target_month || 'මෙම මාසය'} සඳහා ${reminder.class_name || liveStudentData?.class || currentStudent?.class} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර ඉක්මනින් මුදල් ගෙවා පන්ති සමඟ එක්වන්න.`}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* සාමාන්‍ය Announcements */}
-      {allReminders.length > 0 && dashboardTab !== 'notifications' && (
+      {/* Payment Reminders */}
+      {allReminders.length > 0 && (
         <div className="mb-8 space-y-4">
           {allReminders.map((reminder, index) => (
-            <div key={index} className="p-5 bg-gradient-to-r from-blue-950/50 to-slate-900 border-l-4 border-l-blue-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4">
-              <Info className="text-blue-500 shrink-0" size={22} />
+            <div key={index} className="p-5 bg-gradient-to-r from-amber-950/50 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+              <AlertTriangle className="text-amber-500 shrink-0" size={22} />
               <div>
-                <h3 className="font-bold text-blue-400 text-sm md:text-base">{reminder.title}</h3>
+                <h3 className="font-bold text-amber-400 text-sm md:text-base">{reminder.title}</h3>
                 <p className="text-xs md:text-sm text-slate-300 mt-1 font-medium">{reminder.message}</p>
               </div>
             </div>
@@ -834,20 +791,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <SafeComponent>
               <OnlineExamsHistory currentStudent={liveStudentData} />
             </SafeComponent>
-          )}
-
-          {dashboardTab === 'notifications' && (
-            <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in duration-300">
-               <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
-                 <BellRing className="text-amber-400" /> දැනුම්දීම් සහ සිහිකැඳවීම් (Notifications)
-               </h3>
-               
-               <div className="text-center py-12 space-y-4">
-                 <Bell size={48} className="mx-auto text-slate-600 animate-bounce" />
-                 <h4 className="text-lg text-slate-300 font-bold">සියලුම දැනුම්දීම් පේජ් එක සැකසෙමින් පවතී...</h4>
-                 <p className="text-slate-500 text-sm">ඉදිරියේදී මෙහිදී ඔබට ලැබී ඇති සියලුම පණිවිඩ සහ ගෙවීම් බිල්පත් බලාගත හැක.</p>
-               </div>
-            </div>
           )}
           
           {dashboardTab === 'calendar' && renderCalendar()}
