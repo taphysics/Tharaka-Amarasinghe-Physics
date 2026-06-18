@@ -25,11 +25,11 @@ const AdminCalendarPlanner = () => {
   const fetchClassTypes = async () => {
     const { data, error } = await supabase
       .from('class_types_config')
-      .select('class_name, monthly_fee')
-      .order('class_name', { ascending: true });
+      .select('class_type, monthly_fee')
+      .order('class_type', { ascending: true });
       
     if (data && !error) {
-      setAvailableClassTypes(data.map(c => ({ name: c.class_name, fee: c.monthly_fee })));
+      setAvailableClassTypes(data.map(c => ({ name: c.class_type, fee: c.monthly_fee })));
     } else {
       console.error("Error fetching class types:", error);
     }

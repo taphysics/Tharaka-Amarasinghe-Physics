@@ -257,8 +257,8 @@ useEffect(() => {
   const fetchAvailableClasses = async () => {
     const { data, error } = await supabase
       .from('class_types_config')
-      .select('class_name') // අපිට අවශ්‍ය වන්නේ පන්තියේ නම පමණි
-      .order('class_name', { ascending: true }); // අකාරාදී පිළිවෙලට සකස් කිරීම
+      .select('class_type') // අපිට අවශ්‍ය වන්නේ පන්තියේ නම පමණි
+      .order('class_type', { ascending: true }); // අකාරාදී පිළිවෙලට සකස් කිරීම
 
     if (!error && data) {
       setAvailableClasses(data);
@@ -525,14 +525,14 @@ useEffect(() => {
       try {
         const { data, error } = await supabase
           .from('class_types_config')
-          .select('class_name') // මෙතන class_name විය යුතුයි
+          .select('class_type') // මෙතන class_name විය යුතුයි
           .eq('is_active', true);
 
         if (error) throw error;
         
         if (data) {
           // දත්ත ආවා නම් ඒවා array එකකට දාලා state එකට සෙට් කරනවා
-          setDbClasses(data.map(item => item.class_name));
+          setDbClasses(data.map(item => item.class_type));
         }
       } catch (error) {
         console.error('Error fetching classes:', error);
