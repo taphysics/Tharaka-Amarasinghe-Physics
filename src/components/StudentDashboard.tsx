@@ -1,5 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
+import { 
+  Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, 
+  Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
+  AlertOctagon, Info, BellRing // අලුතින් එකතු කළ අයිකන මෙහි ඇත
+} from 'lucide-react';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import RecordingsManager from './RecordingsManager';
@@ -75,6 +79,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
+
   // 💡 Event Modal එක සහ තෝරාගත් දවසේ දත්ත ගබඩා කිරීමට අලුතින්ම එක්කළ State එක
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<any | null>(null);
 
@@ -97,32 +102,40 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
+// අලුතින් එකතු විය යුතු State එක
+  const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
 
   // 🔄 ඇඩ්මින් පැනලයෙන් කරන වෙනස්කම් ක්ෂණිකව (Realtime) අප්ඩේට් වන කොටස
   useEffect(() => {
+    // පළමුවෙන්ම දත්ත ලබාගැනීම සඳහා
     fetchDashboardData();
 
-    if (supabase) {
+    if (supabase && currentStudent?.id) {
       const channel = supabase.channel('student_dashboard_realtime')
+        // Payments ටේබල් එකේ වෙනස්කම් (Payment Reminders සහ Status වෙනස්වීම් සඳහා)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
           fetchDashboardData();
         })
+        // Students ටේබල් එකේ මෙම සිසුවාට අදාල වෙනස්කම් සඳහා
         .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: `id=eq.${currentStudent.id}` }, () => {
           fetchDashboardData();
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
+        // Calender Events ටේබල් එකේ වෙනස්කම් (Schema එකට අනුව අක්ෂර වින්‍යාසය calender_events ලෙස වෙනස් කර ඇත)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, () => {
           fetchDashboardData();
         })
+        // Announcements ටේබල් එකේ වෙනස්කම් සඳහා
         .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
           fetchDashboardData();
         })
         .subscribe();
 
+      // Component එක Unmount වීමේදී Channel එක remove කිරීම
       return () => {
         supabase.removeChannel(channel);
       };
     }
-  }, [currentStudent.id, supabase]);
+  }, [currentStudent?.id, supabase]);
 
   const fetchDashboardData = async () => {
     setIsRefreshing(true);
@@ -140,10 +153,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setLiveStudentData(studentToUse);
 
         let enrolledClasses: string[] = [];
-        if (studentToUse.class_types) {
-          if (Array.isArray(studentToUse.class_types)) enrolledClasses = studentToUse.class_types;
-          else if (typeof studentToUse.class_types === 'string') {
-            try { enrolledClasses = JSON.parse(studentToUse.class_types); } catch(e) { enrolledClasses = [studentToUse.class_types]; }
+        if (studentToUse.class_type) {
+          if (Array.isArray(studentToUse.class_type)) enrolledClasses = studentToUse.class_type;
+          else if (typeof studentToUse.class_type === 'string') {
+            try { enrolledClasses = JSON.parse(studentToUse.class_type); } catch(e) { enrolledClasses = [studentToUse.class_type]; }
           }
         }
 
@@ -310,15 +323,32 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         if (announcementData) {
           const generalAlerts = announcementData.map((a: any) => ({
             title: a.title || 'විශේෂ නිවේදනයයි',
-            message: a.content
+            message: a.content,
+            type: 'announcement'
           }));
           extractedReminders = [...extractedReminders, ...generalAlerts];
         }
         setDbReminders(extractedReminders);
 
-        // 4. Calendar Events කියවීම (පන්ති වර්ගය අනුව)
+        // ================= අලුතින් එකතු වූ කොටස (Schema එකට අනුකූලව) =================
+        // 3.5 Payment Reminders කියවීම (payments ටේබල් එකෙන්)
+        const { data: remindersData } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('student_id', studentToUse.id) 
+          .eq('class_type', studentToUse.class) 
+          .eq('status', 'Unpaid'); // මුදල් ගෙවා නැති රෙකෝඩ් පමණක් ගනී
+
+        if (remindersData) {
+          setPaymentReminders(remindersData);
+        } else {
+          setPaymentReminders([]);
+        }
+        // =======================================================
+
+        // 4. Calendar Events කියවීම (Schema එකේ ඇති පරිදි 'calender_events' ලෙස යොදා ඇත)
         const { data: eventsData } = await supabase
-          .from('calendar_events')
+          .from('calender_events')
           .select('*')
           .like('date', `${currentMonthKey}%`)
           .eq('target_class_type', studentToUse.class);
@@ -339,9 +369,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }, 150);
   };
 
+  // Bell Icon ක්ලික් කළ විට Notifications tab එකට මාරු වීම
   const handleBellClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setDashboardTab('history');
+    setDashboardTab('notifications'); 
     setTimeout(() => {
       mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 150);
@@ -353,9 +384,13 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const studentDisplayName = fName || lName ? `${fName} ${lName}`.trim() : liveStudentData?.username;
 
   const allReminders = [...dbReminders, ...studentAlerts];
+  
+  // මුළු නොටිෆිකේෂන් ගණන ගණනය කිරීම
+  const totalNotificationsCount = allReminders.length + paymentReminders.length;
 
   const generateProfileBorderGradient = () => {
-    if (!isPaidCurrentMonth) {
+    // Payment Reminder එකක් ඇවිත් තියෙනවා නම් කෙලින්ම රතු පාට Alert එකක් පෙන්වයි
+    if (!isPaidCurrentMonth || paymentReminders.length > 0) {
       return 'conic-gradient(#ef4444 0% 100%)'; 
     }
     if (classPaymentStatuses.length === 0) {
@@ -593,15 +628,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex flex-col py-3 border-b border-slate-800/60 gap-2.5">
                   <span className="text-slate-400">Class :</span>
                   <div className="flex flex-wrap gap-1.5 justify-start">
-                    {Array.isArray(liveStudentData?.class_types) && liveStudentData.class_types.length > 0 
-                      ? liveStudentData.class_types.map((c: string, i: number) => (
+                    {Array.isArray(liveStudentData?.class_type) && liveStudentData.class_type.length > 0 
+                      ? liveStudentData.class_type.map((c: string, i: number) => (
                           <span key={i} className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
                             {c}
                           </span>
                         ))
-                      : (liveStudentData?.class_types || liveStudentData?.class)
+                      : (liveStudentData?.class_type || liveStudentData?.class)
                         ? <span className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
-                            {liveStudentData?.class_types || liveStudentData?.class}
+                            {liveStudentData?.class_type || liveStudentData?.class}
                           </span>
                         : <span className="text-slate-500 text-[11px]">No Classes</span>
                     }
@@ -673,14 +708,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <User size={16} />
             </div>
 
-            {totalRemindersCount > 0 && (
+            {/* Bell Icon Notification Badge */}
+            {totalNotificationsCount > 0 && (
               <div 
                 onClick={handleBellClick}
                 className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-amber-500 text-white font-black text-xs rounded-full h-7 w-7 flex items-center justify-center shadow-[0_0_15px_rgba(239,68,68,0.5)] border border-white/20 animate-[bounce_1s_infinite] cursor-pointer hover:scale-110 transition-transform z-20"
-                title={`${totalRemindersCount} ගෙවීම් මතක් කිරීම් ඇත. ක්ලික් කර බලන්න.`}
+                title={`${totalNotificationsCount} නව දැනුම්දීම් ඇත. ක්ලික් කර බලන්න.`}
               >
                 <Bell size={12} className="animate-pulse mr-[1px]" />
-                <span className="text-[10px]">{totalRemindersCount}</span>
+                <span className="text-[10px]">{totalNotificationsCount}</span>
               </div>
             )}
           </div>
@@ -749,14 +785,32 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       </div>
 
-      {/* Payment Reminders */}
-      {allReminders.length > 0 && (
+      {/* ================= අතිශය වැදගත් Payment Reminders මුදුනින්ම පෙන්වීම ================= */}
+      {paymentReminders.length > 0 && dashboardTab !== 'notifications' && (
+        <div className="mb-6 space-y-4">
+          {paymentReminders.map((reminder, index) => (
+            <div key={index} className="p-5 bg-red-950/80 border-2 border-red-500 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.4)] flex items-center gap-4 animate-pulse">
+              <AlertOctagon className="text-red-500 shrink-0 w-10 h-10" />
+              <div>
+                <h3 className="font-bold text-red-400 text-base md:text-lg tracking-wide uppercase">ගෙවීම් සිහිකැඳවීමයි!</h3>
+                {/* ඩේටාබේස් එකේ ඇති reminder_massage මෙහි පෙන්වයි */}
+                <p className="text-sm md:text-base text-red-100 mt-1 font-medium">
+                  {reminder.reminder_massage || `ඔබ තවමත් ${reminder.target_month || 'මෙම මාසය'} සඳහා ${reminder.class_name || liveStudentData?.class || currentStudent?.class} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර ඉක්මනින් මුදල් ගෙවා පන්ති සමඟ එක්වන්න.`}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* සාමාන්‍ය Announcements */}
+      {allReminders.length > 0 && dashboardTab !== 'notifications' && (
         <div className="mb-8 space-y-4">
           {allReminders.map((reminder, index) => (
-            <div key={index} className="p-5 bg-gradient-to-r from-amber-950/50 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
-              <AlertTriangle className="text-amber-500 shrink-0" size={22} />
+            <div key={index} className="p-5 bg-gradient-to-r from-blue-950/50 to-slate-900 border-l-4 border-l-blue-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4">
+              <Info className="text-blue-500 shrink-0" size={22} />
               <div>
-                <h3 className="font-bold text-amber-400 text-sm md:text-base">{reminder.title}</h3>
+                <h3 className="font-bold text-blue-400 text-sm md:text-base">{reminder.title}</h3>
                 <p className="text-xs md:text-sm text-slate-300 mt-1 font-medium">{reminder.message}</p>
               </div>
             </div>
@@ -790,6 +844,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <SafeComponent>
               <OnlineExamsHistory currentStudent={liveStudentData} />
             </SafeComponent>
+          )}
+
+          {dashboardTab === 'notifications' && (
+            <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in duration-300">
+               <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+                 <BellRing className="text-amber-400" /> දැනුම්දීම් සහ සිහිකැඳවීම් (Notifications)
+               </h3>
+               
+               <div className="text-center py-12 space-y-4">
+                 <Bell size={48} className="mx-auto text-slate-600 animate-bounce" />
+                 <h4 className="text-lg text-slate-300 font-bold">සියලුම දැනුම්දීම් පේජ් එක සැකසෙමින් පවතී...</h4>
+                 <p className="text-slate-500 text-sm">ඉදිරියේදී මෙහිදී ඔබට ලැබී ඇති සියලුම පණිවිඩ සහ ගෙවීම් බිල්පත් බලාගත හැක.</p>
+               </div>
+            </div>
           )}
           
           {dashboardTab === 'calendar' && renderCalendar()}
