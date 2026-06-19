@@ -48,7 +48,6 @@ import AdminGlobalConfig from './components/AdminGlobalConfig';
 import AdminCalendarPlanner from './components/AdminCalendarPlanner';
 import AdminSiteConfig from './components/AdminSiteConfig';
 import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
-import AdminPasswordReset from './components/AdminPasswordReset';
 import { useSupabaseConfig } from './hooks/useSupabaseConfig';
 import AdminAttentionLogs from './components/AdminAttentionLogs';
 import StudentPaymentInvoice from './components/StudentPaymentInvoice';
@@ -2345,6 +2344,7 @@ if (isLoading) {
           </div>
         </div>
       )}
+
       {/* Elegant Standard XHTML Footer */}
       <footer className="bg-slate-950 border-t border-slate-900 py-8 px-4 mt-12 text-center text-xs text-slate-500 space-y-4 font-sans">
         <div className="flex justify-center gap-6 text-slate-400 font-bold">
