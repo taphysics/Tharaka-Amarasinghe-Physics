@@ -7,7 +7,7 @@ import RecordingsManager from './RecordingsManager';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
 
-type TabType = "live" | "recordings" | "tutes" | "exams" | "calendar" | "history";
+type TabType = "live" | "recordings" | "tutes" | "exams" | "calendar" | "history" | null;
 
 interface StudentDashboardProps {
   currentStudent: any;
@@ -778,8 +778,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {dashboardTab === 'recordings' && liveStudentData && (
   <StudentRecordings 
     student={liveStudentData} 
-    onBack={() => handleTabChange(null as any)}// 👈 Overview හෝ ප්‍රධාන tab එකේ නම දෙන්න
-  />
+    onBack={() => handleTabChange(null)} 
+/>
 )}
           
           {dashboardTab === 'tutes' && (
