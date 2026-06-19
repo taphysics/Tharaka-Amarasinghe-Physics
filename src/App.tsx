@@ -54,6 +54,7 @@ import AdminAttentionLogs from './components/AdminAttentionLogs';
 import StudentPaymentInvoice from './components/StudentPaymentInvoice';
 import ResetPassword from './components/ResetPassword';
 import StudentDashboard from './components/StudentDashboard';
+import AdminRecordingsManager from './AdminRecordingsManager';
 
 export default function App() {
 
@@ -525,7 +526,7 @@ useEffect(() => {
       try {
         const { data, error } = await supabase
           .from('class_types_config')
-          .select('class_type') // මෙතන class_name විය යුතුයි
+          .select('class_type') // මෙතන class_type විය යුතුයි
           .eq('is_active', true);
 
         if (error) throw error;
@@ -2130,120 +2131,9 @@ if (isLoading) {
                     </div>
                   )}
 
+                  {/* අලුතින් සම්බන්ධ කළ නවීන Recordings Manager කොටස */}
                   {activeAdminTab === 'resources' && (
-                    <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                      <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                        <Folder className="text-amber-400" size={16} /> Manage Class Tutes (PDF) &amp; Recordings
-                      </h3>
-
-                      <form onSubmit={handleAddResource} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-slate-900/40 p-4 border border-slate-700/50 rounded-xl">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Resource Type</label>
-                          <select 
-                            value={resType}
-                            onChange={(e) => setResType(e.target.value as any)}
-                            className="w-full bg-slate-950 text-white border border-slate-800 p-1.5 rounded text-xs focus:outline-none focus:border-amber-500"
-                          >
-                            <option value="tute">Class Tute / PDF</option>
-                            <option value="recording">Video Recording</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Class Type or Free Allocation</label>
-                          <select 
-                            required
-                            value={resClassType}
-                            onChange={(e) => setResClassType(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                          >
-                             {globalClassNames.map(c => <option key={c} value={c}>{c}</option>)}
-                             <option value="Free Notes / Public">Free Notes / Public</option>
-                          </select>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Target Month (e.g. 2026-05)</label>
-                          <input 
-                            type="month" 
-                            required
-                            value={resTargetMonth}
-                            onChange={(e) => setResTargetMonth(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Title</label>
-                          <input 
-                            type="text" 
-                            required
-                            placeholder="Week 04 PDF..."
-                            value={resTitle}
-                            onChange={(e) => setResTitle(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Link URL (Drive/YouTube)</label>
-                          <div className="flex gap-2">
-                             <input 
-                              type="text" 
-                              required
-                              placeholder="https://..."
-                              value={resUrl}
-                              onChange={(e) => setResUrl(e.target.value)}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-amber-500"
-                            />
-                            <button 
-                              type="submit"
-                              className="bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded text-xs transition shadow-md cursor-pointer whitespace-nowrap"
-                            >
-                              Add
-                            </button>
-                          </div>
-                        </div>
-                      </form>
-
-                      {/* Display resources */}
-                      <div className="mt-6 flex flex-col md:flex-row gap-6">
-                         <div className="flex-1 border border-slate-800 rounded-xl p-4 bg-slate-900/30">
-                           <h4 className="font-bold text-sm text-slate-300 mb-3 border-b border-slate-800 pb-2">All Uploaded Tutes/PDFs</h4>
-                           <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                             {resourceLinks.filter(r => r.type === 'tute').map((r, idx) => (
-                               <div key={idx} className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-xs flex justify-between items-center">
-                                 <div>
-                                   <div className="font-bold text-amber-500">{r.targetClasses?.[0]} ({r.targetMonth})</div>
-                                   <div className="text-white">{r.title}</div>
-                                 </div>
-                                 <button onClick={async () => {
-                                   await supabase.from('class_resources').delete().eq('id', r.id);
-                                 }} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
-                               </div>
-                             ))}
-                             {resourceLinks.filter(r => r.type === 'tute').length === 0 && (
-                               <div className="text-[10px] text-slate-500 italic">No tutes uploaded yet.</div>
-                             )}
-                           </div>
-                         </div>
-                         <div className="flex-1 border border-slate-800 rounded-xl p-4 bg-slate-900/30">
-                           <h4 className="font-bold text-sm text-slate-300 mb-3 border-b border-slate-800 pb-2">All Video Recordings</h4>
-                           <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                             {resourceLinks.filter(r => r.type === 'recording').map((r, idx) => (
-                               <div key={idx} className="bg-slate-900 border border-slate-800 p-2.5 rounded-lg text-xs flex justify-between items-center">
-                                 <div>
-                                   <div className="font-bold text-green-500">{r.targetClasses?.[0]} ({r.targetMonth})</div>
-                                   <div className="text-white">{r.title}</div>
-                                 </div>
-                                 <button onClick={async () => {
-                                   await supabase.from('class_resources').delete().eq('id', r.id);
-                                 }} className="text-red-500 hover:underline px-2 cursor-pointer">Delete</button>
-                               </div>
-                             ))}
-                             {resourceLinks.filter(r => r.type === 'recording').length === 0 && (
-                               <div className="text-[10px] text-slate-500 italic">No recordings uploaded yet.</div>
-                             )}
-                           </div>
-                         </div>
-                      </div>
-                    </div>
+                    <AdminRecordingsManager />
                   )}
 
                   {activeAdminTab === 'site_configs' && (
@@ -2251,10 +2141,10 @@ if (isLoading) {
                   )}
 
                   {activeAdminTab === 'planner' && (
-  <div className="lg:col-span-12 w-full">
-    <AdminCalendarPlanner />
-  </div>
-)}
+                    <div className="lg:col-span-12 w-full">
+                      <AdminCalendarPlanner />
+                    </div>
+                  )}
 
                   {activeAdminTab === 'broadcast' && (
                     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
@@ -2410,34 +2300,34 @@ if (isLoading) {
 
               <div className="space-y-2.5 text-xs text-slate-300 font-sans">
                 <div className="flex justify-between border-b border-slate-850 pb-1.5">
-                  <span className="text-slate-500 text-slate-400">STUDENT ID (Username):</span>
+                  <span className="text-slate-400">STUDENT ID (Username):</span>
                   <strong className="text-purple-400 font-mono text-sm">{currentStudent.username}</strong>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5">
-                  <span className="text-slate-500 text-slate-400">First Name:</span>
+                  <span className="text-slate-400">First Name:</span>
                   <span className="text-white font-medium">{currentStudent.firstName}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5">
-                  <span className="text-slate-500 text-slate-400">Last Name:</span>
+                  <span className="text-slate-400">Last Name:</span>
                   <span className="text-white font-medium">{currentStudent.lastName}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5 font-sans">
-                  <span className="text-slate-500 text-slate-400">National ID (NIC) Number:</span>
+                  <span className="text-slate-400">National ID (NIC) Number:</span>
                   <span className="text-white font-mono font-medium">{currentStudent.nic}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5">
-                  <span className="text-slate-500 text-slate-400">Enrolled Course Plan:</span>
+                  <span className="text-slate-400">Enrolled Course Plan:</span>
                   <span className="text-purple-300 font-semibold">{currentStudent.classTypes.join(', ')}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5 font-sans">
-                  <span className="text-slate-400 font-medium font-sans">Home District:</span>
+                  <span className="text-slate-400 font-medium">Home District:</span>
                   <span className="text-white font-medium">{currentStudent.district}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-850 pb-1.5 font-sans">
-                  <span className="text-slate-400 font-medium font-sans">WhatsApp Number:</span>
+                  <span className="text-slate-400 font-medium">WhatsApp Number:</span>
                   <span className="text-white font-mono">{currentStudent.whatsapp}</span>
                 </div>
-                <div className="flex justify-between font-sans font-sans">
+                <div className="flex justify-between font-sans">
                   <span className="text-slate-400 font-medium">Mobile Voice Call:</span>
                   <span className="text-white font-mono">{currentStudent.mobile}</span>
                 </div>
@@ -2455,7 +2345,6 @@ if (isLoading) {
           </div>
         </div>
       )}
-
       {/* Elegant Standard XHTML Footer */}
       <footer className="bg-slate-950 border-t border-slate-900 py-8 px-4 mt-12 text-center text-xs text-slate-500 space-y-4 font-sans">
         <div className="flex justify-center gap-6 text-slate-400 font-bold">
