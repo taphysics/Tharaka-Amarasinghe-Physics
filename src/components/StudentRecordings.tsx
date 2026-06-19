@@ -1,14 +1,20 @@
+// 🔴 වැදගත්: පහත පේළියේ '../lib/supabaseClient' වෙනුවට ඔබේ supabase ෆයිල් එක තියෙන නිවැරදි path එක දෙන්න.
+// උදාහරණ: import { supabase } from '../supabase'; හෝ import { supabase } from '../../supabase';
+import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
 import screenfull from 'screenfull';
-import { supabase } from '../lib/supabaseClient'; // ඔබගේ Supabase file path එකට වෙනස් කරන්න
-import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX } from 'lucide-react';
 
+import { Play, Pause, Maximize, Minimize, SkipBack, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
+
+// මෙම පේළිය අලුතින් එකතු කරන්න
+const Player: any = ReactPlayer;
 interface StudentRecordingsProps {
-  student: any; // Main Dashboard එකෙන් එවන student data මෙතනට ලබාගන්න
+  student: any; 
+  onBack: () => void; // 👈 ඩෑශ්බෝඩ් එකට ආපසු යාමට අලුතින් එකතු කළ කොටස
 }
 
-export default function StudentRecordings({ student }: StudentRecordingsProps) {
+export default function StudentRecordings({ student, onBack }: StudentRecordingsProps) {
   const [recordings, setRecordings] = useState<any[]>([]);
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string>('current');
@@ -25,12 +31,13 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   
-  const playerRef = useRef<ReactPlayer>(null);
+  // TypeScript Errors නිවැරදි කිරීම සඳහා Types ලබා දී ඇත
+  const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout>();
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentYear = new Date().getFullYear().toString();
-  const currentMonth = new Date().toLocaleString('default', { month: 'long' }); // e.g., "June"
+  const currentMonth = new Date().toLocaleString('default', { month: 'long' }); 
 
   useEffect(() => {
     if (student) {
@@ -38,11 +45,10 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
       loadSavedProgress();
     }
 
-    // Real-time Payment Updates Listener (ඔබ ඉල්ලූ පරිදි ගෙවූ සැනින් Unlock වීමට)
     const channel = supabase.channel('realtime-payments-recordings')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `student_id=eq.${student.student_id || student.id}` }, 
       () => {
-        fetchRecordingsAndPayments(); // ගෙවීමක් වෙනස් වූ සැනින් නැවත දත්ත ලබාගනී
+        fetchRecordingsAndPayments(); 
       }).subscribe();
 
     return () => {
@@ -50,28 +56,25 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
     };
   }, [student, selectedFilter]);
 
-  // දත්ත ලබා ගැනීමේ Function එක
   const fetchRecordingsAndPayments = async () => {
     try {
-      // 1. Recordings ලබා ගැනීම
       const { data: recData } = await supabase
-        .from('recordings') // ඔබගේ Recordings ටේබල් එකේ නම
+        .from('recordings') 
         .select('*')
         .in('class_type', typeof student.class_type === 'string' ? JSON.parse(student.class_type) : student.class_type)
-        .order('created_at', { ascending: true }); // දැමූ පිළිවෙළට
+        .order('created_at', { ascending: true }); 
       
       if (recData) {
         setRecordings(recData);
-        // Filter එක සඳහා මාස සහ අවුරුදු වෙන් කර ගැනීම
-        const months = Array.from(new Set(recData.map(r => `${r.year}-${r.month}`)))
-          .map(str => {
+        // Typescript Error Fix: Set එකට සහ Map එකට String type එක ලබා දීම
+        const months = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
+          .map((str: string) => {
             const [y, m] = str.split('-');
             return { year: y, month: m };
           });
         setAvailableMonths(months);
       }
 
-      // 2. Payments පරීක්ෂා කිරීම (වීඩියෝ Unlock ද Lock ද යන්න සෙවීමට)
       const { data: payData } = await supabase
         .from('payments')
         .select('*')
@@ -79,15 +82,14 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
 
       const statusMap: Record<string, boolean> = {};
       if (recData && payData) {
-        recData.forEach(rec => {
+        recData.forEach((rec: any) => {
           const isFreeStudent = student.is_paid === false || student.free_months?.includes(rec.month);
-          const paymentRecord = payData.find(p => 
+          const paymentRecord = payData.find((p: any) => 
             p.class_type === rec.class_type && 
             (p.month === rec.month || p.month === `${rec.year}-${rec.month}`)
           );
           
           const isPaid = paymentRecord?.status?.toLowerCase() === 'paid' || paymentRecord?.status?.toLowerCase() === 'free';
-          // Key එක: "ClassType-Year-Month"
           statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isFreeStudent || isPaid; 
         });
       }
@@ -97,7 +99,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
     }
   };
 
-  // Video Progress Local Storage එකෙන් ලබාගැනීම (Database එකට වුවද වෙනස් කළ හැක)
   const loadSavedProgress = () => {
     const saved = localStorage.getItem(`video_progress_${student.id}`);
     if (saved) setVideoProgress(JSON.parse(saved));
@@ -109,11 +110,9 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
     localStorage.setItem(`video_progress_${student.id}`, JSON.stringify(newProgress));
   };
 
-  // ප්ලේයර් එකේ සෙටින්ග්ස්
   const handleReady = () => {
     if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
       const savedTime = videoProgress[selectedVideo.id].playedSeconds;
-      // කලින් නවත්වපු තැනින් තත්පර 10ක් පසුපසට යාම
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       playerRef.current?.seekTo(resumeTime, 'seconds');
     }
@@ -140,7 +139,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
     }
   };
 
-  // වීඩියෝ Lock/Unlock පරීක්ෂා කර ප්ලේ කිරීම
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
     if (isUnlocked) {
       setSelectedVideo(video);
@@ -150,15 +148,13 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
     }
   };
 
-  // Filtered Videos
-  const filteredRecordings = recordings.filter(r => {
+  const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') return r.year === currentYear && r.month === currentMonth;
     const [fYear, fMonth] = selectedFilter.split('-');
     return r.year === fYear && r.month === fMonth;
   });
 
-  // පන්ති වර්ග (class_type) අනුව Group කිරීම
-  const groupedRecordings = filteredRecordings.reduce((acc, video) => {
+  const groupedRecordings = filteredRecordings.reduce((acc: any, video: any) => {
     acc[video.class_type] = acc[video.class_type] || [];
     acc[video.class_type].push(video);
     return acc;
@@ -167,11 +163,20 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header & Filters */}
+      {/* Header, Back Button & Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-blue-400">Class Recordings</h1>
-          <p className="text-slate-400 text-sm mt-1">ඔබේ පන්තිවල මඟහැරුණු කොටස් මෙතැනින් නරඹන්න</p>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={onBack} 
+            className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center"
+            title="Back to Dashboard"
+          >
+            <ArrowLeft size={24} />
+          </button>
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-blue-400">Class Recordings</h1>
+            <p className="text-slate-400 text-sm mt-1">ඔබේ පන්තිවල මඟහැරුණු කොටස් මෙතැනින් නරඹන්න</p>
+          </div>
         </div>
 
         <select 
@@ -190,12 +195,12 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
       {Object.keys(groupedRecordings).length === 0 ? (
         <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
       ) : (
-        Object.entries(groupedRecordings).map(([classType, videos]) => (
+        Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
           <div key={classType} className="mb-10">
             <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
             
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {videos.map((video) => {
+              {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
                 const prog = videoProgress[video.id];
                 const isCompleted = prog?.status === 'completed';
@@ -212,7 +217,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                       'border-emerald-500/50 hover:border-emerald-400'
                     }`}
                   >
-                    {/* Thumbnail Area */}
                     <div className="relative aspect-video bg-slate-900">
                       <img 
                         src={video.thumbnail_url || `https://img.youtube.com/vi/${video.youtube_id}/maxresdefault.jpg`} 
@@ -220,12 +224,10 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
                       />
                       
-                      {/* Top Right Sticker */}
                       <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-md border border-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider text-white z-10 shadow-lg">
                         <span className="text-blue-400">{video.class_type}</span> | {video.year} {video.month}
                       </div>
 
-                      {/* Overlays based on Status */}
                       {!isUnlocked ? (
                         <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 text-center z-20">
                           <Lock className="w-10 h-10 text-red-500 mb-2" />
@@ -238,7 +240,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                         </div>
                       )}
 
-                      {/* Progress Bar under thumbnail */}
                       {isWatching && isUnlocked && (
                         <div className="absolute bottom-0 left-0 h-1.5 bg-slate-800 w-full z-20">
                           <div 
@@ -249,7 +250,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                       )}
                     </div>
 
-                    {/* Video Details */}
                     <div className="p-4 bg-slate-900/90 relative z-30">
                       <h3 className="text-white font-semibold line-clamp-2 text-sm">{video.title}</h3>
                       <div className="flex items-center gap-2 mt-3">
@@ -270,7 +270,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
         ))
       )}
 
-      {/* ==================== CUSTOM VIDEO PLAYER MODAL ==================== */}
       {selectedVideo && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
           <div 
@@ -278,35 +277,33 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
             className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)] group"
             onMouseMove={() => {
               setShowControls(true);
-              clearTimeout(controlsTimeoutRef.current);
+              if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
               controlsTimeoutRef.current = setTimeout(() => { if(isPlaying) setShowControls(false) }, 3000);
             }}
             onMouseLeave={() => { if(isPlaying) setShowControls(false) }}
           >
-            {/* React Player (YouTube iframe wrapper) */}
-            <ReactPlayer
-              ref={playerRef}
-              url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
-              width="100%"
-              height="100%"
-              playing={isPlaying}
-              volume={volume}
-              muted={isMuted}
-              playbackRate={playbackRate}
-              onReady={handleReady}
-              onProgress={handleProgress}
-              onEnded={handleEnded}
-              controls={false} // YouTube controls සැඟවීම
-              config={{
-                youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1 } }
-              }}
-              className="pointer-events-none" // YouTube එක මත Click කිරීම වැලැක්වීම
-            />
+            {/* ReactPlayer වෙනුවට Player ලෙස වෙනස් කරන්න */}
+<Player
+  ref={playerRef}
+  url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
+  width="100%"
+  height="100%"
+  playing={isPlaying}
+  volume={volume}
+  muted={isMuted}
+  playbackRate={playbackRate}
+  onReady={handleReady}
+  onProgress={handleProgress}
+  onEnded={handleEnded}
+  controls={false} 
+  config={{
+    youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1 } } as any
+  }}
+  className="pointer-events-none" 
+/>
 
-            {/* Custom UI Overlay (පාලක පුවරුව) */}
             <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
               
-              {/* Top Bar */}
               <div className="p-4 flex justify-between items-center">
                 <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
                 <button 
@@ -317,7 +314,6 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                 </button>
               </div>
 
-              {/* End Screen Play Again Button */}
               {!isPlaying && played >= 0.99 && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
                   <button onClick={() => { playerRef.current?.seekTo(0); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
@@ -327,9 +323,7 @@ export default function StudentRecordings({ student }: StudentRecordingsProps) {
                 </div>
               )}
 
-              {/* Bottom Controls */}
               <div className="p-4 space-y-2">
-                {/* Progress Bar */}
                 <div 
                   className="h-2 bg-slate-600/50 rounded-full cursor-pointer relative"
                   onClick={(e) => {
