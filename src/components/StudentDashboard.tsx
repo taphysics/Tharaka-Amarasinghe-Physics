@@ -3,7 +3,6 @@ import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, Us
 
 import LiveClassPlayer from './LiveClassPlayer';
 import StudentRecordings from './StudentRecordings';
-import RecordingsManager from './RecordingsManager';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
 
