@@ -1105,12 +1105,12 @@ if (isLoading) {
         )}
       </div>
 
-      {/* Main Container Views */}
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 md:px-8 py-6 flex flex-col justify-start">
+      {/* නිවැරදි කරන ලද Main Container එක - max-w-7xl ඉවත් කර w-full පමණක් යොදා ඇත */}
+      <main className="flex-grow w-full px-4 md:px-8 py-6 flex flex-col">
         
-        {/* VIEW 1: HOME */}
+        {/* VIEW 1: HOME - මෙය පමණක් මැදට වී නිවැරදිව පෙනීමට max-w-7xl එක මෙතැනට එක් කර ඇත */}
         {currentView === 'home' && (
-          <div className="space-y-8 animate-fade-in">
+          <div className="space-y-8 animate-fade-in w-full max-w-7xl mx-auto">
             
             {/* Split layout HERO SECTION */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
