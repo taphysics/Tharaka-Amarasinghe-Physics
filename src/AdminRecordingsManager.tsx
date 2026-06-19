@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Video, Plus, Trash2, CheckCircle, AlertCircle, Youtube } from 'lucide-react';
 
-// Vercel Build Errors මගහරවා ගැනීමට Recording සඳහා නිශ්චිත Type එකක් ලබා දීම
 interface Recording {
   id: string;
   title: string;
@@ -14,7 +13,7 @@ interface Recording {
 }
 
 export default function AdminRecordingsManager() {
-  const [classes, setClasses] = useState<{ class_types: string }[]>([]);
+  const [classes, setClasses] = useState<any[]>([]);
   const [recordings, setRecordings] = useState<Recording[]>([]);
   
   // Form States
@@ -37,13 +36,26 @@ export default function AdminRecordingsManager() {
 
   // class_types_config එකෙන් Active පන්ති වර්ග ලබාගැනීම
   const fetchClasses = async () => {
+    // සටහන: Column එකේ නම නිවැරදිව හඳුනාගැනීමට මෙහිදී select('*') බාවිතා කර ඇත
     const { data, error } = await supabase
       .from('class_types_config')
-      .select('class_types')
+      .select('*') 
       .eq('is_active', true);
     
-    if (data) setClasses(data);
-    if (error) console.error("Error fetching classes:", error);
+    if (error) {
+      // මෙතනින් ඔබට Console එක බලා නිවැරදිම දෝෂය හඳුනාගත හැක (e.g. Column name mismatch)
+      console.error("Supabase Full Error Details:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      return;
+    }
+    
+    if (data) {
+      setClasses(data);
+    }
   };
 
   // දැනට දමා ඇති රෙකෝඩින්ස් ලබාගැනීම
@@ -57,7 +69,6 @@ export default function AdminRecordingsManager() {
     if (error) console.error("Error fetching recordings:", error);
   };
 
-  // YouTube Link එකෙන් ID එක වෙන් කර ගැනීම
   const extractYouTubeID = (url: string) => {
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
@@ -89,7 +100,6 @@ export default function AdminRecordingsManager() {
     const thumbnailUrl = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
 
     try {
-      // තෝරාගත් එක් එක් පන්තියට අදාලව වෙන වෙනම Record එකක් Database එකට යැවීම
       const recordsToInsert = selectedClasses.map(classType => ({
         title: title,
         youtube_id: ytId,
@@ -105,11 +115,10 @@ export default function AdminRecordingsManager() {
 
       setMessage({ type: 'success', text: 'වීඩියෝව සාර්ථකව පද්ධතියට ඇතුලත් කරන ලදී!' });
       
-      // Form එක Clear කිරීම
       setTitle('');
       setYoutubeLink('');
       setSelectedClasses([]);
-      fetchRecordings(); // List එක අප්ඩේට් කිරීම
+      fetchRecordings();
 
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'වීඩියෝව ඇතුලත් කිරීමේදී දෝෂයක් මතු විය.' });
@@ -130,8 +139,9 @@ export default function AdminRecordingsManager() {
   };
 
   return (
-    <div className="p-4 md:p-8 bg-slate-900 min-h-screen text-slate-200">
-      <div className="max-w-6xl mx-auto space-y-8">
+    // මුළු පිටුවේම පළල හරියාකාරව ගැනීමට w-full සහ flex-1 පාවිච්චි කර ඇත
+    <div className="w-full flex-1 p-4 md:p-8 text-slate-200">
+      <div className="max-w-7xl mx-auto space-y-8">
         
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
@@ -139,10 +149,10 @@ export default function AdminRecordingsManager() {
           <h1 className="text-2xl font-bold text-white">Recordings Manager</h1>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 w-full">
           
           {/* Add New Recording Form */}
-          <div className="lg:col-span-1 bg-slate-950 p-6 rounded-2xl border border-slate-800 shadow-xl">
+          <div className="lg:col-span-1 bg-slate-950 p-6 rounded-2xl border border-slate-800 shadow-xl h-fit">
             <h2 className="text-lg font-semibold text-emerald-400 mb-6 flex items-center gap-2">
               <Plus size={20} /> නව වීඩියෝවක් එක් කරන්න
             </h2>
@@ -156,7 +166,7 @@ export default function AdminRecordingsManager() {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               
-              {/* Title (Keyword) */}
+              {/* Title */}
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">පාඩමේ මාතෘකාව (Keyword)</label>
                 <input 
@@ -215,17 +225,25 @@ export default function AdminRecordingsManager() {
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-2">අදාල පන්ති වර්ග තෝරන්න</label>
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                  {classes.map((cls, idx) => (
-                    <label key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/50 hover:bg-slate-800 cursor-pointer transition">
-                      <input 
-                        type="checkbox" 
-                        checked={selectedClasses.includes(cls.class_types)}
-                        onChange={() => handleClassToggle(cls.class_types)}
-                        className="w-4 h-4 text-blue-500 rounded border-slate-600 bg-slate-700 focus:ring-blue-500"
-                      />
-                      <span className="text-sm">{cls.class_types}</span>
-                    </label>
-                  ))}
+                  {classes.length === 0 ? (
+                    <p className="text-xs text-amber-400 italic">පන්ති වර්ග කිසිවක් හමු නොවීය. (Supabase එක පරීක්ෂා කරන්න)</p>
+                  ) : (
+                    classes.map((cls, idx) => {
+                      // මෙතැනදී ඔබේ Table එකේ Column නම class_types ද class_type ද යන්න ස්වයංක්‍රීයව තෝරාගනී
+                      const classTypeName = cls.class_types || cls.class_type || '';
+                      return (
+                        <label key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/50 hover:bg-slate-800 cursor-pointer transition">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedClasses.includes(classTypeName)}
+                            onChange={() => handleClassToggle(classTypeName)}
+                            className="w-4 h-4 text-blue-500 rounded border-slate-600 bg-slate-700 focus:ring-blue-500"
+                          />
+                          <span className="text-sm">{classTypeName}</span>
+                        </label>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
