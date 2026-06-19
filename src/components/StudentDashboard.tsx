@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
 
 import LiveClassPlayer from './LiveClassPlayer';
+import StudentRecordings from './StudentRecordings';
 import RecordingsManager from './RecordingsManager';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
@@ -774,11 +775,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </SafeComponent>
           )}
           
-          {dashboardTab === 'recordings' && (
-            <SafeComponent>
-              <RecordingsManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
-            </SafeComponent>
-          )}
+          {dashboardTab === 'recordings' && liveStudentData && (
+  <StudentRecordings 
+    student={liveStudentData} 
+    onBack={() => handleTabChange(null as any)}// 👈 Overview හෝ ප්‍රධාන tab එකේ නම දෙන්න
+  />
+)}
           
           {dashboardTab === 'tutes' && (
             <SafeComponent>
