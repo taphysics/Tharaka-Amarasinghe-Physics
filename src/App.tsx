@@ -53,7 +53,7 @@ import AdminAttentionLogs from './components/AdminAttentionLogs';
 import StudentPaymentInvoice from './components/StudentPaymentInvoice';
 import ResetPassword from './components/ResetPassword';
 import StudentDashboard from './components/StudentDashboard';
-import AdminRecordingsManager from './AdminRecordingsManager';
+import RecordingsManager from './components/RecordingsManager';
 
 export default function App() {
 
@@ -2132,8 +2132,8 @@ if (isLoading) {
 
                   {/* අලුතින් සම්බන්ධ කළ නවීන Recordings Manager කොටස */}
                   {activeAdminTab === 'resources' && (
-                    <AdminRecordingsManager />
-                  )}
+  <RecordingsManager />
+)}
 
                   {activeAdminTab === 'site_configs' && (
                     <AdminSiteConfig />
