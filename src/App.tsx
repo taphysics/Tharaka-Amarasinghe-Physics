@@ -39,6 +39,7 @@ import StudentPaymentInvoice from './components/StudentPaymentInvoice';
 import ResetPassword from './components/ResetPassword';
 import StudentDashboard from './components/StudentDashboard';
 import AdminRecordingsManager from './components/AdminRecordingsManager';
+import AdminGlobalConfig from "./components/AdminGlobalConfig";
 
 export default function App() {
 
