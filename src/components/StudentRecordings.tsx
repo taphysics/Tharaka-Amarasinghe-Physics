@@ -72,7 +72,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     } else {
       stopWatchTimeTracking();
     }
-    // සඟල වරහන් {} දමා Promise එකක් return වීම වැළැක්වීම
     return () => {
       stopWatchTimeTracking();
     };
@@ -118,19 +117,36 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const statusMap: Record<string, boolean> = {};
       if (recData) {
         recData.forEach((rec: any) => {
-          // 1. සිසුවා Free Student කෙනෙක්ද හෝ මෙම මාසය සිසුවාට නිදහස් මාසයක්ද (Free Month) කියා බැලීම
-          const isGloballyFree = student.is_paid === false; 
-          const isThisMonthFree = student.free_months?.includes(rec.month) || student.free_months?.includes(`${rec.year}-${rec.month}`);
+          // 1. සිසුවා Free Student කෙනෙක්දැයි පරීක්ෂා කිරීම (කලින් තිබූ student.is_paid === false හි දෝෂය නිවැරදි කර ඇත)
+          // සිසුවාට free card එකක් ඇත්නම් හෝ status එක free නම් පමණක් අගය true වේ.
+          const isGloballyFree = student.is_free === true || 
+                                 student.student_type?.toLowerCase() === 'free' || 
+                                 student.status?.toLowerCase() === 'free';
           
-          // 2. Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම
-          const paymentRecord = payData?.find((p: any) => 
-            p.class_type === rec.class_type && 
-            (p.target_month === rec.month || p.month === rec.month || p.target_month === `${rec.year}-${rec.month}`)
-          );
+          // මෙම මාසය සිසුවාට නිදහස් මාසයක්ද (Free Month) කියා බැලීම
+          const isThisMonthFree = student.free_months?.includes(rec.month) || 
+                                  student.free_months?.includes(`${rec.year}-${rec.month}`) || 
+                                  student.free_months?.includes(`${rec.year} ${rec.month}`);
           
-          const isPaid = paymentRecord?.status?.toLowerCase() === 'paid' || paymentRecord?.status?.toLowerCase() === 'free';
+          // 2. Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම (Case sensitivity සහ Spaces වල දෝෂ මගහැර ඇත)
+          const paymentRecord = payData?.find((p: any) => {
+            const isClassMatch = p.class_type?.trim().toLowerCase() === rec.class_type?.trim().toLowerCase();
+            
+            const pMonth = (p.target_month || p.month)?.trim().toLowerCase();
+            const rMonthOnly = rec.month?.trim().toLowerCase();
+            const rMonthDash = `${rec.year}-${rec.month}`.toLowerCase();
+            const rMonthSpace = `${rec.year} ${rec.month}`.toLowerCase();
+
+            const isMonthMatch = pMonth === rMonthOnly || pMonth === rMonthDash || pMonth === rMonthSpace;
+
+            return isClassMatch && isMonthMatch;
+          });
           
-          // අවසාන අවසරය (ලොක්/අන්ලොක්)
+          // ගෙවීම් තත්වය 'paid', 'free', 'approved' හෝ 'success' නම් අන්ලොක් වේ
+          const pStatus = paymentRecord?.status?.toLowerCase();
+          const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
+          
+          // අවසාන අවසරය (ලොක්/අන්ලොක්) තීරණය කිරීම
           statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isPaid; 
         });
       }
@@ -141,14 +157,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   // --- Realtime Watch Time Tracker Logic ---
-  
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
-    
-    stopWatchTimeTracking(); // කලින් තිබූ Tracker එක නවතාලීම
+    stopWatchTimeTracking(); 
 
     try {
-      // දැනට මෙම වීඩියෝව සඳහා මෙම සිසුවාට රෙකෝඩ් එකක් තියෙනවද බලන්න
       const { data, error } = await supabase
         .from('recording_views')
         .select('id, watched_seconds')
@@ -162,7 +175,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         currentViewRecordIdRef.current = data.id;
         totalWatchedSecondsRef.current = data.watched_seconds;
       } else {
-        // නැත්නම් අලුත් රෙකෝඩ් එකක් ඇතුලත් කරනවා
         const { data: newRec, error: insertError } = await supabase
           .from('recording_views')
           .insert({
@@ -180,14 +192,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         }
       }
 
-      // තත්පරයෙන් තත්පරය කාලය ගණනය කරන ඉන්ටර්වල් එක (Realtime Counter)
       let tickCounter = 0;
       syncIntervalRef.current = setInterval(async () => {
         if (isPlaying) {
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
-          // Database එක Overload නොවීමට සෑම තත්පර 3 කට වරක්ම DB එක Sync කරයි
           if (tickCounter >= 3 && currentViewRecordIdRef.current) {
             tickCounter = 0;
             await supabase
@@ -211,7 +221,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = null;
     }
-    // වීඩියෝව නවත්වන අවසන් මොහොතේ ඉතිරි වූ තත්පර ගණනද සුරකියි
     if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
       await supabase
         .from('recording_views')
