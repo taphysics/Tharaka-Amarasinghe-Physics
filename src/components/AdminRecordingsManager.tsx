@@ -197,17 +197,29 @@ export default function AdminRecordingsManager() {
                 </div>
               </div>
 
-              {/* Year & Month */}
+              {/* Year & Month Selection */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">අවුරුද්ද</label>
-                  <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white outline-none">
-                    {years.map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">අවුරුද්ද (Type or Select)</label>
+                  <input
+                    type="text"
+                    value={selectedYear}
+                    onChange={(e) => setSelectedYear(e.target.value)}
+                    list="year-list"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="උදා: 2026"
+                  />
+                  <datalist id="year-list">
+                    {years.map(y => <option key={y} value={y} />)}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">මාසය</label>
-                  <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white outline-none">
+                  <select
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white outline-none"
+                  >
                     {months.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
