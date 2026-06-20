@@ -62,7 +62,7 @@ export default function QrGenerator() {
     const baseUrl = window.location.origin;
 
     return (
-        <div className="space-y-6">
+        <div className="lg:col-span-12 w-full space-y-6">
             <div className="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50 flex justify-between items-center">
                 <h3 className="font-bold text-white text-lg flex items-center gap-2">
                     <QRCode value="icon" size={20} className="text-blue-500" /> QR Generator & Social Link Manager

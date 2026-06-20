@@ -282,9 +282,8 @@ export default function AdminRecordingsManager() {
 
     // මුළු පිටුවේම පළල හරියාකාරව ගැනීමට w-full සහ flex-1 පාවිච්චි කර ඇත
 
-    <div className="w-full min-h-screen bg-slate-900 flex-1 p-4 md:p-8 text-slate-200">
-
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="lg:col-span-12 w-full min-h-screen bg-slate-900 flex-1 p-4 md:p-8 text-slate-200">
+    <div className="max-w-7xl mx-auto space-y-8">
 
        
 
