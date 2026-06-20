@@ -47,13 +47,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       loadSavedProgress();
     }
 
-    // Realtime Payments Updates Listener
+    // Realtime Payments Updates Listener (Changed to use student_id)
     const channel = supabase.channel('realtime-payments-recordings')
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
         table: 'payments', 
-        filter: `username=eq.${student.username}` 
+        filter: `student_id=eq.${student.id}` // <-- වෙනස මෙතැනයි
       }, () => {
         fetchRecordingsAndPayments(); 
       })
@@ -72,6 +72,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     } else {
       stopWatchTimeTracking();
     }
+    // Cleanup function එක
     return () => {
       stopWatchTimeTracking();
     };
@@ -79,7 +80,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const fetchRecordingsAndPayments = async () => {
     try {
-      // සිසුවාගේ class_types (text[]) Array එක ලබා ගැනීම
       const studentClasses = student.class_types || [];
 
       if (studentClasses.length === 0) {
@@ -87,7 +87,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
 
-      // සිසුවාට අදාළ පන්ති වල වීඩියෝ පමණක් ලබා ගැනීම
+      // 1. සිසුවාට අදාළ පන්ති වල වීඩියෝ පමණක් ලබා ගැනීම
       const { data: recData, error: recError } = await supabase
         .from('recordings') 
         .select('*')
@@ -106,48 +106,50 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      // සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම
+      // 2. සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම (Changed to use student_id)
       const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
-        .eq('username', student.username);
+        .eq('student_id', student.id); // <-- වෙනස මෙතැනයි
 
       if (payError) throw payError;
 
       const statusMap: Record<string, boolean> = {};
+      
       if (recData) {
         recData.forEach((rec: any) => {
-          // 1. සිසුවා Free Student කෙනෙක්දැයි පරීක්ෂා කිරීම (කලින් තිබූ student.is_paid === false හි දෝෂය නිවැරදි කර ඇත)
-          // සිසුවාට free card එකක් ඇත්නම් හෝ status එක free නම් පමණක් අගය true වේ.
-          const isGloballyFree = student.is_free === true || 
-                                 student.student_type?.toLowerCase() === 'free' || 
-                                 student.status?.toLowerCase() === 'free';
           
-          // මෙම මාසය සිසුවාට නිදහස් මාසයක්ද (Free Month) කියා බැලීම
-          const isThisMonthFree = student.free_months?.includes(rec.month) || 
-                                  student.free_months?.includes(`${rec.year}-${rec.month}`) || 
-                                  student.free_months?.includes(`${rec.year} ${rec.month}`);
-          
-          // 2. Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම (Case sensitivity සහ Spaces වල දෝෂ මගහැර ඇත)
-          const paymentRecord = payData?.find((p: any) => {
-            const isClassMatch = p.class_type?.trim().toLowerCase() === rec.class_type?.trim().toLowerCase();
-            
-            const pMonth = (p.target_month || p.month)?.trim().toLowerCase();
-            const rMonthOnly = rec.month?.trim().toLowerCase();
-            const rMonthDash = `${rec.year}-${rec.month}`.toLowerCase();
-            const rMonthSpace = `${rec.year} ${rec.month}`.toLowerCase();
+          const recMonthStr = rec.month;
+          const recYearMonthStr = `${rec.year}-${rec.month}`;
 
-            const isMonthMatch = pMonth === rMonthOnly || pMonth === rMonthDash || pMonth === rMonthSpace;
+          // අදියර 1: සිසුවා සම්පූර්ණයෙන්ම Free Plan එකක ඉන්නවද බැලීම
+          const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
+          
+          // අදියර 2: මෙම මාසය සිසුවාට Free හෝ Active මාසයක්ද බැලීම
+          const isThisMonthFree = student.free_months?.includes(recMonthStr) || student.free_months?.includes(recYearMonthStr);
+          const isThisMonthActive = student.active_months?.includes(recMonthStr) || student.active_months?.includes(recYearMonthStr);
+          
+          // අදියර 3: Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම
+          const paymentRecord = payData?.find((p: any) => {
+            // පන්තිය මැච් වෙනවද බැලීම (class_type හෝ class_name)
+            const isClassMatch = p.class_type === rec.class_type || p.class_name === rec.class_type;
+            
+            // මාසය මැච් වෙනවද බැලීම (format කිහිපයක්ම බලයි)
+            const isMonthMatch = 
+              p.target_month === recMonthStr || 
+              p.month === recMonthStr || 
+              p.target_month === recYearMonthStr || 
+              p.month === recYearMonthStr;
 
             return isClassMatch && isMonthMatch;
           });
           
-          // ගෙවීම් තත්වය 'paid', 'free', 'approved' හෝ 'success' නම් අන්ලොක් වේ
-          const pStatus = paymentRecord?.status?.toLowerCase();
+          // ගෙවීම් තත්ත්වය (Status) පරීක්ෂාව
+          const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
           const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
           
-          // අවසාන අවසරය (ලොක්/අන්ලොක්) තීරණය කිරීම
-          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isPaid; 
+          // අවසාන අවසරය (ලොක්/අන්ලොක්) - ඉහතින් එකකට හෝ ගැලපේ නම් Unlock වේ
+          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isThisMonthActive || isPaid; 
         });
       }
       setPaymentStatuses(statusMap);
@@ -157,8 +159,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   // --- Realtime Watch Time Tracker Logic ---
+  
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
+    
     stopWatchTimeTracking(); 
 
     try {
@@ -444,7 +448,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
                 <button 
                   onClick={() => { 
-                    stopWatchTimeTracking(); // Modal එක වසන විට Track එක නවත්වා DB යැවීම
+                    stopWatchTimeTracking(); 
                     setSelectedVideo(null); 
                     setIsPlaying(false); 
                     if(isFullscreen) screenfull.exit(); 
