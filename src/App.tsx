@@ -44,7 +44,7 @@ import AdminRegistryTable from './components/AdminRegistryTable';
 import ClassTypesFeesManager from './components/ClassTypesFeesManager';
 import AdminPaymentManager from './components/AdminPaymentManager';
 import AdminPaymentHistory from './components/AdminPaymentHistory';
-import AdminGlobalConfig from './components/AdminGlobalConfig';
+import QrGenerator from './components/QrGenerator';
 import AdminCalendarPlanner from './components/AdminCalendarPlanner';
 import AdminSiteConfig from './components/AdminSiteConfig';
 import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
@@ -214,44 +214,6 @@ export default function App() {
     alert.type === 'public' || (alert.type === 'private' && alert.target_user === currentStudent.username)
   ) : [];
   
-  // Attention Check states
-  const [attentionCheckTime, setAttentionCheckTime] = useState<number>(0);
-  const [showAttentionCheck, setShowAttentionCheck] = useState(false);
-
-  // Attention Check Timer setup for Live Video Watch
-  useEffect(() => {
-    // Determine interval dynamically (default 45 minutes)
-    let intervalSeconds = 2700; 
-    try {
-      if (siteConfig?.classRatesText) {
-         const parsed = JSON.parse(siteConfig.classRatesText);
-         if (parsed.attentionInterval) {
-           intervalSeconds = parseInt(parsed.attentionInterval, 10) * 60;
-         }
-      }
-    } catch(e) {}
-
-    const isWatchingVideo = (currentView === 'dashboard' && dashboardTab === 'live') || playingVideoUrl !== null;
-
-    if (isWatchingVideo && !showAttentionCheck) {
-      const intervalId = setInterval(() => {
-        setAttentionCheckTime(prev => {
-          const next = prev + 1;
-          if (next >= intervalSeconds) {
-            setShowAttentionCheck(true);
-            return 0; // reset
-          }
-          return next;
-        });
-      }, 1000);
-      return () => clearInterval(intervalId);
-    } else if (!isWatchingVideo) {
-      // Reset timer if video is closed
-      setAttentionCheckTime(0);
-      setShowAttentionCheck(false);
-    }
-  }, [currentView, dashboardTab, showAttentionCheck, playingVideoUrl, siteConfig]);
-
 // පිටුව ලෝඩ් වෙද්දීම class_types_config එකෙන් පන්ති වර්ග කියවා ගැනීම
 useEffect(() => {
   const fetchAvailableClasses = async () => {
@@ -261,6 +223,7 @@ useEffect(() => {
       .order('class_type', { ascending: true }); // අකාරාදී පිළිවෙලට සකස් කිරීම
 
     if (!error && data) {
+      const [availableClasses, setAvailableClasses] = useState<any[]>([]);
       setAvailableClasses(data);
     } else {
       console.error('Error fetching class configs:', error);
@@ -270,20 +233,7 @@ useEffect(() => {
   fetchAvailableClasses();
 }, []);
 
-  useEffect(() => {
-    // If attention check is shown, wait 5 minutes (300 seconds) to play ringtone
-    if (showAttentionCheck) {
-      const timeoutId = setTimeout(() => {
-        const audio = document.getElementById('attention-audio') as HTMLAudioElement;
-        if (audio) {
-          audio.play().catch(e => console.log('Audio autoplay blocked', e));
-        }
-      }, 300000); // 5 minutes
-      return () => clearTimeout(timeoutId);
-    }
-  }, [showAttentionCheck]);
-
-  // Modal / Message box states
+// Modal / Message box states
   const [modalTitle, setModalTitle] = useState('');
   const [modalContent, setModalContent] = useState<React.ReactNode | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -295,7 +245,7 @@ useEffect(() => {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'live_classes' | 'resets' | 'global_configs'>('registry');
+  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'live_classes' | 'resets' | 'qr_generator'>('registry');
 
   // Manual Profile Code generator inside cockpit
   const [manFirst, setManFirst] = useState('');
@@ -366,6 +316,7 @@ useEffect(() => {
   const [regClassTypes, setRegClassTypes] = useState<string[]>([]);
   const [regWhatsApp, setRegWhatsApp] = useState('');
   const [regMobile, setRegMobile] = useState('');
+  
   // ඩේටාබේස් එකෙන් ලැබෙන පන්ති වර්ග තබා ගැනීමට අලුත් State එකක්
   const [availableClasses, setAvailableClasses] = useState<any[]>([]);
 
@@ -384,7 +335,7 @@ useEffect(() => {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes" | "resets" | "global_configs") => {
+  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes" | "resets" | "qr_generator") => {
     setActiveAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -498,7 +449,7 @@ useEffect(() => {
     setForgotNIC('');
   };
 
-// NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
+  // NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
   const checkNICExists = async (nicValue: string) => {
     if (!nicValue) return false;
     
@@ -506,7 +457,7 @@ useEffect(() => {
       .from('students')
       .select('nic')
       .eq('nic', nicValue)
-      .maybeSingle(); // .single() වෙනුවට .maybeSingle() යොදා ඇත
+      .maybeSingle();
 
     if (data) {
       alert("මෙම NIC අංකයෙන් දැනටමත් ගිණුමක් ලියාපදිංචි කර ඇත!");
@@ -525,7 +476,7 @@ useEffect(() => {
       try {
         const { data, error } = await supabase
           .from('class_types_config')
-          .select('class_type') // මෙතන class_type විය යුතුයි
+          .select('class_type')
           .eq('is_active', true);
 
         if (error) throw error;
@@ -540,18 +491,20 @@ useEffect(() => {
     };
 
     fetchClasses();
-  }, []); // හිස් array එකක් දැම්මම මේක run වෙන්නේ එක පාරයි
+  }, []); 
 
-const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
-  e.preventDefault(); // ෆෝම් එක සබ්මිට් වෙද්දී පේජ් එක රීලෝඩ් වීම නවත්වයි
-  setIsSubmitButtonDisabled(true);
+  const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); 
+    setIsSubmitButtonDisabled(true);
 
     // 1. මුලින්ම NIC එක Database එකේ තියෙනවද බලනවා
     const isDuplicate = await checkNICExists(regNIC); 
     
     if (isDuplicate) {
-      return; // Duplicate නම් මෙතැනින් නවතිනවා. පහළ කේතය වැඩ කරන්නේ නෑ.
+      setIsSubmitButtonDisabled(false);
+      return; 
     }
+    
     // Validate fields strictly
     const errors: { [key: string]: boolean } = {};
     let firstInvalidRef: React.RefObject<HTMLDivElement | null> | null = null;
@@ -576,6 +529,7 @@ const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
       errors.classes = true;
       if (!firstInvalidRef) firstInvalidRef = grpClassRef;
     }
+    
     // Validation: Exactly 10 digits starting with 0
     const phoneRegex = /^0\d{9}$/;
     if (!phoneRegex.test(regWhatsApp)) {
@@ -586,9 +540,10 @@ const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
       errors.mobile = true;
       if (!firstInvalidRef) firstInvalidRef = grpMobileRef;
     }
+    
     if (Object.keys(errors).length > 0) {
       setInvalidGroups(errors);
-      setIsSubmitButtonDisabled(true);
+      setIsSubmitButtonDisabled(false); // Enable the button again if there are errors
 
       // Smooth scroll to the first invalid element
       if (firstInvalidRef && firstInvalidRef.current) {
@@ -598,54 +553,55 @@ const handleStudentRegistrationSubmit = async (e: React.FormEvent) => {
     }
 
     // Format secure message for Tutor/Admin on WhatsApp status
-  const formattedMessage = `*New Student Registration - TA Physics Online Hub*\n\n` +
-    `• First Name: *${regFirst}*\n` +
-    `• Last Name: *${regLast}*\n` +
-    `• NIC Number: *${regNIC}*\n` +
-    `• District: *${regDistrict}*\n` +
-    `• Class Type(s): *${regClassTypes.join(', ')}*\n` +
-    `• WhatsApp Number: *${regWhatsApp}*\n` +
-    `• Mobile Number: *${regMobile}*\n\n` +
-    `Please verify my details and provide my login username and password. Thank you!`;
+    const formattedMessage = `*New Student Registration - TA Physics Online Hub*\n\n` +
+      `• First Name: *${regFirst}*\n` +
+      `• Last Name: *${regLast}*\n` +
+      `• NIC Number: *${regNIC}*\n` +
+      `• District: *${regDistrict}*\n` +
+      `• Class Type(s): *${regClassTypes.join(', ')}*\n` +
+      `• WhatsApp Number: *${regWhatsApp}*\n` +
+      `• Mobile Number: *${regMobile}*\n\n` +
+      `Please verify my details and provide my login username and password. Thank you!`;
 
-  const encoded = encodeURIComponent(formattedMessage);
-  const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
-  
-  // Save to Supabase (async/await ක්‍රමයට වඩාත් නිවැරදිව සකසා ඇත)
-  const { error } = await supabase.from('students').insert([{
-    username: `PENDING_${Date.now()}`, // Temporary unique username
-    password: '',
-    name: `${regFirst} ${regLast}`,
-    first_name: regFirst,
-    last_name: regLast,
-    nic: regNIC,
-    district: regDistrict,
-    class_types: regClassTypes, // මෙතනට dynamic ලෙස තෝරාගත් පන්ති Array එක එකතු වේ
-    whatsapp: regWhatsApp,
-    mobile: regMobile,
-    is_paid: false,
-    is_approved: false,
-    active_months: [], 
-    joined_at: new Date().toISOString()
-  }]);
+    const encoded = encodeURIComponent(formattedMessage);
+    const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
+    
+    // Save to Supabase (async/await ක්‍රමයට වඩාත් නිවැරදිව සකසා ඇත)
+    const { error } = await supabase.from('students').insert([{
+      username: `PENDING_${Date.now()}`, // Temporary unique username
+      password: '',
+      name: `${regFirst} ${regLast}`,
+      first_name: regFirst,
+      last_name: regLast,
+      nic: regNIC,
+      district: regDistrict,
+      class_types: regClassTypes, 
+      whatsapp: regWhatsApp,
+      mobile: regMobile,
+      is_paid: false,
+      is_approved: false,
+      active_months: [], 
+      joined_at: new Date().toISOString()
+    }]);
 
-  if (error) {
-    console.error('Error saving to DB:', error);
-    alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
+    if (error) {
+      console.error('Error saving to DB:', error);
+      alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
+      setIsSubmitButtonDisabled(false);
+      return; 
+    }
+
+    // Reset fields
+    setRegFirst('');
+    setRegLast('');
+    setRegNIC('');
+    setRegDistrict('');
+    setRegClassTypes([]);
+    setRegWhatsApp('');
+    setRegMobile('');
+    setInvalidGroups({});
     setIsSubmitButtonDisabled(false);
-    return; // එරර් එකක් ආවොත් ක්‍රියාවලිය මෙතනින් නතර කරයි
-  }
 
-  // Reset fields
-  setRegFirst('');
-  setRegLast('');
-  setRegNIC('');
-  setRegDistrict('');
-  setRegClassTypes([]);
-  setRegWhatsApp('');
-  setRegMobile('');
-  setInvalidGroups({});
-  setIsSubmitButtonDisabled(false);
 
   // Prompt user with modal containing instructions
   setModalTitle("ලියාපදිංචි වීමට අවශ්‍ය තොරතුරු!");
@@ -1807,11 +1763,11 @@ if (isLoading) {
                     Payment History
                   </button>
                   <button 
-                    onClick={() => handleAdminTabChange('global_configs')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'global_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Global Config
-                  </button>
+  onClick={() => handleAdminTabChange('qr_generator')}
+  className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'qr_generator' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+>
+  QR Generator
+</button>
                   <button 
                     onClick={() => handleAdminTabChange('site_configs')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'site_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
@@ -2021,11 +1977,9 @@ if (isLoading) {
                     </div>
                   )}
 
-                  {activeAdminTab === 'global_configs' && (
-                    <div className="lg:col-span-12">
-                       <AdminGlobalConfig />
-                    </div>
-                  )}
+                  {activeAdminTab === 'qr_generator' && (
+  <QrGenerator />
+)}
 
                   {activeAdminTab === 'resets' && (
   <div className="lg:col-span-12 w-full">

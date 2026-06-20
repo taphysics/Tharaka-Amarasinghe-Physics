@@ -21,6 +21,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "react-player": "^3.4.0",
+    "react-qr-code": "^2.2.0",
     "screenfull": "^6.0.2",
     "vite": "^6.2.3"
   },
