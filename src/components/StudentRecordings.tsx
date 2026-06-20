@@ -1,5 +1,3 @@
-// 🔴 වැදගත්: පහත පේළියේ '../lib/supabaseClient' වෙනුවට ඔබේ supabase ෆයිල් එක තියෙන නිවැරදි path එක දෙන්න.
-// උදාහරණ: import { supabase } from '../supabase'; හෝ import { supabase } from '../../supabase';
 import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
@@ -7,11 +5,11 @@ import screenfull from 'screenfull';
 
 import { Play, Pause, Maximize, Minimize, SkipBack, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
 
-// මෙම පේළිය අලුතින් එකතු කරන්න
 const Player: any = ReactPlayer;
+
 interface StudentRecordingsProps {
   student: any; 
-  onBack: () => void; // 👈 ඩෑශ්බෝඩ් එකට ආපසු යාමට අලුතින් එකතු කළ කොටස
+  onBack: () => void; 
 }
 
 export default function StudentRecordings({ student, onBack }: StudentRecordingsProps) {
@@ -31,7 +29,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   
-  // TypeScript Errors නිවැරදි කිරීම සඳහා Types ලබා දී ඇත
+  // Realtime Watch Tracking Refs
+  const currentViewRecordIdRef = useRef<string | null>(null);
+  const totalWatchedSecondsRef = useRef<number>(0);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -45,59 +47,183 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       loadSavedProgress();
     }
 
+    // Realtime Payments Updates Listener
     const channel = supabase.channel('realtime-payments-recordings')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `student_id=eq.${student.student_id || student.id}` }, 
-      () => {
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'payments', 
+        filter: `username=eq.${student.username}` 
+      }, () => {
         fetchRecordingsAndPayments(); 
-      }).subscribe();
+      })
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
+      stopWatchTimeTracking();
     };
   }, [student, selectedFilter]);
 
+  // වීඩියෝව Play/Pause වන විට Watch Time Tracker එක ක්‍රියාත්මක කිරීම
+  useEffect(() => {
+    if (isPlaying && selectedVideo) {
+      startWatchTimeTracking();
+    } else {
+      stopWatchTimeTracking();
+    }
+    // සඟල වරහන් {} දමා Promise එකක් return වීම වැළැක්වීම
+    return () => {
+      stopWatchTimeTracking();
+    };
+  }, [isPlaying, selectedVideo]);
+
   const fetchRecordingsAndPayments = async () => {
     try {
-      const { data: recData } = await supabase
+      // සිසුවාගේ class_types (text[]) Array එක ලබා ගැනීම
+      const studentClasses = student.class_types || [];
+
+      if (studentClasses.length === 0) {
+        setRecordings([]);
+        return;
+      }
+
+      // සිසුවාට අදාළ පන්ති වල වීඩියෝ පමණක් ලබා ගැනීම
+      const { data: recData, error: recError } = await supabase
         .from('recordings') 
         .select('*')
-        .in('class_type', typeof student.class_type === 'string' ? JSON.parse(student.class_type) : student.class_type)
+        .in('class_type', studentClasses)
         .order('created_at', { ascending: true }); 
       
+      if (recError) throw recError;
+
       if (recData) {
         setRecordings(recData);
-        // Typescript Error Fix: Set එකට සහ Map එකට String type එක ලබා දීම
-        const months = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
+        const monthsList = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
           .map((str: string) => {
             const [y, m] = str.split('-');
             return { year: y, month: m };
           });
-        setAvailableMonths(months);
+        setAvailableMonths(monthsList);
       }
 
-      const { data: payData } = await supabase
+      // සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම
+      const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
-        .eq('student_id', student.student_id || student.id);
+        .eq('username', student.username);
+
+      if (payError) throw payError;
 
       const statusMap: Record<string, boolean> = {};
-      if (recData && payData) {
+      if (recData) {
         recData.forEach((rec: any) => {
-          const isFreeStudent = student.is_paid === false || student.free_months?.includes(rec.month);
-          const paymentRecord = payData.find((p: any) => 
+          // 1. සිසුවා Free Student කෙනෙක්ද හෝ මෙම මාසය සිසුවාට නිදහස් මාසයක්ද (Free Month) කියා බැලීම
+          const isGloballyFree = student.is_paid === false; 
+          const isThisMonthFree = student.free_months?.includes(rec.month) || student.free_months?.includes(`${rec.year}-${rec.month}`);
+          
+          // 2. Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම
+          const paymentRecord = payData?.find((p: any) => 
             p.class_type === rec.class_type && 
-            (p.month === rec.month || p.month === `${rec.year}-${rec.month}`)
+            (p.target_month === rec.month || p.month === rec.month || p.target_month === `${rec.year}-${rec.month}`)
           );
           
           const isPaid = paymentRecord?.status?.toLowerCase() === 'paid' || paymentRecord?.status?.toLowerCase() === 'free';
-          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isFreeStudent || isPaid; 
+          
+          // අවසාන අවසරය (ලොක්/අන්ලොක්)
+          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isPaid; 
         });
       }
       setPaymentStatuses(statusMap);
     } catch (error) {
-      console.error("Error fetching recordings:", error);
+      console.error("Error fetching recordings & payments:", error);
     }
   };
+
+  // --- Realtime Watch Time Tracker Logic ---
+  
+  const startWatchTimeTracking = async () => {
+    if (!selectedVideo || !student) return;
+    
+    stopWatchTimeTracking(); // කලින් තිබූ Tracker එක නවතාලීම
+
+    try {
+      // දැනට මෙම වීඩියෝව සඳහා මෙම සිසුවාට රෙකෝඩ් එකක් තියෙනවද බලන්න
+      const { data, error } = await supabase
+        .from('recording_views')
+        .select('id, watched_seconds')
+        .eq('recording_id', selectedVideo.id)
+        .eq('username', student.username)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        currentViewRecordIdRef.current = data.id;
+        totalWatchedSecondsRef.current = data.watched_seconds;
+      } else {
+        // නැත්නම් අලුත් රෙකෝඩ් එකක් ඇතුලත් කරනවා
+        const { data: newRec, error: insertError } = await supabase
+          .from('recording_views')
+          .insert({
+            recording_id: selectedVideo.id,
+            username: student.username,
+            watched_seconds: 0
+          })
+          .select('id')
+          .single();
+
+        if (insertError) throw insertError;
+        if (newRec) {
+          currentViewRecordIdRef.current = newRec.id;
+          totalWatchedSecondsRef.current = 0;
+        }
+      }
+
+      // තත්පරයෙන් තත්පරය කාලය ගණනය කරන ඉන්ටර්වල් එක (Realtime Counter)
+      let tickCounter = 0;
+      syncIntervalRef.current = setInterval(async () => {
+        if (isPlaying) {
+          totalWatchedSecondsRef.current += 1;
+          tickCounter += 1;
+
+          // Database එක Overload නොවීමට සෑම තත්පර 3 කට වරක්ම DB එක Sync කරයි
+          if (tickCounter >= 3 && currentViewRecordIdRef.current) {
+            tickCounter = 0;
+            await supabase
+              .from('recording_views')
+              .update({ 
+                watched_seconds: totalWatchedSecondsRef.current,
+                last_watched_at: new Date().toISOString()
+              })
+              .eq('id', currentViewRecordIdRef.current);
+          }
+        }
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error initializing watch time tracker:", err);
+    }
+  };
+
+  const stopWatchTimeTracking = async () => {
+    if (syncIntervalRef.current) {
+      clearInterval(syncIntervalRef.current);
+      syncIntervalRef.current = null;
+    }
+    // වීඩියෝව නවත්වන අවසන් මොහොතේ ඉතිරි වූ තත්පර ගණනද සුරකියි
+    if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
+      await supabase
+        .from('recording_views')
+        .update({ 
+          watched_seconds: totalWatchedSecondsRef.current,
+          last_watched_at: new Date().toISOString()
+        })
+        .eq('id', currentViewRecordIdRef.current);
+    }
+  };
+
+  // --- End of Tracker Logic ---
 
   const loadSavedProgress = () => {
     const saved = localStorage.getItem(`video_progress_${student.id}`);
@@ -130,6 +256,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const handleEnded = () => {
     setIsPlaying(false);
     if (selectedVideo) saveProgress(selectedVideo.id, 0, 'completed');
+    stopWatchTimeTracking();
   };
 
   const toggleFullscreen = () => {
@@ -144,7 +271,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       setSelectedVideo(video);
       setPlayed(0);
     } else {
-      alert(`ඔබ තවමත් ${video.year} ${video.month} සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
+      alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
   };
 
@@ -270,6 +397,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
+      {/* Video Player Modal */}
       {selectedVideo && (
         <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
           <div 
@@ -282,33 +410,37 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             }}
             onMouseLeave={() => { if(isPlaying) setShowControls(false) }}
           >
-            {/* ReactPlayer වෙනුවට Player ලෙස වෙනස් කරන්න */}
-<Player
-  ref={playerRef}
-  url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
-  width="100%"
-  height="100%"
-  playing={isPlaying}
-  volume={volume}
-  muted={isMuted}
-  playbackRate={playbackRate}
-  onReady={handleReady}
-  onProgress={handleProgress}
-  onEnded={handleEnded}
-  controls={false} 
-  config={{
-    youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1 } } as any
-  }}
-  className="pointer-events-none" 
-/>
+            <Player
+              ref={playerRef}
+              url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
+              width="100%"
+              height="100%"
+              playing={isPlaying}
+              volume={volume}
+              muted={isMuted}
+              playbackRate={playbackRate}
+              onReady={handleReady}
+              onProgress={handleProgress}
+              onEnded={handleEnded}
+              controls={false} 
+              config={{
+                youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1 } } as any
+              }}
+              className="pointer-events-none" 
+            />
 
             <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
               
               <div className="p-4 flex justify-between items-center">
                 <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
                 <button 
-                  onClick={() => { setSelectedVideo(null); setIsPlaying(false); if(isFullscreen) screenfull.exit(); }}
-                  className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-full p-2 transition"
+                  onClick={() => { 
+                    stopWatchTimeTracking(); // Modal එක වසන විට Track එක නවත්වා DB යැවීම
+                    setSelectedVideo(null); 
+                    setIsPlaying(false); 
+                    if(isFullscreen) screenfull.exit(); 
+                  }}
+                  className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-full p-2 transition text-xs w-8 h-8 flex items-center justify-center font-bold"
                 >
                   ✕
                 </button>
@@ -361,13 +493,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                     <select 
                       value={playbackRate} 
                       onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
-                      className="bg-transparent text-white text-sm font-bold outline-none cursor-pointer"
+                      className="bg-slate-900 border border-slate-700 text-white text-sm font-bold outline-none cursor-pointer rounded px-2 py-0.5"
                     >
-                      <option value={0.5} className="text-black">0.5x</option>
-                      <option value={1} className="text-black">1.0x (Normal)</option>
-                      <option value={1.25} className="text-black">1.25x</option>
-                      <option value={1.5} className="text-black">1.5x</option>
-                      <option value={2} className="text-black">2.0x</option>
+                      <option value={0.5}>0.5x</option>
+                      <option value={1}>1.0x (Normal)</option>
+                      <option value={1.25}>1.25x</option>
+                      <option value={1.5}>1.5x</option>
+                      <option value={2}>2.0x</option>
                     </select>
 
                     <button onClick={toggleFullscreen} className="text-white hover:text-blue-400">
