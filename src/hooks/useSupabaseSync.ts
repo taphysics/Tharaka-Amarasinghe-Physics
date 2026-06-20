@@ -4,8 +4,9 @@ import { supabase } from '../supabaseClient';
 export function useSupabaseSync<T>(tableName: string, initialData: T[]) {
   const [data, setData] = useState<T[]>(initialData);
 
-  useEffect(() => {
+  
     // Initial fetch
+    useEffect(() => {
     const fetchData = async () => {
       const { data: fetchedData, error } = await supabase.from(tableName).select('*');
       if (!error && fetchedData) {

@@ -30,8 +30,9 @@ const LiveClassPlayer: React.FC<Props> = ({ currentStudent, isPaid }) => {
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
   const timerRef = useRef<any>(null);
 
-  useEffect(() => {
+  
     // 1. Live Data Stream එකට සවන් දීම (Supabase Realtime Subscription)
+    useEffect(() => {
     const channel = supabase
       .channel('live_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, (payload: any) => {
