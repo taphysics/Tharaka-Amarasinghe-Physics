@@ -1,39 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, 
-  Lock, 
   Unlock, 
   User, 
   Settings, 
-  Phone, 
-  Calendar as CalendarIcon, 
-  AlertTriangle, 
-  CheckCircle, 
-  LogOut, 
+  Calendar, 
   Copy, 
   Bell, 
-  Volume2, 
-  Clock, 
   FileText, 
-  UserCheck, 
   Award,
   Globe,
   Plus,
-  Trash2,
   X,
   Menu,
-  ChevronRight,
   Send,
   Video,
-  Folder,
-  Download,
-  Play
 } from 'lucide-react';
-import { Student, CalendarEvent, Announcement, SiteConfig } from './types';
+import { Student } from './types';
 import { 
   DEFAULT_STUDENTS, 
-  DEFAULT_CALENDAR_EVENTS, 
-  DEFAULT_ANNOUNCEMENTS, 
   DEFAULT_SITE_CONFIG,
   SRI_LANKA_DISTRICTS 
 } from './data';
