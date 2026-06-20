@@ -47,13 +47,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       loadSavedProgress();
     }
 
-    // Realtime Payments Updates Listener (Changed to use student_id)
+    // Realtime Payments Updates Listener
     const channel = supabase.channel('realtime-payments-recordings')
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
         table: 'payments', 
-        filter: `student_id=eq.${student.id}` // <-- වෙනස මෙතැනයි
+        filter: `username=eq.${student.username}` 
       }, () => {
         fetchRecordingsAndPayments(); 
       })
@@ -106,11 +106,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      // 2. සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම (Changed to use student_id)
+      // 2. සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම
       const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
-        .eq('student_id', student.id); // <-- වෙනස මෙතැනයි
+        .eq('username', student.username);
 
       if (payError) throw payError;
 
