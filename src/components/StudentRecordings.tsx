@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
 import screenfull from 'screenfull';
 
-import { Play, Pause, Maximize, Minimize, SkipBack, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
+// SkipForward අයිකනය අලුතින් එක් කර ඇත
+import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
 
 const Player: any = ReactPlayer;
 
@@ -39,8 +40,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentYear = new Date().getFullYear().toString();
-  const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0'); // e.g., "06"
-  const currentMonthName = new Date().toLocaleString('default', { month: 'long' }); // e.g., "June"
+  const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
+  const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
   useEffect(() => {
     if (student) {
@@ -48,7 +49,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       loadSavedProgress();
     }
 
-    // Realtime Payments Updates Listener
     const channel = supabase.channel('realtime-payments-recordings')
       .on('postgres_changes', { 
         event: '*', 
@@ -66,18 +66,26 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [student, selectedFilter]);
 
-  // වීඩියෝව Play/Pause වන විට Watch Time Tracker එක ක්‍රියාත්මක කිරීම
   useEffect(() => {
     if (isPlaying && selectedVideo) {
       startWatchTimeTracking();
     } else {
       stopWatchTimeTracking();
     }
-    // Cleanup function එක
-    return () => {
-      stopWatchTimeTracking();
-    };
+    return () => { stopWatchTimeTracking(); };
   }, [isPlaying, selectedVideo]);
+
+  // Spacebar එක මඟින් Play/Pause කිරීම
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedVideo && e.code === 'Space') {
+        e.preventDefault();
+        setIsPlaying(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedVideo]);
 
   const fetchRecordingsAndPayments = async () => {
     try {
@@ -88,7 +96,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
 
-      // 1. සිසුවාට අදාළ පන්ති වල වීඩියෝ පමණක් ලබා ගැනීම
       const { data: recData, error: recError } = await supabase
         .from('recordings') 
         .select('*')
@@ -107,7 +114,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      // 2. සිසුවාගේ ගෙවීම් විස්තර ලබා ගැනීම
       const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
@@ -117,7 +123,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
       const statusMap: Record<string, boolean> = {};
       
-      // මාස වල නම් අංක වලට හැරවීමේ ෆන්ක්ෂන් එක (උදා: June හෝ 6 -> 06 බවට පත් කරයි)
       const formatYearMonth = (year: any, month: any) => {
         let yStr = String(year).trim();
         let mStr = String(month).trim();
@@ -137,47 +142,43 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             'december': '12', 'dec': '12'
         };
         const mappedMonth = monthMap[mStr.toLowerCase()] || mStr.padStart(2, '0');
-        return `${yStr}-${mappedMonth}`; // ප්‍රතිදානය: "2026-06"
+        return `${yStr}-${mappedMonth}`; // e.g: "2026-06"
       };
 
       if (recData) {
         recData.forEach((rec: any) => {
           
-          const recMonthStr = rec.month;
+          const recMonthStr = String(rec.month).trim();
+          const recYearStr = String(rec.year).trim();
           const recYearMonthStr = `${rec.year}-${rec.month}`;
-          const standardizedDbMonth = formatYearMonth(rec.year, rec.month); // ඩේටාබේස් එකේ සේව් වෙන "YYYY-MM" ෆෝමැට් එක
+          const standardizedDbMonth = formatYearMonth(rec.year, rec.month); // 2026-06
 
-          // අදියර 1: සිසුවා සම්පූර්ණයෙන්ම Free Plan එකක ඉන්නවද බැලීම
           const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
-          
-          // අදියර 2: මෙම මාසය සිසුවාට Free මාසයක්ද බැලීම
           const isThisMonthFree = student.free_months?.includes(recMonthStr) || 
                                   student.free_months?.includes(recYearMonthStr) || 
                                   student.free_months?.includes(standardizedDbMonth);
           
-          // අදියර 3: Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම
           const paymentRecord = payData?.find((p: any) => {
-            // පන්තිය මැච් වෙනවද බැලීම (class_type හෝ class_name)
-            const isClassMatch = p.class_type === rec.class_type || p.class_name === rec.class_type;
+            const pClass = String(p.class_type || p.class_name || "").toLowerCase().trim();
+            const rClass = String(rec.class_type || "").toLowerCase().trim();
+            const isClassMatch = pClass === rClass || pClass.includes(rClass) || rClass.includes(pClass);
             
-            // මාසය මැච් වෙනවද බැලීම (format කිහිපයක්ම බලයි)
+            const pTargetMonth = String(p.target_month || "").trim();
+            const pMonth = String(p.month || "").trim();
+
             const isMonthMatch = 
-              p.target_month === standardizedDbMonth || 
-              p.month === standardizedDbMonth || 
-              p.target_month === recMonthStr || 
-              p.month === recMonthStr ||
-              p.target_month === recYearMonthStr || 
-              p.month === recYearMonthStr;
+              pTargetMonth === standardizedDbMonth || 
+              pMonth === standardizedDbMonth || 
+              pTargetMonth === recMonthStr || 
+              pMonth === recMonthStr ||
+              pMonth === `${recYearStr}-${recMonthStr.padStart(2, '0')}`;
 
             return isClassMatch && isMonthMatch;
           });
           
-          // ගෙවීම් තත්ත්වය (Status) පරීක්ෂාව
           const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
           const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
           
-          // අවසාන අවසරය (ලොක්/අන්ලොක්)
-          // සටහන: Active Month එකක හිටියත්, Payment එක අනිවාර්යයෙන් Paid/Free විය යුතුය.
           statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isPaid; 
         });
       }
@@ -187,8 +188,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // --- Realtime Watch Time Tracker Logic ---
-  
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
     
@@ -265,8 +264,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // --- End of Tracker Logic ---
-
   const loadSavedProgress = () => {
     const saved = localStorage.getItem(`video_progress_${student.id}`);
     if (saved) setVideoProgress(JSON.parse(saved));
@@ -284,6 +281,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       playerRef.current?.seekTo(resumeTime, 'seconds');
     }
+    // වීඩියෝව Load වූ වහාම Auto Play වේ
     setIsPlaying(true);
   };
 
@@ -312,14 +310,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
+      setIsPlaying(true); // Thumbnail එක Click කළ සැණින් Play වීමට සකසා ඇත
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
   };
 
+  // Skip කිරීමේ Function එක (එක දිගට එබූ විට වාර ගණන අනුව කාලය එකතු වේ)
+  const handleSkip = (seconds: number) => {
+    if (playerRef.current) {
+      const currentTime = playerRef.current.getCurrentTime();
+      playerRef.current.seekTo(currentTime + seconds, 'seconds');
+    }
+  };
+
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
-        // "current" ෆිල්ටර් කිරීමේදී මාසය අංකයක් ද නමක් ද යන්න දෙකම පරීක්ෂා කරයි
         return r.year === currentYear && (
             r.month === currentMonthNumStr || 
             r.month === currentMonthName || 
@@ -459,6 +465,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             }}
             onMouseLeave={() => { if(isPlaying) setShowControls(false) }}
           >
+            {/* Play/Pause Click Overlay */}
+            <div 
+              className="absolute inset-0 z-10 cursor-pointer" 
+              onClick={() => setIsPlaying(!isPlaying)}
+            />
+
             <Player
               ref={playerRef}
               url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
@@ -473,17 +485,19 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onEnded={handleEnded}
               controls={false} 
               config={{
-                youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1 } } as any
+                youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1, autoplay: 1 } } as any
               }}
-              className="pointer-events-none" 
+              className="pointer-events-none z-0 relative" 
             />
 
-            <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
-              
-              <div className="p-4 flex justify-between items-center">
+            <div 
+              className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 z-20 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
+            >
+              <div className="p-4 flex justify-between items-center pointer-events-auto">
                 <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
                 <button 
-                  onClick={() => { 
+                  onClick={(e) => { 
+                    e.stopPropagation();
                     stopWatchTimeTracking(); 
                     setSelectedVideo(null); 
                     setIsPlaying(false); 
@@ -496,15 +510,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               </div>
 
               {!isPlaying && played >= 0.99 && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
-                  <button onClick={() => { playerRef.current?.seekTo(0); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-30 pointer-events-auto">
+                  <button onClick={(e) => { e.stopPropagation(); playerRef.current?.seekTo(0); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
                     <RotateCcw size={48} className="mb-2" />
                     <span>නැවත ප්ලේ කරන්න</span>
                   </button>
                 </div>
               )}
 
-              <div className="p-4 space-y-2">
+              <div className="p-4 space-y-2 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
                 <div 
                   className="h-2 bg-slate-600/50 rounded-full cursor-pointer relative"
                   onClick={(e) => {
@@ -522,8 +536,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
                     </button>
                     
-                    <button onClick={() => playerRef.current?.seekTo(playerRef.current.getCurrentTime() - 10)} className="text-white hover:text-blue-400" title="තත්පර 10ක් ආපස්සට">
+                    <button onClick={() => handleSkip(-10)} className="text-white hover:text-blue-400" title="තත්පර 10ක් ආපස්සට">
                       <SkipBack size={20} />
+                    </button>
+
+                    <button onClick={() => handleSkip(10)} className="text-white hover:text-blue-400" title="තත්පර 10ක් ඉදිරියට">
+                      <SkipForward size={20} />
                     </button>
 
                     <div className="flex items-center gap-2 group/vol relative">
