@@ -39,7 +39,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentYear = new Date().getFullYear().toString();
-  const currentMonth = new Date().toLocaleString('default', { month: 'long' }); 
+  const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0'); // e.g., "06"
+  const currentMonthName = new Date().toLocaleString('default', { month: 'long' }); // e.g., "June"
 
   useEffect(() => {
     if (student) {
@@ -116,18 +117,43 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
       const statusMap: Record<string, boolean> = {};
       
+      // මාස වල නම් අංක වලට හැරවීමේ ෆන්ක්ෂන් එක (උදා: June හෝ 6 -> 06 බවට පත් කරයි)
+      const formatYearMonth = (year: any, month: any) => {
+        let yStr = String(year).trim();
+        let mStr = String(month).trim();
+        
+        const monthMap: Record<string, string> = {
+            'january': '01', 'jan': '01', '1': '01',
+            'february': '02', 'feb': '02', '2': '02',
+            'march': '03', 'mar': '03', '3': '03',
+            'april': '04', 'apr': '04', '4': '04',
+            'may': '05', '5': '05',
+            'june': '06', 'jun': '06', '6': '06',
+            'july': '07', 'jul': '07', '7': '07',
+            'august': '08', 'aug': '08', '8': '08',
+            'september': '09', 'sep': '09', '9': '09',
+            'october': '10', 'oct': '10', 
+            'november': '11', 'nov': '11',
+            'december': '12', 'dec': '12'
+        };
+        const mappedMonth = monthMap[mStr.toLowerCase()] || mStr.padStart(2, '0');
+        return `${yStr}-${mappedMonth}`; // ප්‍රතිදානය: "2026-06"
+      };
+
       if (recData) {
         recData.forEach((rec: any) => {
           
           const recMonthStr = rec.month;
           const recYearMonthStr = `${rec.year}-${rec.month}`;
+          const standardizedDbMonth = formatYearMonth(rec.year, rec.month); // ඩේටාබේස් එකේ සේව් වෙන "YYYY-MM" ෆෝමැට් එක
 
           // අදියර 1: සිසුවා සම්පූර්ණයෙන්ම Free Plan එකක ඉන්නවද බැලීම
           const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
           
-          // අදියර 2: මෙම මාසය සිසුවාට Free හෝ Active මාසයක්ද බැලීම
-          const isThisMonthFree = student.free_months?.includes(recMonthStr) || student.free_months?.includes(recYearMonthStr);
-          const isThisMonthActive = student.active_months?.includes(recMonthStr) || student.active_months?.includes(recYearMonthStr);
+          // අදියර 2: මෙම මාසය සිසුවාට Free මාසයක්ද බැලීම
+          const isThisMonthFree = student.free_months?.includes(recMonthStr) || 
+                                  student.free_months?.includes(recYearMonthStr) || 
+                                  student.free_months?.includes(standardizedDbMonth);
           
           // අදියර 3: Payments ටේබල් එකේ ගෙවීම් කර ඇත්දැයි බැලීම
           const paymentRecord = payData?.find((p: any) => {
@@ -136,8 +162,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             
             // මාසය මැච් වෙනවද බැලීම (format කිහිපයක්ම බලයි)
             const isMonthMatch = 
+              p.target_month === standardizedDbMonth || 
+              p.month === standardizedDbMonth || 
               p.target_month === recMonthStr || 
-              p.month === recMonthStr || 
+              p.month === recMonthStr ||
               p.target_month === recYearMonthStr || 
               p.month === recYearMonthStr;
 
@@ -148,8 +176,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
           const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
           
-          // අවසාන අවසරය (ලොක්/අන්ලොක්) - ඉහතින් එකකට හෝ ගැලපේ නම් Unlock වේ
-          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isThisMonthActive || isPaid; 
+          // අවසාන අවසරය (ලොක්/අන්ලොක්)
+          // සටහන: Active Month එකක හිටියත්, Payment එක අනිවාර්යයෙන් Paid/Free විය යුතුය.
+          statusMap[`${rec.class_type}-${rec.year}-${rec.month}`] = isGloballyFree || isThisMonthFree || isPaid; 
         });
       }
       setPaymentStatuses(statusMap);
@@ -289,7 +318,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   const filteredRecordings = recordings.filter((r: any) => {
-    if (selectedFilter === 'current') return r.year === currentYear && r.month === currentMonth;
+    if (selectedFilter === 'current') {
+        // "current" ෆිල්ටර් කිරීමේදී මාසය අංකයක් ද නමක් ද යන්න දෙකම පරීක්ෂා කරයි
+        return r.year === currentYear && (
+            r.month === currentMonthNumStr || 
+            r.month === currentMonthName || 
+            r.month === String(new Date().getMonth() + 1)
+        );
+    }
     const [fYear, fMonth] = selectedFilter.split('-');
     return r.year === fYear && r.month === fMonth;
   });
@@ -324,7 +360,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           onChange={(e) => setSelectedFilter(e.target.value)}
           className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500"
         >
-          <option value="current">මෙම මාසය ({currentYear} {currentMonth})</option>
+          <option value="current">මෙම මාසය ({currentYear} {currentMonthName})</option>
           {availableMonths.map((m, idx) => (
             <option key={idx} value={`${m.year}-${m.month}`}>{m.year} - {m.month}</option>
           ))}
