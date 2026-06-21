@@ -280,8 +280,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       playerRef.current?.seekTo(resumeTime, 'seconds');
     }
-    // වීඩියෝව Load වූ වහාම Auto Play වේ
-    // ඉවත් කරන ලදි: setIsPlaying(true); මෙය handleVideoClick හිදී දැනටමත් සිදුවේ.
+    // වීඩියෝව සම්පූර්ණයෙන්ම Load වූ පසු පමණක් Play වීම අරඹන්න
+    setIsPlaying(true);
   };
 
   const handleProgress = (state: any) => {
@@ -310,7 +310,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
-      setIsPlaying(true); // Thumbnail එක Click කළ සැණින් Play වීමට සකසා ඇත
+      // මෙහිදී false කිරීමෙන් Player එක මුලින්ම ලෝඩ් වීම පමණක් සිදුවේ
+      // handleReady ශ්‍රිතය මඟින් එය ලෝඩ් වූ පසු Play කරනු ඇත
+      setIsPlaying(false); 
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
@@ -471,7 +473,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onClick={() => setIsPlaying(!isPlaying)}
             />
 
-            {/* කළු තිර ගැටළුව විසඳීම සඳහා URL එක යාවත්කාලීන කර ඇත */}
             {/* පිරිසිදු කළ සහ නිවැරදි කළ Player එක */}
             <Player
               ref={playerRef}
@@ -497,13 +498,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                     rel: 0, 
                     modestbranding: 1, 
                     disablekb: 1, 
-                    // autoplay: 1 ඉවත් කර ඇත. react-player 'playing' prop එක මඟින් එය පාලනය කරයි.
                     playsinline: 1, 
                     origin: typeof window !== 'undefined' ? window.location.origin : '*'
                   } 
                 } as any
               }}
-              // pointer-events-none ඉවත් කළේ player එකේ අභ්‍යන්තර error වළක්වා ගැනීමටයි
               className="z-0 relative" 
             />
 
