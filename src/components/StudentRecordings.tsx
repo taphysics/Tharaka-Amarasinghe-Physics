@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
 import screenfull from 'screenfull';
 
-// SkipForward අයිකනය අලුතින් එක් කර ඇත
 import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
 
 const Player: any = ReactPlayer;
@@ -471,9 +470,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onClick={() => setIsPlaying(!isPlaying)}
             />
 
+            {/* කළු තිර ගැටළුව විසඳීම සඳහා URL එක සහ config යාවත්කාලීන කර ඇත */}
             <Player
               ref={playerRef}
-              url={`https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`}
+              url={`https://www.youtube.com/embed/${selectedVideo.youtube_id}`}
               width="100%"
               height="100%"
               playing={isPlaying}
@@ -485,7 +485,17 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onEnded={handleEnded}
               controls={false} 
               config={{
-                youtube: { playerVars: { showinfo: 0, rel: 0, modestbranding: 1, disablekb: 1, autoplay: 1 } } as any
+                youtube: { 
+                  playerVars: { 
+                    showinfo: 0, 
+                    rel: 0, 
+                    modestbranding: 1, 
+                    disablekb: 1, 
+                    autoplay: 1,
+                    playsinline: 1, // Mobile devices වල නිවැරදිව play වීමට
+                    origin: typeof window !== 'undefined' ? window.location.origin : '*' // Vercel Security Block එක විසඳීමට
+                  } 
+                } as any
               }}
               className="pointer-events-none z-0 relative" 
             />
