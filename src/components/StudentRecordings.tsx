@@ -470,10 +470,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onClick={() => setIsPlaying(!isPlaying)}
             />
 
-            {/* කළු තිර ගැටළුව විසඳීම සඳහා URL එක සහ config යාවත්කාලීන කර ඇත */}
+            {/* කළු තිර ගැටළුව විසඳීම සඳහා URL එක යාවත්කාලීන කර ඇත */}
             <Player
               ref={playerRef}
-              url={`https://www.youtube.com/embed/${selectedVideo.youtube_id}`}
+              // youtube_id එක සම්පූර්ණ ලින්ක් එකක්ද, නැතිනම් ID එකක් පමණක්ද යන්න පරීක්ෂා කර නිවැරදි URL ලබාදීම
+              url={
+                selectedVideo.youtube_id?.includes('http') 
+                  ? selectedVideo.youtube_id 
+                  : `https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`
+              }
               width="100%"
               height="100%"
               playing={isPlaying}
