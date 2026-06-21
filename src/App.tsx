@@ -200,6 +200,9 @@ export default function App() {
     alert.type === 'public' || (alert.type === 'private' && alert.target_user === currentStudent.username)
   ) : [];
   
+// 1. useState එක හැමවිටම Component එකේ ඉහළින්ම (useEffect එකෙන් පිටත) තැබිය යුතුය
+const [availableClasses, setAvailableClasses] = useState<any[]>([]);
+
 // පිටුව ලෝඩ් වෙද්දීම class_types_config එකෙන් පන්ති වර්ග කියවා ගැනීම
 useEffect(() => {
   const fetchAvailableClasses = async () => {
@@ -209,7 +212,7 @@ useEffect(() => {
       .order('class_type', { ascending: true }); // අකාරාදී පිළිවෙලට සකස් කිරීම
 
     if (!error && data) {
-      const [availableClasses, setAvailableClasses] = useState<any[]>([]);
+      // 2. මෙතනදී කලින් හැදූ state එක Update කිරීම පමණක් සිදු කරයි
       setAvailableClasses(data);
     } else {
       console.error('Error fetching class configs:', error);
@@ -303,10 +306,7 @@ useEffect(() => {
   const [regWhatsApp, setRegWhatsApp] = useState('');
   const [regMobile, setRegMobile] = useState('');
   
-  // ඩේටාබේස් එකෙන් ලැබෙන පන්ති වර්ග තබා ගැනීමට අලුත් State එකක්
-  const [availableClasses, setAvailableClasses] = useState<any[]>([]);
-
-  // Registration Validation Highlight States
+    // Registration Validation Highlight States
   const [invalidGroups, setInvalidGroups] = useState<{ [key: string]: boolean }>({});
   const [isSubmitButtonDisabled, setIsSubmitButtonDisabled] = useState(false);
 
