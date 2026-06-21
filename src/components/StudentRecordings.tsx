@@ -306,6 +306,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
+    console.log("Play කරන්න හදන වීඩියෝවේ ID එක:", video.youtube_id);
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
