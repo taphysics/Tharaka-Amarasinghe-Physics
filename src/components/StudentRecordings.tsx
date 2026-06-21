@@ -281,7 +281,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       playerRef.current?.seekTo(resumeTime, 'seconds');
     }
     // වීඩියෝව Load වූ වහාම Auto Play වේ
-    setIsPlaying(true);
+    // ඉවත් කරන ලදි: setIsPlaying(true); මෙය handleVideoClick හිදී දැනටමත් සිදුවේ.
   };
 
   const handleProgress = (state: any) => {
@@ -471,13 +471,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             />
 
             {/* කළු තිර ගැටළුව විසඳීම සඳහා URL එක යාවත්කාලීන කර ඇත */}
+            {/* පිරිසිදු කළ සහ නිවැරදි කළ Player එක */}
             <Player
               ref={playerRef}
-              // youtube_id එක සම්පූර්ණ ලින්ක් එකක්ද, නැතිනම් ID එකක් පමණක්ද යන්න පරීක්ෂා කර නිවැරදි URL ලබාදීම
               url={
                 selectedVideo.youtube_id?.includes('http') 
-                  ? selectedVideo.youtube_id 
-                  : `https://www.youtube.com/watch?v=${selectedVideo.youtube_id}`
+                  ? selectedVideo.youtube_id.trim() 
+                  : `https://www.youtube.com/watch?v=${selectedVideo.youtube_id?.trim()}`
               }
               width="100%"
               height="100%"
@@ -496,13 +496,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                     rel: 0, 
                     modestbranding: 1, 
                     disablekb: 1, 
-                    autoplay: 1,
-                    playsinline: 1, // Mobile devices වල නිවැරදිව play වීමට
-                    origin: typeof window !== 'undefined' ? window.location.origin : '*' // Vercel Security Block එක විසඳීමට
+                    // autoplay: 1 ඉවත් කර ඇත. react-player 'playing' prop එක මඟින් එය පාලනය කරයි.
+                    playsinline: 1, 
+                    origin: typeof window !== 'undefined' ? window.location.origin : '*'
                   } 
                 } as any
               }}
-              className="pointer-events-none z-0 relative" 
+              // pointer-events-none ඉවත් කළේ player එකේ අභ්‍යන්තර error වළක්වා ගැනීමටයි
+              className="z-0 relative" 
             />
 
             <div 
