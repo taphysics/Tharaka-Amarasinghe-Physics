@@ -158,7 +158,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
           const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
           const isThisMonthFree = student.free_months?.includes(recMonthStr) || 
+
                                   student.free_months?.includes(recYearMonthStr) || 
+
                                   student.free_months?.includes(standardizedDbMonth);
           
           const paymentRecord = payData?.find((p: any) => {
@@ -293,17 +295,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  // 1. යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (URL Extractor)
+  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (video_url එකට ප්‍රමුඛතාවය දී ඇත)
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
     
-    // පළමුව අලුත් video_url එක තිබේදැයි පරීක්ෂා කර එය කෙලින්ම ලබා දෙයි
-    if (video.video_url) {
-      return video.video_url;
-    }
-    
-    // Database එකේ පරණ වීඩියෝ සඳහා Fallback (video_url නොමැති විට youtube_id මඟින්)
-    const rawInput = video.youtube_id || video.url || video.link || '';
+    // මෙහිදී video_url එකට මුල් තැන ලබාදෙන අතර, පැරණි දත්ත තිබේ නම් fallback එකක් ලෙස youtube_id පරීක්ෂා කරයි.
+    const rawInput = video.video_url || video.youtube_id || video.url || video.link || '';
     
     if (!rawInput) {
       console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
@@ -312,18 +309,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
     let val = String(rawInput).trim();
 
+    // iframe කේතයක් ලැබී ඇත්නම් src එක පමණක් වෙන් කරගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
       if (match) return match[1];
     }
+
+    // සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම සෘජුව භාවිතා කරයි
     if (val.startsWith('http://') || val.startsWith('https://')) {
       return val;
     }
 
+    // ලින්ක් එකක් නොමැතිව YouTube ID එකක් පමණක් ලැබුණහොත් Standard ලින්ක් එකක් සාදා ගනී
     return `https://www.youtube.com/watch?v=${val}`;
   };
 
-  // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය (Thumbnail Extractor)
+  // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
     
@@ -429,7 +430,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   >
                     <div className="relative aspect-video bg-slate-900">
                       <img 
-                        src={getVideoThumbnail(video)}
+                        src={getVideoThumbnail(video)} 
                         alt={video.title}
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
                         onError={(e) => {
@@ -520,7 +521,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
             <Player
               ref={playerRef}
-              url={selectedVideo?.video_url || getCleanVideoUrl(selectedVideo)} // කෙළින්ම video_url භාවිතා වේ
+              url={getCleanVideoUrl(selectedVideo)} 
               width="100%"
               height="100%"
               playing={isPlaying}
