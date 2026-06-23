@@ -297,8 +297,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
     
-    // Database එකේ ඇති Column නම කුමක් වුවත් (youtube_id, video_url, url, link) එය සොයාගනී
-    const rawInput = video.youtube_id || video.video_url || video.url || video.link || video.src || '';
+    // පළමුව අලුත් video_url එක තිබේදැයි පරීක්ෂා කර එය කෙලින්ම ලබා දෙයි
+    if (video.video_url) {
+      return video.video_url;
+    }
+    
+    // Database එකේ පරණ වීඩියෝ සඳහා Fallback (video_url නොමැති විට youtube_id මඟින්)
+    const rawInput = video.youtube_id || video.url || video.link || '';
     
     if (!rawInput) {
       console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
@@ -307,18 +312,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
     let val = String(rawInput).trim();
 
-    // iframe කේතයක් නම් එයින් src එක පමණක් වෙන් කරගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
       if (match) return match[1];
     }
-
-    // දැනටමත් සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම භාවිතා කිරීම
     if (val.startsWith('http://') || val.startsWith('https://')) {
       return val;
     }
 
-    // ලින්ක් එකක් නොමැතිව YouTube ID එක පමණක් ලබාදී ඇත්නම්
     return `https://www.youtube.com/watch?v=${val}`;
   };
 
@@ -339,7 +340,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
     if (vidId) return `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg`;
     
-    // Thumbnail එකක් සොයාගැනීමට නොහැකි වූ විට
     return 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
@@ -429,7 +429,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   >
                     <div className="relative aspect-video bg-slate-900">
                       <img 
-                        src={getVideoThumbnail(video)} // අලුත් Thumbnail Function එක මෙතන භාවිතා කර ඇත
+                        src={getVideoThumbnail(video)}
                         alt={video.title}
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
                         onError={(e) => {
@@ -520,7 +520,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
             <Player
               ref={playerRef}
-              url={getCleanVideoUrl(selectedVideo)} // අලුත් URL Function එක මෙතන භාවිතා කර ඇත
+              url={selectedVideo?.video_url || getCleanVideoUrl(selectedVideo)} // කෙළින්ම video_url භාවිතා වේ
               width="100%"
               height="100%"
               playing={isPlaying}
