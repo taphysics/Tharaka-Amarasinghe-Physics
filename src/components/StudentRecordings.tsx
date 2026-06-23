@@ -295,54 +295,32 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (URL Extractor - Advanced)
+  // 🛑 යාවත්කාලීන කළ අතිශය නිවැරදි URL හඳුනාගැනීමේ ශ්‍රිතය (Bulletproof URL Extractor)
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
     
-    // Database එකෙන් එන දත්තය ලබා ගැනීම
-    const rawInput = video.video_url || video.youtube_id || video.url || video.link || '';
+    // Database එකෙන් ලැබෙන දත්තය String එකක් බවට පත් කිරීම
+    const rawInput = String(video.video_url || video.youtube_id || video.url || video.link || '');
     
-    if (!rawInput) {
-      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් නොමැත!", video);
-      return '';
+    // 1. String එකේ ඇති සියලුම හිස්තැන් (spaces), invisible අකුරු සහ quote marks (' හෝ ") සම්පූර්ණයෙන්ම ඉවත් කිරීම
+    const sanitizedInput = rawInput.replace(/[\s"']/g, ''); 
+
+    if (!sanitizedInput) return '';
+
+    // 2. YouTube ID එක (අකුරු සහ ඉලක්කම් 11 කින් සමන්විත කොටස) හරියටම වෙන් කර ගැනීම
+    const match = sanitizedInput.match(/(?:v=|embed\/|youtu\.be\/|^)([a-zA-Z0-9_-]{11})/);
+    
+    if (match && match[1]) {
+      const finalUrl = `https://www.youtube.com/watch?v=${match[1]}`;
+      console.log("🟢 100% Perfect YouTube URL:", finalUrl);
+      return finalUrl; // මෙය ReactPlayer එකට කිසිදු ගැටලුවකින් තොරව හඳුනාගත හැක
     }
-
-    let val = String(rawInput).trim();
-
-    // 1. iframe කේතයක් නම් එයින් src එක පමණක් වෙන් කරගැනීම
-    if (val.includes('<iframe') && val.includes('src=')) {
-      const match = val.match(/src=["']([^"']+)["']/);
-      if (match) val = match[1];
-    }
-
-    // 2. YouTube Link එකක් නම්, එය ReactPlayer එකට වඩාත් ගැළපෙන (watch?v=) ආකෘතියට හැරවීම
-    if (val.includes('youtube.com') || val.includes('youtu.be')) {
-      let vidId = '';
-      if (val.includes('youtube.com/watch?v=')) {
-        vidId = val.split('v=')[1]?.split('&')[0];
-      } else if (val.includes('youtu.be/')) {
-        vidId = val.split('youtu.be/')[1]?.split('?')[0];
-      } else if (val.includes('youtube.com/embed/')) {
-        vidId = val.split('embed/')[1]?.split('?')[0];
-      }
-      
-      if (vidId) {
-        console.log("✅ Converted YouTube URL:", `https://www.youtube.com/watch?v=${vidId}`);
-        return `https://www.youtube.com/watch?v=${vidId}`;
-      }
-    }
-
-    // 3. වෙනත් සම්පූර්ණ ලින්ක් එකක් නම් (උදා: Zoom, Google Drive හෝ MP4)
-    if (val.startsWith('http://') || val.startsWith('https://')) {
-      console.log("✅ Direct Video URL:", val);
-      return val;
-    }
-
-    // 4. කිසිම ලින්ක් ආකෘතියක් නැත්නම්, එය YouTube ID එකක් යැයි සිතා ලින්ක් එක සෑදීම
-    console.log("✅ Assuming YouTube ID:", `https://www.youtube.com/watch?v=${val}`);
-    return `https://www.youtube.com/watch?v=${val}`;
+    
+    // යම් හෙයකින් YouTube නොවන සාමාන්‍ය ලින්ක් එකක් තිබුණහොත්
+    console.log("🟡 Fallback URL:", sanitizedInput);
+    return sanitizedInput;
   };
-  
+
   // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
