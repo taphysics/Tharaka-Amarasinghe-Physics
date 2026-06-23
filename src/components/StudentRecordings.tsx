@@ -150,7 +150,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           const recMonthStr = String(rec.month).trim();
           const recYearStr = String(rec.year).trim();
           const recYearMonthStr = `${rec.year}-${rec.month}`;
-          const standardizedDbMonth = formatYearMonth(rec.year, rec.month); // 2026-06
+          const standardizedDbMonth = formatYearMonth(rec.year, rec.month); 
 
           const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
           const isThisMonthFree = student.free_months?.includes(recMonthStr) || 
@@ -189,7 +189,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
-    
     stopWatchTimeTracking(); 
 
     try {
@@ -280,8 +279,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       playerRef.current?.seekTo(resumeTime, 'seconds');
     }
-    // වීඩියෝව සම්පූර්ණයෙන්ම Load වූ පසු පමණක් Play වීම අරඹන්න
-    setIsPlaying(true);
   };
 
   const handleProgress = (state: any) => {
@@ -305,20 +302,38 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
+  // URL එක කුමන ආකාරයේ එකක් වුවද (ID, Share Link හෝ Embed Code) එය නිවැරදිව සකසා දෙන ශ්‍රිතය
+  const getCleanYouTubeUrl = (rawInput: string) => {
+    if (!rawInput) return '';
+    let val = String(rawInput).trim();
+
+    // Database එකට Embed Code (<iframe ...>) එකක් දැම්මොත් එයින් URL එක පමණක් වෙන් කර ගැනීම
+    if (val.includes('<iframe') && val.includes('src=')) {
+      const match = val.match(/src=["']([^"']+)["']/);
+      if (match) return match[1];
+    }
+
+    // ඒක දැනටමත් සම්පූර්ණ Link එකක් නම් (youtu.be හෝ youtube.com)
+    if (val.includes('youtube.com') || val.includes('youtu.be')) {
+      return val;
+    }
+
+    // ID එක පමණක් නම් (උදා: 9VQUI4fDiis)
+    return `https://www.youtube.com/watch?v=${val}`;
+  };
+
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
-    console.log("Play කරන්න හදන වීඩියෝවේ ID එක:", video.youtube_id);
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
-      // මෙහිදී false කිරීමෙන් Player එක මුලින්ම ලෝඩ් වීම පමණක් සිදුවේ
-      // handleReady ශ්‍රිතය මඟින් එය ලෝඩ් වූ පසු Play කරනු ඇත
-      setIsPlaying(false); 
+      // AbortError එක වළක්වා ගැනීමට Thumbnail Click කළ සැණින් Play වීමට අවසර දීම
+      setIsPlaying(true); 
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
   };
 
-  // Skip කිරීමේ Function එක (එක දිගට එබූ විට වාර ගණන අනුව කාලය එකතු වේ)
+  // Skip කිරීමේ Function එක
   const handleSkip = (seconds: number) => {
     if (playerRef.current) {
       const currentTime = playerRef.current.getCurrentTime();
@@ -403,9 +418,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   >
                     <div className="relative aspect-video bg-slate-900">
                       <img 
-                        src={video.thumbnail_url || `https://img.youtube.com/vi/${video.youtube_id}/maxresdefault.jpg`} 
+                        src={video.thumbnail_url || `https://img.youtube.com/vi/${getCleanYouTubeUrl(video.youtube_id)?.split('v=')[1]?.split('&')[0]}/maxresdefault.jpg`} 
                         alt={video.title}
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
+                        onError={(e) => {
+                           // Thumbnail ලෝඩ් නොවුවහොත් පෙන්විය යුතු සාමාන්‍ය රූපය
+                           (e.target as HTMLImageElement).src = 'https://via.placeholder.com/640x360.png?text=Video+Recording';
+                        }}
                       />
                       
                       <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-md border border-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider text-white z-10 shadow-lg">
@@ -473,14 +492,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               onClick={() => setIsPlaying(!isPlaying)}
             />
 
-            {/* පිරිසිදු කළ සහ නිවැරදි කළ Player එක */}
+            {/* අලුතින් යාවත්කාලීන කළ URL පද්ධතිය සහිත Player එක */}
             <Player
               ref={playerRef}
-              url={
-                selectedVideo.youtube_id?.includes('http') 
-                  ? selectedVideo.youtube_id.trim() 
-                  : `https://www.youtube.com/watch?v=${selectedVideo.youtube_id?.trim()}`
-              }
+              url={getCleanYouTubeUrl(selectedVideo.youtube_id)}
               width="100%"
               height="100%"
               playing={isPlaying}
