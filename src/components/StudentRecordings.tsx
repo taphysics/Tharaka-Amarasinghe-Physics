@@ -38,6 +38,51 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Safe Player Wrapper Functions - "seekTo/getCurrentTime is not a function" දෝෂ මඟහරවා ගැනීමට
+  const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
+    if (!playerRef.current) return;
+    
+    // 1. සෘජුවම ශ්‍රිතය ඇත්නම් (Standard instance)
+    if (typeof playerRef.current.seekTo === 'function') {
+      playerRef.current.seekTo(amount, type);
+      return;
+    }
+    
+    // 2. අභ්‍යන්තර .player Object එකක් තුළ ඇත්නම් (Nested player wrapper)
+    if (playerRef.current.player && typeof playerRef.current.player.seekTo === 'function') {
+      playerRef.current.player.seekTo(amount, type);
+      return;
+    }
+    
+    // 3. getInternalPlayer ක්‍රමය හරහා ඇත්නම් (Internal component reference)
+    if (typeof playerRef.current.getInternalPlayer === 'function') {
+      const internal = playerRef.current.getInternalPlayer();
+      if (internal && typeof internal.seekTo === 'function') {
+        internal.seekTo(amount, type === 'fraction');
+        return;
+      }
+    }
+    console.warn("ReactPlayer seekTo method could not be resolved on the active reference instance.");
+  };
+
+  const safeGetCurrentTime = (): number => {
+    if (!playerRef.current) return 0;
+    
+    if (typeof playerRef.current.getCurrentTime === 'function') {
+      return playerRef.current.getCurrentTime();
+    }
+    if (playerRef.current.player && typeof playerRef.current.player.getCurrentTime === 'function') {
+      return playerRef.current.player.getCurrentTime();
+    }
+    if (typeof playerRef.current.getInternalPlayer === 'function') {
+      const internal = playerRef.current.getInternalPlayer();
+      if (internal && typeof internal.getCurrentTime === 'function') {
+        return internal.getCurrentTime();
+      }
+    }
+    return 0;
+  };
+
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
@@ -277,7 +322,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
       const savedTime = videoProgress[selectedVideo.id].playedSeconds;
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
-      playerRef.current?.seekTo(resumeTime, 'seconds');
+      safeSeekTo(resumeTime, 'seconds');
     }
   };
 
@@ -335,10 +380,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   // Skip කිරීමේ Function එක
   const handleSkip = (seconds: number) => {
-    if (playerRef.current) {
-      const currentTime = playerRef.current.getCurrentTime();
-      playerRef.current.seekTo(currentTime + seconds, 'seconds');
-    }
+    const currentTime = safeGetCurrentTime();
+    safeSeekTo(currentTime + seconds, 'seconds');
   };
 
   const filteredRecordings = recordings.filter((r: any) => {
@@ -542,7 +585,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
               {!isPlaying && played >= 0.99 && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-30 pointer-events-auto">
-                  <button onClick={(e) => { e.stopPropagation(); playerRef.current?.seekTo(0); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
+                  <button onClick={(e) => { e.stopPropagation(); safeSeekTo(0, 'seconds'); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
                     <RotateCcw size={48} className="mb-2" />
                     <span>නැවත ප්ලේ කරන්න</span>
                   </button>
@@ -555,7 +598,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   onClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     const percent = (e.clientX - rect.left) / rect.width;
-                    playerRef.current?.seekTo(percent, 'fraction');
+                    safeSeekTo(percent, 'fraction');
                   }}
                 >
                   <div className="h-full bg-blue-500 rounded-full" style={{ width: `${played * 100}%` }} />
