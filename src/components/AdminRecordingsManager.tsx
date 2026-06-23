@@ -6,6 +6,7 @@ interface Recording {
   id: string;
   title: string;
   youtube_id: string;
+  video_url: string; // අලුතින් එකතු කරන ලද Column එක
   year: string;
   month: string;
   class_type: string;
@@ -102,11 +103,21 @@ export default function AdminRecordingsManager() {
 
     setLoading(true);
     const thumbnailUrl = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
+    
+    // Player එක සඳහා සම්පූර්ණ Standard YouTube Link එක සකසා ගැනීම
+    const standardVideoUrl = `https://www.youtube.com/watch?v=${ytId}`; 
 
     try {
       const recordsToInsert = selectedClasses.map(classType => ({
-        title, youtube_id: ytId, year: selectedYear, month: selectedMonth, class_type: classType, thumbnail_url: thumbnailUrl
+        title, 
+        youtube_id: ytId, 
+        video_url: standardVideoUrl, // සම්පූර්ණ ලින්ක් එක Database එකට යැවීම
+        year: selectedYear, 
+        month: selectedMonth, 
+        class_type: classType, 
+        thumbnail_url: thumbnailUrl
       }));
+      
       const { error } = await supabase.from('recordings').insert(recordsToInsert);
       if (error) throw error;
 
@@ -119,11 +130,10 @@ export default function AdminRecordingsManager() {
     }
   };
 
-  // Delete කිරීම Password එකෙන් ආරක්ෂා කර ඇත
   const handleDelete = async (id: string) => {
     const password = window.prompt("මෙම වීඩියෝව මකා දැමීමට Admin Password එක ලබාදෙන්න:");
     
-    if (password === null) return; // User Cancel කරොත්
+    if (password === null) return; 
     
     if (password !== "admin123") {
       alert("වැරදි මුරපදයක්! වීඩියෝව මකා දැමීම ප්‍රතික්ෂේප කර ඇත.");
@@ -140,7 +150,6 @@ export default function AdminRecordingsManager() {
     }
   };
 
-  // තත්පර ගණන පැය/විනාඩි වලට හරවන Function එක
   const formatWatchTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -148,7 +157,6 @@ export default function AdminRecordingsManager() {
     return `${h}h ${m}m ${s}s`;
   };
 
-  // වීඩියෝ Class Type එක අනුව Group කිරීම
   const groupedRecordings = recordings.reduce((acc: Record<string, Recording[]>, rec) => {
     if (!acc[rec.class_type]) acc[rec.class_type] = [];
     acc[rec.class_type].push(rec);
@@ -181,7 +189,6 @@ export default function AdminRecordingsManager() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Title & YouTube Link Fields ... */}
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">පාඩමේ මාතෘකාව (Keyword)</label>
                 <input type="text" required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="උදා: ධාරා විද්‍යාව - Part 01" className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none" />
