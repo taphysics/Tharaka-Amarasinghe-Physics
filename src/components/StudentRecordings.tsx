@@ -22,6 +22,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   // Player State
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isReady, setIsReady] = useState(false); // නව Loading State එක
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -38,23 +39,17 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Safe Player Wrapper Functions - "seekTo/getCurrentTime is not a function" දෝෂ මඟහරවා ගැනීමට
+  // Safe Player Wrapper Functions
   const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
     if (!playerRef.current) return;
-    
-    // 1. සෘජුවම ශ්‍රිතය ඇත්නම් (Standard instance)
     if (typeof playerRef.current.seekTo === 'function') {
       playerRef.current.seekTo(amount, type);
       return;
     }
-    
-    // 2. අභ්‍යන්තර .player Object එකක් තුළ ඇත්නම් (Nested player wrapper)
     if (playerRef.current.player && typeof playerRef.current.player.seekTo === 'function') {
       playerRef.current.player.seekTo(amount, type);
       return;
     }
-    
-    // 3. getInternalPlayer ක්‍රමය හරහා ඇත්නම් (Internal component reference)
     if (typeof playerRef.current.getInternalPlayer === 'function') {
       const internal = playerRef.current.getInternalPlayer();
       if (internal && typeof internal.seekTo === 'function') {
@@ -62,23 +57,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
     }
-    console.warn("ReactPlayer seekTo method could not be resolved on the active reference instance.");
   };
 
   const safeGetCurrentTime = (): number => {
     if (!playerRef.current) return 0;
-    
-    if (typeof playerRef.current.getCurrentTime === 'function') {
-      return playerRef.current.getCurrentTime();
-    }
-    if (playerRef.current.player && typeof playerRef.current.player.getCurrentTime === 'function') {
-      return playerRef.current.player.getCurrentTime();
-    }
+    if (typeof playerRef.current.getCurrentTime === 'function') return playerRef.current.getCurrentTime();
+    if (playerRef.current.player && typeof playerRef.current.player.getCurrentTime === 'function') return playerRef.current.player.getCurrentTime();
     if (typeof playerRef.current.getInternalPlayer === 'function') {
       const internal = playerRef.current.getInternalPlayer();
-      if (internal && typeof internal.getCurrentTime === 'function') {
-        return internal.getCurrentTime();
-      }
+      if (internal && typeof internal.getCurrentTime === 'function') return internal.getCurrentTime();
     }
     return 0;
   };
@@ -111,30 +98,29 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   }, [student, selectedFilter]);
 
   useEffect(() => {
-    if (isPlaying && selectedVideo) {
+    if (isPlaying && selectedVideo && isReady) {
       startWatchTimeTracking();
     } else {
       stopWatchTimeTracking();
     }
     return () => { stopWatchTimeTracking(); };
-  }, [isPlaying, selectedVideo]);
+  }, [isPlaying, selectedVideo, isReady]);
 
-  // Spacebar එක මඟින් Play/Pause කිරීම
+  // Spacebar එක මඟින් Play/Pause කිරීම - Player එක Ready නම් පමණක් වැඩ කරයි
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (selectedVideo && e.code === 'Space') {
+      if (selectedVideo && isReady && e.code === 'Space') {
         e.preventDefault();
         setIsPlaying(prev => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedVideo]);
+  }, [selectedVideo, isReady]);
 
   const fetchRecordingsAndPayments = async () => {
     try {
       const studentClasses = student.class_types || [];
-
       if (studentClasses.length === 0) {
         setRecordings([]);
         return;
@@ -170,28 +156,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const formatYearMonth = (year: any, month: any) => {
         let yStr = String(year).trim();
         let mStr = String(month).trim();
-        
         const monthMap: Record<string, string> = {
-            'january': '01', 'jan': '01', '1': '01',
-            'february': '02', 'feb': '02', '2': '02',
-            'march': '03', 'mar': '03', '3': '03',
-            'april': '04', 'apr': '04', '4': '04',
-            'may': '05', '5': '05',
-            'june': '06', 'jun': '06', '6': '06',
-            'july': '07', 'jul': '07', '7': '07',
-            'august': '08', 'aug': '08', '8': '08',
-            'september': '09', 'sep': '09', '9': '09',
-            'october': '10', 'oct': '10', 
-            'november': '11', 'nov': '11',
-            'december': '12', 'dec': '12'
+            'january': '01', 'jan': '01', '1': '01', 'february': '02', 'feb': '02', '2': '02',
+            'march': '03', 'mar': '03', '3': '03', 'april': '04', 'apr': '04', '4': '04',
+            'may': '05', '5': '05', 'june': '06', 'jun': '06', '6': '06',
+            'july': '07', 'jul': '07', '7': '07', 'august': '08', 'aug': '08', '8': '08',
+            'september': '09', 'sep': '09', '9': '09', 'october': '10', 'oct': '10', 
+            'november': '11', 'nov': '11', 'december': '12', 'dec': '12'
         };
         const mappedMonth = monthMap[mStr.toLowerCase()] || mStr.padStart(2, '0');
-        return `${yStr}-${mappedMonth}`; // e.g: "2026-06"
+        return `${yStr}-${mappedMonth}`;
       };
 
       if (recData) {
         recData.forEach((rec: any) => {
-          
           const recMonthStr = String(rec.month).trim();
           const recYearStr = String(rec.year).trim();
           const recYearMonthStr = `${rec.year}-${rec.month}`;
@@ -211,11 +189,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             const pMonth = String(p.month || "").trim();
 
             const isMonthMatch = 
-              pTargetMonth === standardizedDbMonth || 
-              pMonth === standardizedDbMonth || 
-              pTargetMonth === recMonthStr || 
-              pMonth === recMonthStr ||
-              pMonth === `${recYearStr}-${recMonthStr.padStart(2, '0')}`;
+              pTargetMonth === standardizedDbMonth || pMonth === standardizedDbMonth || 
+              pTargetMonth === recMonthStr || pMonth === recMonthStr || pMonth === `${recYearStr}-${recMonthStr.padStart(2, '0')}`;
 
             return isClassMatch && isMonthMatch;
           });
@@ -252,11 +227,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       } else {
         const { data: newRec, error: insertError } = await supabase
           .from('recording_views')
-          .insert({
-            recording_id: selectedVideo.id,
-            username: student.username,
-            watched_seconds: 0
-          })
+          .insert({ recording_id: selectedVideo.id, username: student.username, watched_seconds: 0 })
           .select('id')
           .single();
 
@@ -319,11 +290,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   const handleReady = () => {
+    setIsReady(true); // Player එක සූදානම් බව තහවුරු කිරීම
     if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
       const savedTime = videoProgress[selectedVideo.id].playedSeconds;
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       safeSeekTo(resumeTime, 'seconds');
     }
+    setIsPlaying(true); // සූදානම් වූ පසු පමණක් Play කරන්න
   };
 
   const handleProgress = (state: any) => {
@@ -347,23 +320,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // URL එක කුමන ආකාරයේ එකක් වුවද (ID, Share Link හෝ Embed Code) එය නිවැරදිව සකසා දෙන ශ්‍රිතය
   const getCleanYouTubeUrl = (rawInput: string) => {
     if (!rawInput) return '';
     let val = String(rawInput).trim();
-
-    // Database එකට Embed Code (<iframe ...>) එකක් දැම්මොත් එයින් URL එක පමණක් වෙන් කර ගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
       if (match) return match[1];
     }
-
-    // ඒක දැනටමත් සම්පූර්ණ Link එකක් නම් (youtu.be හෝ youtube.com)
-    if (val.includes('youtube.com') || val.includes('youtu.be')) {
-      return val;
-    }
-
-    // ID එක පමණක් නම් (උදා: 9VQUI4fDiis)
+    if (val.includes('youtube.com') || val.includes('youtu.be')) return val;
     return `https://www.youtube.com/watch?v=${val}`;
   };
 
@@ -371,15 +335,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
-      // AbortError එක වළක්වා ගැනීමට Thumbnail Click කළ සැණින් Play වීමට අවසර දීම
-      setIsPlaying(true); 
+      setIsReady(false); // අලුත් වීඩියෝවක් නිසා Loading තත්ත්වයට පත් කිරීම
+      setIsPlaying(false); // ලෝඩ් වනතුරු Play නොකිරීම
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
   };
 
-  // Skip කිරීමේ Function එක
   const handleSkip = (seconds: number) => {
+    if (!isReady) return;
     const currentTime = safeGetCurrentTime();
     safeSeekTo(currentTime + seconds, 'seconds');
   };
@@ -387,9 +351,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
         return r.year === currentYear && (
-            r.month === currentMonthNumStr || 
-            r.month === currentMonthName || 
-            r.month === String(new Date().getMonth() + 1)
+            r.month === currentMonthNumStr || r.month === currentMonthName || r.month === String(new Date().getMonth() + 1)
         );
     }
     const [fYear, fMonth] = selectedFilter.split('-');
@@ -465,7 +427,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         alt={video.title}
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
                         onError={(e) => {
-                           // Thumbnail ලෝඩ් නොවුවහොත් පෙන්විය යුතු සාමාන්‍ය රූපය
                            (e.target as HTMLImageElement).src = 'https://via.placeholder.com/640x360.png?text=Video+Recording';
                         }}
                       />
@@ -529,13 +490,23 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             }}
             onMouseLeave={() => { if(isPlaying) setShowControls(false) }}
           >
-            {/* Play/Pause Click Overlay */}
+            
+            {/* වීඩියෝව ලෝඩ් වනතුරු පෙන්වන Loading Spinner එක */}
+            {!isReady && (
+              <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center">
+                <div className="w-12 h-12 border-4 border-slate-600 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+                <p className="text-slate-400 text-sm animate-pulse">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
+              </div>
+            )}
+
+            {/* Play/Pause Click Overlay - මෙය වැඩ කරන්නේ Player එක ලෝඩ් වූ පසු පමණි */}
             <div 
-              className="absolute inset-0 z-10 cursor-pointer" 
-              onClick={() => setIsPlaying(!isPlaying)}
+              className={`absolute inset-0 z-10 ${isReady ? 'cursor-pointer' : 'cursor-wait'}`} 
+              onClick={() => {
+                if (isReady) setIsPlaying(!isPlaying);
+              }}
             />
 
-            {/* අලුතින් යාවත්කාලීන කළ URL පද්ධතිය සහිත Player එක */}
             <Player
               ref={playerRef}
               url={getCleanYouTubeUrl(selectedVideo.youtube_id)}
@@ -564,8 +535,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               className="z-0 relative" 
             />
 
+            {/* Controls */}
             <div 
-              className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 z-20 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
+              className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 z-20 pointer-events-none ${showControls && isReady ? 'opacity-100' : 'opacity-0'}`}
             >
               <div className="p-4 flex justify-between items-center pointer-events-auto">
                 <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
@@ -575,6 +547,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                     stopWatchTimeTracking(); 
                     setSelectedVideo(null); 
                     setIsPlaying(false); 
+                    setIsReady(false);
                     if(isFullscreen) screenfull.exit(); 
                   }}
                   className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-full p-2 transition text-xs w-8 h-8 flex items-center justify-center font-bold"
@@ -583,7 +556,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 </button>
               </div>
 
-              {!isPlaying && played >= 0.99 && (
+              {!isPlaying && played >= 0.99 && isReady && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-30 pointer-events-auto">
                   <button onClick={(e) => { e.stopPropagation(); safeSeekTo(0, 'seconds'); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
                     <RotateCcw size={48} className="mb-2" />
@@ -596,6 +569,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 <div 
                   className="h-2 bg-slate-600/50 rounded-full cursor-pointer relative"
                   onClick={(e) => {
+                    if(!isReady) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     const percent = (e.clientX - rect.left) / rect.width;
                     safeSeekTo(percent, 'fraction');
