@@ -34,7 +34,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // Fallback: වීඩියෝව Load වීම ප්‍රමාද වුවහොත් තත්පර 4කින් Loading Screen එක ඉවත් කිරීම
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     if (selectedVideo && !isReady) {
@@ -45,7 +44,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return () => clearTimeout(timeoutId);
   }, [selectedVideo, isReady]);
 
-  // Safe Player Wrapper Functions
   const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
     if (!playerRef.current) return;
     if (typeof playerRef.current.seekTo === 'function') {
@@ -295,15 +293,54 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  const getCleanYouTubeUrl = (rawInput: string) => {
-    if (!rawInput) return '';
+  // 1. යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (URL Extractor)
+  const getCleanVideoUrl = (video: any) => {
+    if (!video) return '';
+    
+    // Database එකේ ඇති Column නම කුමක් වුවත් (youtube_id, video_url, url, link) එය සොයාගනී
+    const rawInput = video.youtube_id || video.video_url || video.url || video.link || video.src || '';
+    
+    if (!rawInput) {
+      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
+      return '';
+    }
+
     let val = String(rawInput).trim();
+
+    // iframe කේතයක් නම් එයින් src එක පමණක් වෙන් කරගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
       if (match) return match[1];
     }
-    if (val.includes('youtube.com') || val.includes('youtu.be')) return val;
+
+    // දැනටමත් සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම භාවිතා කිරීම
+    if (val.startsWith('http://') || val.startsWith('https://')) {
+      return val;
+    }
+
+    // ලින්ක් එකක් නොමැතිව YouTube ID එක පමණක් ලබාදී ඇත්නම්
     return `https://www.youtube.com/watch?v=${val}`;
+  };
+
+  // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය (Thumbnail Extractor)
+  const getVideoThumbnail = (video: any) => {
+    if (video.thumbnail_url) return video.thumbnail_url;
+    
+    const url = getCleanVideoUrl(video);
+    let vidId = '';
+    
+    if (url.includes('youtube.com/watch?v=')) {
+      vidId = url.split('v=')[1]?.split('&')[0];
+    } else if (url.includes('youtu.be/')) {
+      vidId = url.split('youtu.be/')[1]?.split('?')[0];
+    } else if (url.includes('youtube.com/embed/')) {
+      vidId = url.split('embed/')[1]?.split('?')[0];
+    }
+
+    if (vidId) return `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg`;
+    
+    // Thumbnail එකක් සොයාගැනීමට නොහැකි වූ විට
+    return 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
@@ -392,7 +429,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   >
                     <div className="relative aspect-video bg-slate-900">
                       <img 
-                        src={video.thumbnail_url || `https://img.youtube.com/vi/${getCleanYouTubeUrl(video.youtube_id)?.split('v=')[1]?.split('&')[0]}/maxresdefault.jpg`} 
+                        src={getVideoThumbnail(video)} // අලුත් Thumbnail Function එක මෙතන භාවිතා කර ඇත
                         alt={video.title}
                         className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
                         onError={(e) => {
@@ -483,15 +520,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
             <Player
               ref={playerRef}
-              url={getCleanYouTubeUrl(selectedVideo.youtube_id)}
+              url={getCleanVideoUrl(selectedVideo)} // අලුත් URL Function එක මෙතන භාවිතා කර ඇත
               width="100%"
               height="100%"
               playing={isPlaying}
-              controls={true} // Default YouTube controls enabled
+              controls={true}
               onReady={handleReady}
               onProgress={handleProgress}
               onEnded={handleEnded}
-              onPlay={() => setIsPlaying(true)} // Sync playback state automatically 
+              onPlay={() => setIsPlaying(true)} 
               onPause={() => setIsPlaying(false)} 
               config={{
                 youtube: { 
