@@ -1,6 +1,6 @@
 import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
-import ReactPlayer from 'react-player/youtube';
+import ReactPlayer from 'react-player';
 import screenfull from 'screenfull';
 
 import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
@@ -34,6 +34,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    if (selectedVideo && !isReady) {
+      timeoutId = setTimeout(() => {
+        setIsReady(true);
+      }, 4000);
+    }
+    return () => clearTimeout(timeoutId);
+  }, [selectedVideo, isReady]);
 
   const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
     if (!playerRef.current) return;
@@ -286,30 +295,33 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  // 🛑 යාවත්කාලීන කළ අතිශය නිවැරදි URL හඳුනාගැනීමේ ශ්‍රිතය (Bulletproof URL Extractor)
+  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (video_url එකට ප්‍රමුඛතාවය දී ඇත)
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
     
-    // Database එකෙන් ලැබෙන දත්තය String එකක් බවට පත් කිරීම
-    const rawInput = String(video.video_url || video.youtube_id || video.url || video.link || '');
+    // මෙහිදී video_url එකට මුල් තැන ලබාදෙන අතර, පැරණි දත්ත තිබේ නම් fallback එකක් ලෙස youtube_id පරීක්ෂා කරයි.
+    const rawInput = video.video_url || video.youtube_id || video.url || video.link || '';
     
-    // 1. String එකේ ඇති සියලුම හිස්තැන් (spaces), invisible අකුරු සහ quote marks (' හෝ ") සම්පූර්ණයෙන්ම ඉවත් කිරීම
-    const sanitizedInput = rawInput.replace(/[\s"']/g, ''); 
-
-    if (!sanitizedInput) return '';
-
-    // 2. YouTube ID එක (අකුරු සහ ඉලක්කම් 11 කින් සමන්විත කොටස) හරියටම වෙන් කර ගැනීම
-    const match = sanitizedInput.match(/(?:v=|embed\/|youtu\.be\/|^)([a-zA-Z0-9_-]{11})/);
-    
-    if (match && match[1]) {
-      const finalUrl = `https://www.youtube.com/watch?v=${match[1]}`;
-      console.log("🟢 100% Perfect YouTube URL:", finalUrl);
-      return finalUrl; // මෙය ReactPlayer එකට කිසිදු ගැටලුවකින් තොරව හඳුනාගත හැක
+    if (!rawInput) {
+      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
+      return '';
     }
-    
-    // යම් හෙයකින් YouTube නොවන සාමාන්‍ය ලින්ක් එකක් තිබුණහොත්
-    console.log("🟡 Fallback URL:", sanitizedInput);
-    return sanitizedInput;
+
+    let val = String(rawInput).trim();
+
+    // iframe කේතයක් ලැබී ඇත්නම් src එක පමණක් වෙන් කරගැනීම
+    if (val.includes('<iframe') && val.includes('src=')) {
+      const match = val.match(/src=["']([^"']+)["']/);
+      if (match) return match[1];
+    }
+
+    // සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම සෘජුව භාවිතා කරයි
+    if (val.startsWith('http://') || val.startsWith('https://')) {
+      return val;
+    }
+
+    // ලින්ක් එකක් නොමැතිව YouTube ID එකක් පමණක් ලැබුණහොත් Standard ලින්ක් එකක් සාදා ගනී
+    return `https://www.youtube.com/watch?v=${val}`;
   };
 
   // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය
@@ -508,29 +520,26 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             )}
 
             <Player
-  ref={playerRef}
-  url={getCleanVideoUrl(selectedVideo)} 
-  width="100%"
-  height="100%"
-  playing={isPlaying}
-  controls={true}
-  onReady={handleReady}
-  onProgress={handleProgress}
-  onEnded={handleEnded}
-  onPlay={() => setIsPlaying(true)} 
-  onPause={() => setIsPlaying(false)} 
-  // config කොටස මෙන්න මේ විදියට වෙනස් කරන්න 👇
-  config={{
-    youtube: { 
-      playerVars: { 
-        autoplay: 1,
-        modestbranding: 1,
-        rel: 0
-      } 
-    }
-  }}
-  className="z-0 relative" 
-/>
+              ref={playerRef}
+              url={getCleanVideoUrl(selectedVideo)} 
+              width="100%"
+              height="100%"
+              playing={isPlaying}
+              controls={true}
+              onReady={handleReady}
+              onProgress={handleProgress}
+              onEnded={handleEnded}
+              onPlay={() => setIsPlaying(true)} 
+              onPause={() => setIsPlaying(false)} 
+              config={{
+                youtube: { 
+                  playerVars: { 
+                    origin: typeof window !== 'undefined' ? window.location.origin : '*'
+                  } 
+                }
+              }}
+              className="z-0 relative" 
+            />
 
           </div>
         </div>
