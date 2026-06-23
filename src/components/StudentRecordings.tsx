@@ -22,7 +22,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   // Player State
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isReady, setIsReady] = useState(false); // නව Loading State එක
+  const [isReady, setIsReady] = useState(false); 
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -38,6 +38,17 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fallback: වීඩියෝව Load වීම ප්‍රමාද වුවහොත් තත්පර 4කින් Loading Screen එක ඉවත් කිරීම
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    if (selectedVideo && !isReady) {
+      timeoutId = setTimeout(() => {
+        setIsReady(true);
+      }, 4000);
+    }
+    return () => clearTimeout(timeoutId);
+  }, [selectedVideo, isReady]);
 
   // Safe Player Wrapper Functions
   const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
@@ -106,7 +117,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return () => { stopWatchTimeTracking(); };
   }, [isPlaying, selectedVideo, isReady]);
 
-  // Spacebar එක මඟින් Play/Pause කිරීම - Player එක Ready නම් පමණක් වැඩ කරයි
+  // Spacebar එක මඟින් Play/Pause කිරීම
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (selectedVideo && isReady && e.code === 'Space') {
@@ -290,13 +301,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   const handleReady = () => {
-    setIsReady(true); // Player එක සූදානම් බව තහවුරු කිරීම
+    setIsReady(true);
     if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
       const savedTime = videoProgress[selectedVideo.id].playedSeconds;
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
       safeSeekTo(resumeTime, 'seconds');
     }
-    setIsPlaying(true); // සූදානම් වූ පසු පමණක් Play කරන්න
   };
 
   const handleProgress = (state: any) => {
@@ -335,8 +345,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (isUnlocked) {
       setSelectedVideo(video);
       setPlayed(0);
-      setIsReady(false); // අලුත් වීඩියෝවක් නිසා Loading තත්ත්වයට පත් කිරීම
-      setIsPlaying(false); // ලෝඩ් වනතුරු Play නොකිරීම
+      setIsReady(false); 
+      // වීඩියෝව click කළ සැණින් Play වීම ආරම්භ කරන්න (මෙමඟින් Load වීමේ ක්‍රියාවලිය බලගැන්වේ)
+      setIsPlaying(true); 
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
@@ -493,13 +504,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             
             {/* වීඩියෝව ලෝඩ් වනතුරු පෙන්වන Loading Spinner එක */}
             {!isReady && (
-              <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center">
+              <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
                 <div className="w-12 h-12 border-4 border-slate-600 border-t-blue-500 rounded-full animate-spin mb-4"></div>
                 <p className="text-slate-400 text-sm animate-pulse">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
               </div>
             )}
 
-            {/* Play/Pause Click Overlay - මෙය වැඩ කරන්නේ Player එක ලෝඩ් වූ පසු පමණි */}
+            {/* Play/Pause Click Overlay */}
             <div 
               className={`absolute inset-0 z-10 ${isReady ? 'cursor-pointer' : 'cursor-wait'}`} 
               onClick={() => {
