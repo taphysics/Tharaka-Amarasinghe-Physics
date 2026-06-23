@@ -23,12 +23,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false); 
-  const [volume, setVolume] = useState(0.8);
-  const [isMuted, setIsMuted] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
   const [played, setPlayed] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showControls, setShowControls] = useState(true);
   
   // Realtime Watch Tracking Refs
   const currentViewRecordIdRef = useRef<string | null>(null);
@@ -37,7 +33,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fallback: වීඩියෝව Load වීම ප්‍රමාද වුවහොත් තත්පර 4කින් Loading Screen එක ඉවත් කිරීම
   useEffect(() => {
@@ -68,17 +63,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
     }
-  };
-
-  const safeGetCurrentTime = (): number => {
-    if (!playerRef.current) return 0;
-    if (typeof playerRef.current.getCurrentTime === 'function') return playerRef.current.getCurrentTime();
-    if (playerRef.current.player && typeof playerRef.current.player.getCurrentTime === 'function') return playerRef.current.player.getCurrentTime();
-    if (typeof playerRef.current.getInternalPlayer === 'function') {
-      const internal = playerRef.current.getInternalPlayer();
-      if (internal && typeof internal.getCurrentTime === 'function') return internal.getCurrentTime();
-    }
-    return 0;
   };
 
   const currentYear = new Date().getFullYear().toString();
@@ -116,18 +100,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
     return () => { stopWatchTimeTracking(); };
   }, [isPlaying, selectedVideo, isReady]);
-
-  // Spacebar එක මඟින් Play/Pause කිරීම
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (selectedVideo && isReady && e.code === 'Space') {
-        e.preventDefault();
-        setIsPlaying(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedVideo, isReady]);
 
   const fetchRecordingsAndPayments = async () => {
     try {
@@ -323,13 +295,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  const toggleFullscreen = () => {
-    if (screenfull.isEnabled && playerContainerRef.current) {
-      screenfull.toggle(playerContainerRef.current);
-      setIsFullscreen(!isFullscreen);
-    }
-  };
-
   const getCleanYouTubeUrl = (rawInput: string) => {
     if (!rawInput) return '';
     let val = String(rawInput).trim();
@@ -346,17 +311,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       setSelectedVideo(video);
       setPlayed(0);
       setIsReady(false); 
-      // වීඩියෝව click කළ සැණින් Play වීම ආරම්භ කරන්න (මෙමඟින් Load වීමේ ක්‍රියාවලිය බලගැන්වේ)
       setIsPlaying(true); 
     } else {
       alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
     }
-  };
-
-  const handleSkip = (seconds: number) => {
-    if (!isReady) return;
-    const currentTime = safeGetCurrentTime();
-    safeSeekTo(currentTime + seconds, 'seconds');
   };
 
   const filteredRecordings = recordings.filter((r: any) => {
@@ -490,16 +448,29 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
       {/* Video Player Modal */}
       {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
+        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
+          
+          {/* Close Button Header */}
+          <div className="w-full max-w-6xl flex justify-between items-center mb-4 z-50 px-2">
+            <h3 className="text-white font-bold drop-shadow-md text-lg truncate max-w-[80%]">{selectedVideo.title}</h3>
+            <button 
+              onClick={() => { 
+                stopWatchTimeTracking(); 
+                setSelectedVideo(null); 
+                setIsPlaying(false); 
+                setIsReady(false);
+                if(isFullscreen) screenfull.exit(); 
+              }}
+              className="bg-slate-800 hover:bg-red-500 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors shadow-lg"
+              title="Close Video"
+            >
+              ✕
+            </button>
+          </div>
+
           <div 
             ref={playerContainerRef}
-            className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)] group"
-            onMouseMove={() => {
-              setShowControls(true);
-              if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-              controlsTimeoutRef.current = setTimeout(() => { if(isPlaying) setShowControls(false) }, 3000);
-            }}
-            onMouseLeave={() => { if(isPlaying) setShowControls(false) }}
+            className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)]"
           >
             
             {/* වීඩියෝව ලෝඩ් වනතුරු පෙන්වන Loading Spinner එක */}
@@ -510,132 +481,28 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               </div>
             )}
 
-            {/* Play/Pause Click Overlay */}
-            <div 
-              className={`absolute inset-0 z-10 ${isReady ? 'cursor-pointer' : 'cursor-wait'}`} 
-              onClick={() => {
-                if (isReady) setIsPlaying(!isPlaying);
-              }}
-            />
-
             <Player
               ref={playerRef}
               url={getCleanYouTubeUrl(selectedVideo.youtube_id)}
               width="100%"
               height="100%"
               playing={isPlaying}
-              volume={volume}
-              muted={isMuted}
-              playbackRate={playbackRate}
+              controls={true} // Default YouTube controls enabled
               onReady={handleReady}
               onProgress={handleProgress}
               onEnded={handleEnded}
-              controls={false} 
+              onPlay={() => setIsPlaying(true)} // Sync playback state automatically 
+              onPause={() => setIsPlaying(false)} 
               config={{
                 youtube: { 
                   playerVars: { 
-                    showinfo: 0, 
-                    rel: 0, 
-                    modestbranding: 1, 
-                    disablekb: 1, 
-                    playsinline: 1, 
                     origin: typeof window !== 'undefined' ? window.location.origin : '*'
                   } 
-                } as any
+                }
               }}
               className="z-0 relative" 
             />
 
-            {/* Controls */}
-            <div 
-              className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30 flex flex-col justify-between transition-opacity duration-300 z-20 pointer-events-none ${showControls && isReady ? 'opacity-100' : 'opacity-0'}`}
-            >
-              <div className="p-4 flex justify-between items-center pointer-events-auto">
-                <h3 className="text-white font-bold drop-shadow-md">{selectedVideo.title}</h3>
-                <button 
-                  onClick={(e) => { 
-                    e.stopPropagation();
-                    stopWatchTimeTracking(); 
-                    setSelectedVideo(null); 
-                    setIsPlaying(false); 
-                    setIsReady(false);
-                    if(isFullscreen) screenfull.exit(); 
-                  }}
-                  className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white rounded-full p-2 transition text-xs w-8 h-8 flex items-center justify-center font-bold"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {!isPlaying && played >= 0.99 && isReady && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-30 pointer-events-auto">
-                  <button onClick={(e) => { e.stopPropagation(); safeSeekTo(0, 'seconds'); setIsPlaying(true); }} className="flex flex-col items-center text-white hover:text-blue-400 transition">
-                    <RotateCcw size={48} className="mb-2" />
-                    <span>නැවත ප්ලේ කරන්න</span>
-                  </button>
-                </div>
-              )}
-
-              <div className="p-4 space-y-2 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-                <div 
-                  className="h-2 bg-slate-600/50 rounded-full cursor-pointer relative"
-                  onClick={(e) => {
-                    if(!isReady) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const percent = (e.clientX - rect.left) / rect.width;
-                    safeSeekTo(percent, 'fraction');
-                  }}
-                >
-                  <div className="h-full bg-blue-500 rounded-full" style={{ width: `${played * 100}%` }} />
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <button onClick={() => setIsPlaying(!isPlaying)} className="text-white hover:text-blue-400">
-                      {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
-                    </button>
-                    
-                    <button onClick={() => handleSkip(-10)} className="text-white hover:text-blue-400" title="තත්පර 10ක් ආපස්සට">
-                      <SkipBack size={20} />
-                    </button>
-
-                    <button onClick={() => handleSkip(10)} className="text-white hover:text-blue-400" title="තත්පර 10ක් ඉදිරියට">
-                      <SkipForward size={20} />
-                    </button>
-
-                    <div className="flex items-center gap-2 group/vol relative">
-                      <button onClick={() => setIsMuted(!isMuted)} className="text-white hover:text-blue-400">
-                        {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
-                      </button>
-                      <input 
-                        type="range" min={0} max={1} step="any" value={volume}
-                        onChange={(e) => { setVolume(parseFloat(e.target.value)); setIsMuted(false); }}
-                        className="w-20 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer hidden group-hover/vol:block"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <select 
-                      value={playbackRate} 
-                      onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
-                      className="bg-slate-900 border border-slate-700 text-white text-sm font-bold outline-none cursor-pointer rounded px-2 py-0.5"
-                    >
-                      <option value={0.5}>0.5x</option>
-                      <option value={1}>1.0x (Normal)</option>
-                      <option value={1.25}>1.25x</option>
-                      <option value={1.5}>1.5x</option>
-                      <option value={2}>2.0x</option>
-                    </select>
-
-                    <button onClick={toggleFullscreen} className="text-white hover:text-blue-400">
-                      {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-            </div>
           </div>
         </div>
       )}
