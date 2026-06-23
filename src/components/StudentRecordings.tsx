@@ -1,6 +1,6 @@
 import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
-import ReactPlayer from 'react-player';
+import ReactPlayer from 'react-player/youtube';
 import screenfull from 'screenfull';
 
 import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
@@ -34,15 +34,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    if (selectedVideo && !isReady) {
-      timeoutId = setTimeout(() => {
-        setIsReady(true);
-      }, 4000);
-    }
-    return () => clearTimeout(timeoutId);
-  }, [selectedVideo, isReady]);
 
   const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
     if (!playerRef.current) return;
@@ -517,26 +508,29 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             )}
 
             <Player
-              ref={playerRef}
-              url={getCleanVideoUrl(selectedVideo)} 
-              width="100%"
-              height="100%"
-              playing={isPlaying}
-              controls={true}
-              onReady={handleReady}
-              onProgress={handleProgress}
-              onEnded={handleEnded}
-              onPlay={() => setIsPlaying(true)} 
-              onPause={() => setIsPlaying(false)} 
-              config={{
-                youtube: { 
-                  playerVars: { 
-                    origin: typeof window !== 'undefined' ? window.location.origin : '*'
-                  } 
-                }
-              }}
-              className="z-0 relative" 
-            />
+  ref={playerRef}
+  url={getCleanVideoUrl(selectedVideo)} 
+  width="100%"
+  height="100%"
+  playing={isPlaying}
+  controls={true}
+  onReady={handleReady}
+  onProgress={handleProgress}
+  onEnded={handleEnded}
+  onPlay={() => setIsPlaying(true)} 
+  onPause={() => setIsPlaying(false)} 
+  // config කොටස මෙන්න මේ විදියට වෙනස් කරන්න 👇
+  config={{
+    youtube: { 
+      playerVars: { 
+        autoplay: 1,
+        modestbranding: 1,
+        rel: 0
+      } 
+    }
+  }}
+  className="z-0 relative" 
+/>
 
           </div>
         </div>
