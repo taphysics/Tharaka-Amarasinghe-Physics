@@ -295,35 +295,54 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (video_url එකට ප්‍රමුඛතාවය දී ඇත)
+  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (URL Extractor - Advanced)
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
     
-    // මෙහිදී video_url එකට මුල් තැන ලබාදෙන අතර, පැරණි දත්ත තිබේ නම් fallback එකක් ලෙස youtube_id පරීක්ෂා කරයි.
+    // Database එකෙන් එන දත්තය ලබා ගැනීම
     const rawInput = video.video_url || video.youtube_id || video.url || video.link || '';
     
     if (!rawInput) {
-      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
+      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් නොමැත!", video);
       return '';
     }
 
     let val = String(rawInput).trim();
 
-    // iframe කේතයක් ලැබී ඇත්නම් src එක පමණක් වෙන් කරගැනීම
+    // 1. iframe කේතයක් නම් එයින් src එක පමණක් වෙන් කරගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
-      if (match) return match[1];
+      if (match) val = match[1];
     }
 
-    // සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම සෘජුව භාවිතා කරයි
+    // 2. YouTube Link එකක් නම්, එය ReactPlayer එකට වඩාත් ගැළපෙන (watch?v=) ආකෘතියට හැරවීම
+    if (val.includes('youtube.com') || val.includes('youtu.be')) {
+      let vidId = '';
+      if (val.includes('youtube.com/watch?v=')) {
+        vidId = val.split('v=')[1]?.split('&')[0];
+      } else if (val.includes('youtu.be/')) {
+        vidId = val.split('youtu.be/')[1]?.split('?')[0];
+      } else if (val.includes('youtube.com/embed/')) {
+        vidId = val.split('embed/')[1]?.split('?')[0];
+      }
+      
+      if (vidId) {
+        console.log("✅ Converted YouTube URL:", `https://www.youtube.com/watch?v=${vidId}`);
+        return `https://www.youtube.com/watch?v=${vidId}`;
+      }
+    }
+
+    // 3. වෙනත් සම්පූර්ණ ලින්ක් එකක් නම් (උදා: Zoom, Google Drive හෝ MP4)
     if (val.startsWith('http://') || val.startsWith('https://')) {
+      console.log("✅ Direct Video URL:", val);
       return val;
     }
 
-    // ලින්ක් එකක් නොමැතිව YouTube ID එකක් පමණක් ලැබුණහොත් Standard ලින්ක් එකක් සාදා ගනී
+    // 4. කිසිම ලින්ක් ආකෘතියක් නැත්නම්, එය YouTube ID එකක් යැයි සිතා ලින්ක් එක සෑදීම
+    console.log("✅ Assuming YouTube ID:", `https://www.youtube.com/watch?v=${val}`);
     return `https://www.youtube.com/watch?v=${val}`;
   };
-
+  
   // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
