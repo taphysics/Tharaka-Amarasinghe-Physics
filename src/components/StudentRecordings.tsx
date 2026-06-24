@@ -1,11 +1,6 @@
 import { supabase } from '../supabaseClient';
-import React, { useState, useEffect, useRef } from 'react';
-import ReactPlayer from 'react-player';
-import screenfull from 'screenfull';
-
-import { Play, Lock, CheckCircle, Clock, ArrowLeft } from 'lucide-react';
-
-const Player: any = ReactPlayer;
+import React, { useState, useEffect } from 'react';
+import { Lock, CheckCircle, Clock, ArrowLeft, Play } from 'lucide-react';
 
 interface StudentRecordingsProps {
   student: any; 
@@ -17,22 +12,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string>('current');
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
-  const [videoProgress, setVideoProgress] = useState<Record<string, { playedSeconds: number, status: string }>>({});
   
-  // Player State
-  const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isReady, setIsReady] = useState(false); 
-  const [played, setPlayed] = useState(0);
-  
-  // Realtime Watch Tracking Refs
-  const currentViewRecordIdRef = useRef<string | null>(null);
-  const totalWatchedSecondsRef = useRef<number>(0);
-  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const playerRef = useRef<any>(null); 
-  const playerContainerRef = useRef<HTMLDivElement>(null);
-
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
@@ -40,52 +20,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   useEffect(() => {
     if (student) {
       fetchRecordingsAndPayments();
-      loadSavedProgress();
     }
-
-    const channel = supabase.channel('realtime-payments-recordings')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'payments', 
-        filter: `username=eq.${student.username}` 
-      }, () => {
-        fetchRecordingsAndPayments(); 
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-      stopWatchTimeTracking();
-    };
   }, [student, selectedFilter]);
-
-  // Tracking Effect (Error 1 එක නිවැරදි කර ඇත)
-  useEffect(() => {
-    if (isPlaying && selectedVideo && isReady) {
-      startWatchTimeTracking();
-    } else {
-      stopWatchTimeTracking();
-    }
-    return () => { stopWatchTimeTracking(); };
-  }, [isPlaying, selectedVideo, isReady]);
 
   const fetchRecordingsAndPayments = async () => {
     try {
       const studentClasses = student.class_types || [];
-      if (studentClasses.length === 0) {
-        setRecordings([]);
-        return;
-      }
+      if (studentClasses.length === 0) return;
 
-      const { data: recData, error: recError } = await supabase
+      const { data: recData } = await supabase
         .from('recordings') 
         .select('*')
         .in('class_type', studentClasses)
         .order('created_at', { ascending: true }); 
       
-      if (recError) throw recError;
-
       if (recData) {
         setRecordings(recData);
         const monthsList = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
@@ -96,12 +44,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      const { data: payData, error: payError } = await supabase
+      const { data: payData } = await supabase
         .from('payments')
         .select('*')
         .eq('username', student.username);
-
-      if (payError) throw payError;
 
       const statusMap: Record<string, boolean> = {};
       
@@ -155,125 +101,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       }
       setPaymentStatuses(statusMap);
     } catch (error) {
-      console.error("Error fetching recordings & payments:", error);
+      console.error("Error:", error);
     }
-  };
-
-  const startWatchTimeTracking = async () => {
-    if (!selectedVideo || !student) return;
-    stopWatchTimeTracking(); 
-
-    try {
-      const { data, error } = await supabase
-        .from('recording_views')
-        .select('id, watched_seconds')
-        .eq('recording_id', selectedVideo.id)
-        .eq('username', student.username)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (data) {
-        currentViewRecordIdRef.current = data.id;
-        totalWatchedSecondsRef.current = data.watched_seconds;
-      } else {
-        const { data: newRec, error: insertError } = await supabase
-          .from('recording_views')
-          .insert({ recording_id: selectedVideo.id, username: student.username, watched_seconds: 0 })
-          .select('id')
-          .single();
-
-        if (insertError) throw insertError;
-        if (newRec) {
-          currentViewRecordIdRef.current = newRec.id;
-          totalWatchedSecondsRef.current = 0;
-        }
-      }
-
-      let tickCounter = 0;
-      syncIntervalRef.current = setInterval(async () => {
-        if (isPlaying) {
-          totalWatchedSecondsRef.current += 1;
-          tickCounter += 1;
-
-          if (tickCounter >= 3 && currentViewRecordIdRef.current) {
-            tickCounter = 0;
-            await supabase
-              .from('recording_views')
-              .update({ 
-                watched_seconds: totalWatchedSecondsRef.current,
-                last_watched_at: new Date().toISOString()
-              })
-              .eq('id', currentViewRecordIdRef.current);
-          }
-        }
-      }, 1000);
-
-    } catch (err) {
-      console.error("Error initializing watch time tracker:", err);
-    }
-  };
-
-  const stopWatchTimeTracking = async () => {
-    if (syncIntervalRef.current) {
-      clearInterval(syncIntervalRef.current);
-      syncIntervalRef.current = null;
-    }
-    if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
-      await supabase
-        .from('recording_views')
-        .update({ 
-          watched_seconds: totalWatchedSecondsRef.current,
-          last_watched_at: new Date().toISOString()
-        })
-        .eq('id', currentViewRecordIdRef.current);
-    }
-  };
-
-  const loadSavedProgress = () => {
-    const saved = localStorage.getItem(`video_progress_${student.id}`);
-    if (saved) setVideoProgress(JSON.parse(saved));
-  };
-
-  const saveProgress = (videoId: string, seconds: number, status: string) => {
-    const newProgress = { ...videoProgress, [videoId]: { playedSeconds: seconds, status } };
-    setVideoProgress(newProgress);
-    localStorage.setItem(`video_progress_${student.id}`, JSON.stringify(newProgress));
-  };
-
-  const handleReady = () => {
-    setIsReady(true);
-    if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
-      const savedTime = videoProgress[selectedVideo.id].playedSeconds;
-      const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
-      
-      try {
-          if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
-              playerRef.current.seekTo(resumeTime, 'seconds');
-          } else if (playerRef.current && playerRef.current.getInternalPlayer) {
-              const internalPlayer = playerRef.current.getInternalPlayer();
-              if (internalPlayer && typeof internalPlayer.seekTo === 'function') {
-                  internalPlayer.seekTo(resumeTime, true);
-              }
-          }
-      } catch (err) {
-          console.warn("Could not seek to previous time:", err);
-      }
-    }
-  };
-
-  const handleProgress = (state: any) => {
-    setPlayed(state.played);
-    if (selectedVideo && isPlaying) {
-      const isEnded = state.played >= 0.99;
-      saveProgress(selectedVideo.id, state.playedSeconds, isEnded ? 'completed' : 'watching');
-    }
-  };
-
-  const handleEnded = () => {
-    setIsPlaying(false);
-    if (selectedVideo) saveProgress(selectedVideo.id, 0, 'completed');
-    stopWatchTimeTracking();
   };
 
   const getCleanVideoUrl = (video: any) => {
@@ -282,55 +111,34 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (!rawInput) return '';
 
     let val = String(rawInput).trim();
-
-    if (val.includes('<iframe') && val.includes('src=')) {
-      const match = val.match(/src=["']([^"']+)["']/);
-      if (match) return match[1];
-    }
-    if (val.startsWith('http://') || val.startsWith('https://')) {
-      return val;
-    }
+    // YouTube ID එකක් පමණක් නම් ලින්ක් එක සාදා ගැනීම
+    if (val.startsWith('http')) return val;
     return `https://www.youtube.com/watch?v=${val}`;
   };
 
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
-    
     const url = getCleanVideoUrl(video);
     let vidId = '';
+    if (url.includes('v=')) vidId = url.split('v=')[1]?.split('&')[0];
+    else if (url.includes('youtu.be/')) vidId = url.split('youtu.be/')[1]?.split('?')[0];
     
-    try {
-        if (url.includes('v=')) {
-          vidId = url.split('v=')[1]?.split('&')[0];
-        } else if (url.includes('youtu.be/')) {
-          vidId = url.split('youtu.be/')[1]?.split('?')[0];
-        } else if (url.includes('embed/')) {
-          vidId = url.split('embed/')[1]?.split('?')[0];
-        }
-    } catch(e) {
-        console.warn("Could not extract thumbnail ID from:", url);
-    }
-
     if (vidId) return `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg`;
     return 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
     if (isUnlocked) {
-      setSelectedVideo(video);
-      setPlayed(0);
-      setIsReady(false); 
-      setIsPlaying(true); 
+      const url = getCleanVideoUrl(video);
+      window.open(url, '_blank', 'noopener,noreferrer');
     } else {
-      alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
+      alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත.`);
     }
   };
 
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
-        return r.year === currentYear && (
-            r.month === currentMonthNumStr || r.month === currentMonthName || r.month === String(new Date().getMonth() + 1)
-        );
+        return r.year === currentYear && (r.month === currentMonthNumStr || r.month === currentMonthName || r.month === String(new Date().getMonth() + 1));
     }
     const [fYear, fMonth] = selectedFilter.split('-');
     return r.year === fYear && r.month === fMonth;
@@ -343,109 +151,47 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   }, {} as Record<string, any[]>);
 
   return (
-    <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
-      
-      {/* Header, Back Button & Filters */}
+    <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
-          <button 
-            onClick={onBack} 
-            className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center"
-            title="Back to Dashboard"
-          >
-            <ArrowLeft size={24} />
-          </button>
+          <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full"><ArrowLeft size={24} /></button>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-blue-400">Class Recordings</h1>
-            <p className="text-slate-400 text-sm mt-1">ඔබේ පන්තිවල මඟහැරුණු කොටස් මෙතැනින් නරඹන්න</p>
+            <h1 className="text-2xl font-bold text-blue-400">Class Recordings</h1>
+            <p className="text-slate-400 text-sm">පන්තිවල මඟහැරුණු කොටස් නරඹන්න</p>
           </div>
         </div>
 
-        <select 
-          value={selectedFilter}
-          onChange={(e) => setSelectedFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500"
-        >
-          <option value="current">මෙම මාසය ({currentYear} {currentMonthName})</option>
-          {availableMonths.map((m, idx) => (
-            <option key={idx} value={`${m.year}-${m.month}`}>{m.year} - {m.month}</option>
-          ))}
+        <select value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)} className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl">
+          <option value="current">මෙම මාසය ({currentMonthName})</option>
+          {availableMonths.map((m, idx) => <option key={idx} value={`${m.year}-${m.month}`}>{m.year} - {m.month}</option>)}
         </select>
       </div>
 
-      {/* Videos Grouped by Class Type */}
       {Object.keys(groupedRecordings).length === 0 ? (
-        <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
+        <div className="text-center py-20 text-slate-500">වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
       ) : (
         Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
           <div key={classType} className="mb-10">
             <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
-                const prog = videoProgress[video.id];
-                const isCompleted = prog?.status === 'completed';
-                const isWatching = prog?.status === 'watching';
-                
                 return (
-                  <div 
-                    key={video.id}
-                    onClick={() => handleVideoClick(video, isUnlocked)}
-                    className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/50 opacity-80' : 
-                      isCompleted ? 'border-slate-700 bg-slate-900' :
-                      isWatching ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] animate-pulse-slow' : 
-                      'border-emerald-500/50 hover:border-emerald-400'
-                    }`}
-                  >
+                  <div key={video.id} onClick={() => handleVideoClick(video, isUnlocked)} className="relative group rounded-2xl overflow-hidden cursor-pointer border-2 border-slate-700 hover:border-blue-500 transition-all">
                     <div className="relative aspect-video bg-slate-900">
-                      <img 
-                        src={getVideoThumbnail(video)} 
-                        alt={video.title}
-                        className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
-                        onError={(e) => {
-                           (e.target as HTMLImageElement).src = 'https://via.placeholder.com/640x360.png?text=Video+Recording';
-                        }}
-                      />
-                      
-                      <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-md border border-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider text-white z-10 shadow-lg">
-                        <span className="text-blue-400">{video.class_type}</span> | {video.year} {video.month}
+                      <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
+                      {!isUnlocked && (
+                        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center">
+                          <Lock className="text-red-500 mb-2" />
+                          <p className="text-xs">ගෙවීම් සිදුකර නොමැත</p>
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                         <Play size={48} className="text-white" />
                       </div>
-
-                      {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 text-center z-20">
-                          <Lock className="w-10 h-10 text-red-500 mb-2" />
-                          <p className="text-red-400 font-bold text-sm">මෙම මාසයට ගෙවීම් කර නොමැත</p>
-                          <p className="text-slate-300 text-xs mt-1">කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න</p>
-                        </div>
-                      ) : (
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                          <Play className="w-16 h-16 text-white drop-shadow-2xl" fill="currentColor" />
-                        </div>
-                      )}
-
-                      {isWatching && isUnlocked && (
-                        <div className="absolute bottom-0 left-0 h-1.5 bg-slate-800 w-full z-20">
-                          <div 
-                            className="h-full bg-blue-500 shadow-[0_0_10px_#3b82f6]" 
-                            style={{ width: `${(prog.playedSeconds / (video.duration_seconds || 3600)) * 100}%` }}
-                          />
-                        </div>
-                      )}
                     </div>
-
-                    <div className="p-4 bg-slate-900/90 relative z-30">
-                      <h3 className="text-white font-semibold line-clamp-2 text-sm">{video.title}</h3>
-                      <div className="flex items-center gap-2 mt-3">
-                        {isCompleted ? (
-                          <span className="flex items-center gap-1 text-xs text-slate-400"><CheckCircle size={14} /> නරඹා අවසන්</span>
-                        ) : isWatching ? (
-                          <span className="flex items-center gap-1 text-xs text-blue-400"><Clock size={14} /> නැවත නරඹන්න</span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-xs text-emerald-400"><Play size={14} /> නව වීඩියෝවකි</span>
-                        )}
-                      </div>
+                    <div className="p-4 bg-slate-900">
+                      <h3 className="text-sm font-semibold">{video.title}</h3>
                     </div>
                   </div>
                 );
@@ -454,72 +200,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           </div>
         ))
       )}
-
-      {/* Video Player Modal */}
-      {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
-          
-          {/* Close Button Header */}
-          <div className="w-full max-w-6xl flex justify-between items-center mb-4 z-50 px-2">
-            <h3 className="text-white font-bold drop-shadow-md text-lg truncate max-w-[80%]">{selectedVideo.title}</h3>
-            <button 
-              onClick={() => { 
-                stopWatchTimeTracking(); 
-                setSelectedVideo(null); 
-                setIsPlaying(false); 
-                setIsReady(false);
-                // (Error 2 එක නිවැරදි කර ඇත)
-                if (screenfull.isEnabled && screenfull.isFullscreen) screenfull.exit(); 
-              }}
-              className="bg-slate-800 hover:bg-red-500 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors shadow-lg"
-              title="Close Video"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div 
-            ref={playerContainerRef}
-            className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)]"
-          >
-            
-            {/* වීඩියෝව ලෝඩ් වනතුරු පෙන්වන Loading Spinner එක */}
-            {!isReady && (
-              <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
-                <div className="w-12 h-12 border-4 border-slate-600 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-                <p className="text-slate-400 text-sm animate-pulse">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
-              </div>
-            )}
-
-            {/* Standard YouTube Player */}
-            <Player
-              ref={playerRef}
-              url={getCleanVideoUrl(selectedVideo)} 
-              width="100%"
-              height="100%"
-              playing={isPlaying}
-              controls={true}
-              onReady={handleReady}
-              onProgress={handleProgress}
-              onEnded={handleEnded}
-              onPlay={() => setIsPlaying(true)} 
-              onPause={() => setIsPlaying(false)} 
-              config={{
-                youtube: { 
-                  playerVars: { 
-                    origin: typeof window !== 'undefined' ? window.location.origin : '*',
-                    rel: 0,
-                    modestbranding: 1
-                  } 
-                }
-              }}
-              className="z-0 relative" 
-            />
-
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
