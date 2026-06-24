@@ -43,6 +43,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const ytPlayerRef = useRef<any>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
+  // Multi-click Seek Accumulator Refs
+  const seekTargetRef = useRef<number | null>(null);
+  const seekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
@@ -70,7 +74,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (student) {
       fetchRecordingsAndPayments();
     }
-    return () => stopWatchTimeTracking();
+    return () => {
+      stopWatchTimeTracking();
+      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    };
   }, [student, selectedFilter]);
 
   // Tracking Effect
@@ -80,7 +87,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     } else {
       stopWatchTimeTracking();
     }
-    return () => { stopWatchTimeTracking(); };
+    return () => { 
+      stopWatchTimeTracking(); 
+    };
   }, [isPlaying, selectedVideo, isReady, hasEnded]);
 
   // Custom Progress Bar Sync
@@ -116,10 +125,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         videoId: selectedYtId,
         playerVars: {
           autoplay: 1,
-          controls: 0, // Disable native controls
-          disablekb: 1, // Disable keyboard keys
-          fs: 0, // Disable native full screen button
-          rel: 0, // Stop related videos
+          controls: 0, 
+          disablekb: 1, 
+          fs: 0, 
+          rel: 0, 
           modestbranding: 1,
           enablejsapi: 1,
           iv_load_policy: 3,
@@ -339,7 +348,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Custom Controls Action Controllers
   const togglePlay = () => {
     if (!ytPlayerRef.current || !isCurrentVideoUnlocked) return;
     if (isPlaying) {
@@ -356,21 +364,39 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (!ytPlayerRef.current) return;
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
+    seekTargetRef.current = newTime;
     ytPlayerRef.current.seekTo(newTime, true);
   };
 
+  // Multi-click Accumulator Fast Forward Systems
   const seekForward = () => {
     if (!ytPlayerRef.current) return;
-    const target = Math.min(duration, ytPlayerRef.current.getCurrentTime() + 10);
+    const baseTime = seekTargetRef.current !== null ? seekTargetRef.current : ytPlayerRef.current.getCurrentTime();
+    const target = Math.min(duration, baseTime + 10);
+    
+    seekTargetRef.current = target;
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
+    
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    seekTimeoutRef.current = setTimeout(() => {
+      seekTargetRef.current = null;
+    }, 500);
   };
 
   const seekBackward = () => {
     if (!ytPlayerRef.current) return;
-    const target = Math.max(0, ytPlayerRef.current.getCurrentTime() - 10);
+    const baseTime = seekTargetRef.current !== null ? seekTargetRef.current : ytPlayerRef.current.getCurrentTime();
+    const target = Math.max(0, baseTime - 10);
+    
+    seekTargetRef.current = target;
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
+    
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    seekTimeoutRef.current = setTimeout(() => {
+      seekTargetRef.current = null;
+    }, 500);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -420,7 +446,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // Filter & Grouping Logical Block
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
         return r.year === currentYear && (
@@ -437,7 +462,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return acc;
   }, {} as Record<string, any[]>);
 
-  // End Screen Logic Matrix
   const getNextVideo = () => {
     if (!selectedVideo) return null;
     const currentIndex = filteredRecordings.findIndex(v => v.id === selectedVideo.id);
@@ -451,7 +475,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header, Back Button & Month Filters */}
+      {/* Header Controls */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button 
@@ -522,7 +546,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Advanced Custom Player Layout Modal */}
+      {/* Advanced Custom Video Player Modal */}
       {selectedVideo && (
         <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
           
@@ -545,7 +569,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
           <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 group shadow-2xl">
             
-            {/* IN-PLAYER SECURITY GUARD BLOCK */}
+            {/* Security Guard Blocking Panel */}
             {!isCurrentVideoUnlocked ? (
               <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
                 <Lock className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
@@ -554,7 +578,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               </div>
             ) : (
               <>
-                {/* Standard Loading Circle Spinner */}
+                {/* Standard Buffering / Loading Circle Spinner */}
                 {!isReady && !hasEnded && (
                   <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
                     <div className="w-10 h-10 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-3"></div>
@@ -562,7 +586,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   </div>
                 )}
 
-                {/* END SCREEN OVERLAY CONTROL PANEL */}
+                {/* Intelligent Recommendations End Screen */}
                 {hasEnded && (
                   <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-4 text-center select-none animate-in fade-in duration-300">
                     {nextVideo ? (
@@ -604,23 +628,23 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   </div>
                 )}
 
-                {/* Secure Iframe Wrapper Box */}
+                {/* Secure Iframe Container Layer */}
                 <div className="w-full h-full pointer-events-none scale-[1.03] z-0">
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
 
-                {/* Transparent Interaction Interceptor Overlay */}
+                {/* Interaction Interceptor Protection Shield */}
                 <div className="absolute inset-0 z-10" onClick={togglePlay}></div>
 
-                {/* Security Anti-Recording Brand Name Watermark */}
+                {/* Secure Floating Anti-Piracy Watermark Screen */}
                 <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-15 mix-blend-screen select-none">
                   <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
                 </div>
 
-                {/* PREMIUM CUSTOM MEDIA CONTROLS BAR */}
+                {/* PREMIUM EXPERT CONTROLS INTERFACES */}
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                   
-                  {/* Dynamic Interactive Range Slider (Scrubber Timeline) */}
+                  {/* Dynamic Interactive Progress Track Timeline */}
                   <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
                     <input 
                       type="range"
@@ -632,21 +656,21 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                     />
                   </div>
 
-                  {/* Horizontal Buttons Layout Structure */}
+                  {/* Horizontal Controls Core Layout */}
                   <div className="flex items-center justify-between relative z-30">
                     <div className="flex items-center gap-4">
-                      {/* Playback Trigger Control */}
+                      {/* Play/Pause Trigger Control */}
                       <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
                         {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
                       </button>
 
-                      {/* Immediate Instant Fast Actions */}
+                      {/* Cumulative Instant Jump Skips */}
                       <div className="flex items-center gap-2.5">
-                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
-                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
+                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition" title="-10s"><Rewind size={18} /></button>
+                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition" title="+10s"><FastForward size={18} /></button>
                       </div>
 
-                      {/* Precise Volume Range Controller Component */}
+                      {/* Professional Volume Slider Mechanism */}
                       <div className="flex items-center gap-2 group/vol">
                         <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
                           {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
@@ -658,20 +682,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         />
                       </div>
 
-                      {/* High Accuracy Time Stamps */}
+                      {/* Micro-accurate Timestamp Metrics */}
                       <span className="text-slate-300 text-xs font-mono select-none">
                         {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-4">
-                      {/* NESTED CUSTOM SETTINGS POPUP ENGINE */}
+                      {/* NESTED PROFESSIONAL SETTINGS CONTROLLER POPUP */}
                       <div className="relative" ref={settingsRef}>
                         <button 
                           onClick={() => { setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
                           className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
                         >
-                          <Settings size={18} className={isSettingsOpen ? 'animate-spin-slow' : ''} />
+                          <Settings size={18} />
                         </button>
 
                         {isSettingsOpen && (
@@ -731,7 +755,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         )}
                       </div>
 
-                      {/* Fullscreen Optimization Button */}
+                      {/* Screenfull Optimization Toggle Trigger */}
                       <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
                         <Maximize size={18} />
                       </button>
