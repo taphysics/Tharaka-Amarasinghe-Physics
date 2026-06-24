@@ -29,6 +29,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [playbackRate, setPlaybackRate] = useState(1);
   const [volume, setVolume] = useState(100);
   const [isMuted, setIsMuted] = useState(false);
+  const [showControls, setShowControls] = useState(true);
   
   // Settings Dropdown Menu State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -42,10 +43,23 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const ytPlayerRef = useRef<any>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
+
+  // Control Visibility Handler for Mobile Taps
+  const triggerControlsDisplay = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => {
+      if (isPlaying) {
+        setShowControls(false);
+        setIsSettingsOpen(false);
+      }
+    }, 3500);
+  };
 
   // Load YouTube Iframe API
   useEffect(() => {
@@ -56,14 +70,16 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
     }
 
-    // Close settings dropdown when clicking outside
     const handleOutsideClick = (event: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
         setIsSettingsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -75,7 +91,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [student, selectedFilter]);
 
-  // Tracking Effect (Fixed useEffect Cleanup Error)
+  // Tracking Effect (Fixed useEffect Cleanup Promise Error)
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady && !hasEnded) {
       startWatchTimeTracking();
@@ -84,7 +100,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
     
     return () => { 
-      stopWatchTimeTracking().catch(console.error); 
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
     };
   }, [isPlaying, selectedVideo, isReady, hasEnded]);
 
@@ -102,7 +121,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return () => clearInterval(interval);
   }, [isPlaying, isReady, hasEnded]);
 
-  // Check if current selected video is unlocked
   const isCurrentVideoUnlocked = selectedVideo 
     ? paymentStatuses[`${selectedVideo.class_type}-${selectedVideo.year}-${selectedVideo.month}`] || false
     : false;
@@ -129,6 +147,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           enablejsapi: 1,
           iv_load_policy: 3,
           showinfo: 0,
+          playsinline: 1, // Crucial Fix: Prevents native full-screen on Mobile iOS/Android
           origin: window.location.origin
         },
         events: {
@@ -138,14 +157,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             setHasEnded(false);
             setDuration(player.getDuration());
             player.setVolume(volume);
+            player.playVideo(); // Force play for mobile touch triggers
+            triggerControlsDisplay();
             
-            // Get available qualities and set to Maximum (Original) Quality
+            // Auto Set to Maximum Original Quality
             if (player.getAvailableQualityLevels) {
               const qualities = player.getAvailableQualityLevels();
               setAvailableQualities(qualities);
-              
               if (qualities && qualities.length > 0) {
-                 // පළමු අගය සාමාන්‍යයෙන් ඉහළම quality එක වේ (e.g., 'hd1080' or 'highres')
                  const highestQuality = qualities.find((q: string) => q !== 'auto') || qualities[0];
                  player.setPlaybackQuality(highestQuality);
                  setCurrentQuality(highestQuality);
@@ -162,9 +181,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               setHasEnded(false);
             } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
+              setShowControls(true); // Keep controls visible when paused
             } else if (state === (window as any).YT.PlayerState.ENDED) {
               setIsPlaying(false);
               setHasEnded(true);
+              setShowControls(true);
               stopWatchTimeTracking().catch(console.error);
             }
           }
@@ -273,9 +294,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
-    
-    // Do not await here directly to prevent Promise chain block in useEffect
-    stopWatchTimeTracking().catch(console.error);
+    await stopWatchTimeTracking();
 
     try {
       const { data } = await supabase
@@ -328,10 +347,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       syncIntervalRef.current = null;
     }
     if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
+      const secondsToSave = totalWatchedSecondsRef.current;
+      const recordId = currentViewRecordIdRef.current;
+      currentViewRecordIdRef.current = null;
+      totalWatchedSecondsRef.current = 0;
+
       await supabase
         .from('recording_views')
-        .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
-        .eq('id', currentViewRecordIdRef.current);
+        .update({ watched_seconds: secondsToSave, last_watched_at: new Date().toISOString() })
+        .eq('id', recordId);
     }
   };
 
@@ -359,9 +383,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Custom Controls Action Controllers
   const togglePlay = () => {
     if (!ytPlayerRef.current || !isCurrentVideoUnlocked) return;
+    triggerControlsDisplay();
     if (isPlaying) {
       ytPlayerRef.current.pauseVideo();
       setIsPlaying(false);
@@ -374,6 +398,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const handleScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!ytPlayerRef.current) return;
+    triggerControlsDisplay();
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
     ytPlayerRef.current.seekTo(newTime, true);
@@ -381,6 +406,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const seekForward = () => {
     if (!ytPlayerRef.current) return;
+    triggerControlsDisplay();
     const target = Math.min(duration, ytPlayerRef.current.getCurrentTime() + 10);
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
@@ -388,6 +414,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const seekBackward = () => {
     if (!ytPlayerRef.current) return;
+    triggerControlsDisplay();
     const target = Math.max(0, ytPlayerRef.current.getCurrentTime() - 10);
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
@@ -440,7 +467,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // Filter & Grouping Logical Block
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
         return r.year === currentYear && (
@@ -457,7 +483,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return acc;
   }, {} as Record<string, any[]>);
 
-  // End Screen Logic Matrix
   const getNextVideo = () => {
     if (!selectedVideo) return null;
     const currentIndex = filteredRecordings.findIndex(v => v.id === selectedVideo.id);
@@ -471,7 +496,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header, Back Button & Month Filters */}
+      {/* Header Panel */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button 
@@ -489,7 +514,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         <select 
           value={selectedFilter}
           onChange={(e) => setSelectedFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500"
+          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500 w-full md:w-auto"
         >
           <option value="current">මෙම මාසය ({currentYear} {currentMonthName})</option>
           {availableMonths.map((m, idx) => (
@@ -505,31 +530,32 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
           <div key={classType} className="mb-10">
             <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
                 return (
                   <div 
                     key={video.id}
                     onClick={() => {
+                      if (!isUnlocked) return;
                       setSelectedVideo(video);
                       setIsReady(false);
                       setHasEnded(false);
                     }}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/40 opacity-75 hover:opacity-90' : 'border-slate-800 bg-slate-900 hover:border-blue-500'
+                      !isUnlocked ? 'border-red-900/40 opacity-75 cursor-not-allowed' : 'border-slate-800 bg-slate-900 hover:border-blue-500'
                     }`}
                   >
                     <div className="relative aspect-video bg-slate-950">
                       <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
                       {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
-                          <Lock className="w-8 h-8 text-red-500 mb-1" />
+                        <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center p-4">
+                          <Lock className="w-8 h-8 text-red-500 mb-2" />
                           <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
                         </div>
                       ) : (
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="w-12 h-12 text-white" fill="currentColor" />
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="bg-blue-500 p-3 rounded-full text-white shadow-xl"><Play className="w-8 h-8" fill="currentColor" /></div>
                         </div>
                       )}
                     </div>
@@ -542,12 +568,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Advanced Custom Player Layout Modal */}
+      {/* Advanced Full Screen Video Player Modal */}
       {selectedVideo && (
         <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
           
           <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-1">
-            <h3 className="text-slate-200 font-semibold text-base truncate max-w-[80%]">{selectedVideo.title}</h3>
+            <h3 className="text-slate-200 font-semibold text-sm md:text-base truncate max-w-[8%]">{selectedVideo.title}</h3>
             <button 
               onClick={() => { 
                 stopWatchTimeTracking().catch(console.error); 
@@ -565,16 +591,16 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
           <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 group shadow-2xl">
             
-            {/* IN-PLAYER SECURITY GUARD BLOCK */}
+            {/* Security Verification Overlay */}
             {!isCurrentVideoUnlocked ? (
               <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
-                <Lock className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
-                <h2 className="text-xl font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
-                <p className="text-slate-300 max-w-md text-sm">ඔබ මෙම මඟහැරුණු පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ගාස්තු ගෙවා නැරඹීමේ අවසරය ලබාගන්න.</p>
+                <Lock className="w-12 h-12 text-red-500 mb-4 animate-bounce" />
+                <h2 className="text-lg font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
+                <p className="text-slate-400 max-w-md text-xs">ඔබ මෙම පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත.</p>
               </div>
             ) : (
               <>
-                {/* Standard Loading Circle Spinner */}
+                {/* Loader Spinner */}
                 {!isReady && !hasEnded && (
                   <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
                     <div className="w-10 h-10 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-3"></div>
@@ -582,11 +608,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   </div>
                 )}
 
-                {/* END SCREEN OVERLAY CONTROL PANEL */}
+                {/* End Screen Overlay Panel */}
                 {hasEnded && (
                   <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-4 text-center select-none animate-in fade-in duration-300">
                     {nextVideo ? (
-                      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-4">
+                      <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-4">
                         <span className="text-blue-400 text-xs font-bold uppercase tracking-widest block mb-2">ඊළඟ රෙකෝඩින් වීඩියෝව</span>
                         <div className="relative aspect-video rounded-xl overflow-hidden mb-3">
                           <img src={getVideoThumbnail(nextVideo)} alt={nextVideo.title} className="w-full h-full object-cover" />
@@ -596,16 +622,16 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                               setIsReady(false);
                               setHasEnded(false);
                             }}
-                            className="absolute inset-0 bg-black/40 flex items-center justify-center hover:bg-black/20 transition duration-300 group/btn"
+                            className="absolute inset-0 bg-black/40 flex items-center justify-center hover:bg-black/20 transition duration-300"
                           >
-                            <div className="bg-blue-500 p-4 rounded-full shadow-lg group-hover/btn:scale-110 transition"><Play size={24} fill="white" /></div>
+                            <div className="bg-blue-500 p-3 rounded-full shadow-lg"><Play size={20} fill="white" /></div>
                           </button>
                         </div>
-                        <h4 className="text-white text-sm font-medium line-clamp-1 mb-3">{nextVideo.title}</h4>
+                        <h4 className="text-white text-xs font-medium line-clamp-1 mb-1">{nextVideo.title}</h4>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center">
-                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් ඉදිරි වීඩියෝ නොමැත.</p>
+                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් වීඩියෝ නොමැත.</p>
                         <button 
                           onClick={() => {
                             if (ytPlayerRef.current) {
@@ -615,58 +641,66 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                               setIsPlaying(true);
                             }
                           }}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg"
+                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg text-xs"
                         >
-                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න (Replay)
+                          <RotateCcw size={14} /> නැවත මුල සිට බලන්න
                         </button>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Secure Iframe Wrapper Box */}
+                {/* Secure YouTube Player Iframe Box */}
                 <div className="w-full h-full pointer-events-none scale-[1.03] z-0">
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
 
-                {/* Transparent Interaction Interceptor Overlay */}
-                <div className="absolute inset-0 z-10" onClick={togglePlay}></div>
+                {/* Transparent Interaction Interceptor Layer for Mobile and Desktop Taps */}
+                <div 
+                  className="absolute inset-0 z-10 cursor-pointer" 
+                  onClick={triggerControlsDisplay}
+                  onDoubleClick={togglePlay}
+                ></div>
 
-                {/* Security Anti-Recording Brand Name Watermark */}
-                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-15 mix-blend-screen select-none">
-                  <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
+                {/* Security Anti-Recording Watermark */}
+                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-10 mix-blend-screen select-none">
+                  <p className="text-white text-xl md:text-3xl font-extrabold rotate-[-25deg] tracking-widest uppercase">{student.username}</p>
                 </div>
 
-                {/* PREMIUM CUSTOM MEDIA CONTROLS BAR */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* PREMIUM CUSTOM CONTROLS BAR (Supports Touch Toggle & Hover) */}
+                <div 
+                  className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-14 pb-4 px-4 z-20 transition-opacity duration-300 ${
+                    showControls || !isPlaying ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto'
+                  }`}
+                >
                   
-                  {/* Dynamic Interactive Range Slider (Scrubber Timeline) */}
-                  <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
+                  {/* Progress Bar Scrubber */}
+                  <div className="w-full relative flex items-center mb-4 group/timeline z-30">
                     <input 
                       type="range"
                       min={0}
                       max={duration || 100}
                       value={currentTime}
                       onChange={handleScrubChange}
-                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 group-hover/timeline:h-1.5 transition-all outline-none"
+                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:h-1.5 transition-all outline-none"
                     />
                   </div>
 
-                  {/* Horizontal Buttons Layout Structure */}
+                  {/* Controller Action Buttons Layout */}
                   <div className="flex items-center justify-between relative z-30">
-                    <div className="flex items-center gap-4">
-                      {/* Playback Trigger Control */}
+                    <div className="flex items-center gap-3 md:gap-4">
+                      {/* Play/Pause Button */}
                       <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
-                        {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+                        {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
                       </button>
 
-                      {/* Immediate Instant Fast Actions */}
-                      <div className="flex items-center gap-2.5">
-                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
-                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
+                      {/* Fast Forward & Rewind */}
+                      <div className="flex items-center gap-2">
+                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={16} /></button>
+                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={16} /></button>
                       </div>
 
-                      {/* Precise Volume Range Controller Component */}
+                      {/* Responsive Volume Controller */}
                       <div className="flex items-center gap-2 group/vol">
                         <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
                           {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
@@ -674,43 +708,43 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         <input 
                           type="range" min="0" max="100" value={isMuted ? 0 : volume} 
                           onChange={handleVolumeChange}
-                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
+                          className="w-0 opacity-0 sm:group-hover/vol:w-16 sm:group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
                         />
                       </div>
 
-                      {/* High Accuracy Time Stamps */}
-                      <span className="text-slate-300 text-xs font-mono select-none">
+                      {/* Video Time Stamp */}
+                      <span className="text-slate-300 text-xs font-mono select-none hidden sm:inline">
                         {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-4">
-                      {/* NESTED CUSTOM SETTINGS POPUP ENGINE */}
+                      {/* Settings Engine Dynamic Modal Popup */}
                       <div className="relative" ref={settingsRef}>
                         <button 
                           onClick={() => { setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
                           className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
                         >
-                          <Settings size={18} className={isSettingsOpen ? 'animate-spin-slow' : ''} />
+                          <Settings size={18} />
                         </button>
 
                         {isSettingsOpen && (
-                          <div className="absolute bottom-8 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
+                          <div className="absolute bottom-10 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-44 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
                             {settingsMenuMode === 'main' && (
                               <div className="flex flex-col gap-0.5">
                                 <button onClick={() => setSettingsMenuMode('speed')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
                                   <span>වේගය (Speed)</span>
-                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={14} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={12} /></span>
                                 </button>
                                 <button onClick={() => setSettingsMenuMode('quality')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
                                   <span>තත්ත්වය (Quality)</span>
-                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={14} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center capitalize truncate max-w-[50px]">{currentQuality.replace('hd', '')} <ChevronRight size={12} /></span>
                                 </button>
                               </div>
                             )}
 
                             {settingsMenuMode === 'speed' && (
-                              <div className="flex flex-col gap-0.5">
+                              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
                                 <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
                                 {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
                                   <button 
@@ -724,34 +758,23 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                             )}
 
                             {settingsMenuMode === 'quality' && (
-                              <div className="flex flex-col gap-0.5">
+                              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
                                 <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
-                                {availableQualities.length === 0 ? (
-                                  ['highres', 'hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
-                                    <button 
-                                      key={q} onClick={() => handleQualitySelect(q)}
-                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                    >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
-                                    </button>
-                                  ))
-                                ) : (
-                                  availableQualities.map((q) => (
-                                    <button 
-                                      key={q} onClick={() => handleQualitySelect(q)}
-                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                    >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
-                                    </button>
-                                  ))
-                                )}
+                                {availableQualities.map((q) => (
+                                  <button 
+                                    key={q} onClick={() => handleQualitySelect(q)}
+                                    className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                  >
+                                    {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
+                                  </button>
+                                ))}
                               </div>
                             )}
                           </div>
                         )}
                       </div>
 
-                      {/* Fullscreen Optimization Button */}
+                      {/* Fullscreen Trigger */}
                       <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
                         <Maximize size={18} />
                       </button>
