@@ -1,7 +1,10 @@
 import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
 import screenfull from 'screenfull';
-import { Play, Lock, ArrowLeft, Pause, Maximize, X, Rewind, FastForward, Settings } from 'lucide-react';
+import { 
+  Play, Lock, ArrowLeft, Pause, Maximize, X, 
+  Rewind, FastForward, Settings, Volume2, VolumeX, RotateCcw, ChevronRight 
+} from 'lucide-react';
 
 interface StudentRecordingsProps {
   student: any; 
@@ -18,23 +21,33 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false); 
+  const [hasEnded, setHasEnded] = useState(false);
   
   // Custom Controls State
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(100);
+  const [isMuted, setIsMuted] = useState(false);
   
+  // Settings Dropdown Menu State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsMenuMode, setSettingsMenuMode] = useState<'main' | 'speed' | 'quality'>('main');
+  const [currentQuality, setCurrentQuality] = useState('Auto');
+  const [availableQualities, setAvailableQualities] = useState<string[]>([]);
+
   // Realtime Watch Tracking Refs
   const currentViewRecordIdRef = useRef<string | null>(null);
   const totalWatchedSecondsRef = useRef<number>(0);
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const ytPlayerRef = useRef<any>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
-  // YouTube Iframe API Load
+  // Load YouTube Iframe API
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -42,58 +55,57 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const firstScriptTag = document.getElementsByTagName('script')[0];
       firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
     }
+
+    // Close settings dropdown when clicking outside
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+        setIsSettingsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
   useEffect(() => {
     if (student) {
       fetchRecordingsAndPayments();
     }
-
-    const channel = supabase.channel('realtime-payments-recordings')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'payments', 
-        filter: `username=eq.${student.username}` 
-      }, () => {
-        fetchRecordingsAndPayments(); 
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-      stopWatchTimeTracking();
-    };
+    return () => stopWatchTimeTracking();
   }, [student, selectedFilter]);
 
   // Tracking Effect
   useEffect(() => {
-    if (isPlaying && selectedVideo && isReady) {
+    if (isPlaying && selectedVideo && isReady && !hasEnded) {
       startWatchTimeTracking();
     } else {
       stopWatchTimeTracking();
     }
     return () => { stopWatchTimeTracking(); };
-  }, [isPlaying, selectedVideo, isReady]);
+  }, [isPlaying, selectedVideo, isReady, hasEnded]);
 
-  // Custom Progress Bar Update Effect
+  // Custom Progress Bar Sync
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isPlaying && isReady) {
+    if (isPlaying && isReady && !hasEnded) {
       interval = setInterval(() => {
         if (ytPlayerRef.current && ytPlayerRef.current.getCurrentTime) {
           setCurrentTime(ytPlayerRef.current.getCurrentTime());
           setDuration(ytPlayerRef.current.getDuration() || 0);
         }
-      }, 1000);
+      }, 500);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, isReady]);
+  }, [isPlaying, isReady, hasEnded]);
 
-  // Player Init
+  // Check if current selected video is unlocked
+  const isCurrentVideoUnlocked = selectedVideo 
+    ? paymentStatuses[`${selectedVideo.class_type}-${selectedVideo.year}-${selectedVideo.month}`] || false
+    : false;
+
+  // Initialize YouTube Player
   useEffect(() => {
     const selectedYtId = selectedVideo ? getYouTubeId(selectedVideo) : null;
-    if (!selectedVideo || !selectedYtId) return;
+    if (!selectedVideo || !selectedYtId || !isCurrentVideoUnlocked) return;
 
     let player: any;
 
@@ -104,25 +116,38 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         videoId: selectedYtId,
         playerVars: {
           autoplay: 1,
-          controls: 0, // YouTube Controls සම්පූර්ණයෙන්ම සඟවයි
-          disablekb: 1, // Keyboard controls disable කරයි
-          fs: 0,
-          rel: 0,
+          controls: 0, // Disable native controls
+          disablekb: 1, // Disable keyboard keys
+          fs: 0, // Disable native full screen button
+          rel: 0, // Stop related videos
           modestbranding: 1,
           enablejsapi: 1,
+          iv_load_policy: 3,
+          showinfo: 0,
           origin: window.location.origin
         },
         events: {
           onReady: () => {
             setIsReady(true);
             setIsPlaying(true);
+            setHasEnded(false);
             setDuration(player.getDuration());
+            player.setVolume(volume);
+            if (player.getAvailableQualityLevels) {
+              setAvailableQualities(player.getAvailableQualityLevels());
+            }
           },
           onStateChange: (event: any) => {
-            if (event.data === (window as any).YT.PlayerState.PLAYING) {
+            const state = event.data;
+            if (state === (window as any).YT.PlayerState.PLAYING) {
               setIsPlaying(true);
-            } else {
+              setHasEnded(false);
+            } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
+            } else if (state === (window as any).YT.PlayerState.ENDED) {
+              setIsPlaying(false);
+              setHasEnded(true);
+              stopWatchTimeTracking();
             }
           }
         }
@@ -160,11 +185,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       
       if (recError) throw recError;
 
-      let processedData = recData || [];
-
-      if (processedData) {
-        setRecordings(processedData);
-        const monthsList = Array.from(new Set<string>(processedData.map((r: any) => `${r.year}-${r.month}`)))
+      if (recData) {
+        setRecordings(recData);
+        const monthsList = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
           .map((str: string) => {
             const [y, m] = str.split('-');
             return { year: y, month: m };
@@ -196,10 +219,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return `${yStr}-${mappedMonth}`;
       };
 
-      if (processedData) {
-        processedData.forEach((rec: any) => {
+      if (recData) {
+        recData.forEach((rec: any) => {
           const recMonthStr = String(rec.month).trim();
-          const recYearStr = String(rec.year).trim();
           const recYearMonthStr = `${rec.year}-${rec.month}`;
           const standardizedDbMonth = formatYearMonth(rec.year, rec.month); 
 
@@ -216,11 +238,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             const pTargetMonth = String(p.target_month || "").trim();
             const pMonth = String(p.month || "").trim();
 
-            const isMonthMatch = 
-              pTargetMonth === standardizedDbMonth || pMonth === standardizedDbMonth || 
-              pTargetMonth === recMonthStr || pMonth === recMonthStr || pMonth === `${recYearStr}-${recMonthStr.padStart(2, '0')}`;
-
-            return isClassMatch && isMonthMatch;
+            return isClassMatch && (pTargetMonth === standardizedDbMonth || pMonth === standardizedDbMonth || pTargetMonth === recMonthStr);
           });
           
           const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
@@ -235,46 +253,28 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // විනාඩි 5 (තත්පර 300) කට වරක් Database එක Update කිරීම
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
     stopWatchTimeTracking(); 
 
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('recording_views')
         .select('id, watched_seconds, views')
         .eq('recording_id', selectedVideo.id)
         .eq('username', student.username)
         .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') throw error;
-
       if (data) {
         currentViewRecordIdRef.current = data.id;
         totalWatchedSecondsRef.current = data.watched_seconds;
-        
-        await supabase
-          .from('recording_views')
-          .update({ 
-            views: (data.views || 1) + 1,
-            last_watched_at: new Date().toISOString()
-          })
-          .eq('id', data.id);
       } else {
-        const { data: newRec, error: insertError } = await supabase
+        const { data: newRec } = await supabase
           .from('recording_views')
-          .insert({ 
-            recording_id: selectedVideo.id, 
-            username: student.username, 
-            watched_seconds: 0,
-            views: 1,
-            last_watched_at: new Date().toISOString()
-          })
+          .insert({ recording_id: selectedVideo.id, username: student.username, watched_seconds: 0, views: 1 })
           .select('id')
           .single();
 
-        if (insertError) throw insertError;
         if (newRec) {
           currentViewRecordIdRef.current = newRec.id;
           totalWatchedSecondsRef.current = 0;
@@ -283,26 +283,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
       let tickCounter = 0;
       syncIntervalRef.current = setInterval(async () => {
-        if (isPlaying) {
+        if (isPlaying && !hasEnded) {
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
-          // තත්පර 300 කට (විනාඩි 5 කට) වරක් Database Update කිරීම
           if (tickCounter >= 300 && currentViewRecordIdRef.current) {
             tickCounter = 0;
             await supabase
               .from('recording_views')
-              .update({ 
-                watched_seconds: totalWatchedSecondsRef.current,
-                last_watched_at: new Date().toISOString()
-              })
+              .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
               .eq('id', currentViewRecordIdRef.current);
           }
         }
       }, 1000);
 
     } catch (err) {
-      console.error("Error initializing watch time tracker:", err);
+      console.error(err);
     }
   };
 
@@ -314,75 +310,107 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
       await supabase
         .from('recording_views')
-        .update({ 
-          watched_seconds: totalWatchedSecondsRef.current,
-          last_watched_at: new Date().toISOString()
-        })
+        .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
         .eq('id', currentViewRecordIdRef.current);
     }
   };
 
   const getYouTubeId = (video: any) => {
     if (!video) return null;
-    const rawInput = String(video.video_url || video.youtube_id || video.url || video.link || '');
-    const sanitizedInput = rawInput.replace(/[\s"']/g, ''); 
-    if (!sanitizedInput) return null;
-    const match = sanitizedInput.match(/(?:v=|embed\/|youtu\.be\/|^)([a-zA-Z0-9_-]{11})/);
+    const rawInput = String(video.video_url || video.youtube_id || video.url || '');
+    const match = rawInput.replace(/[\s"']/g, '').match(/(?:v=|embed\/|youtu\.be\/|^)([a-zA-Z0-9_-]{11})/);
     return match ? match[1] : null;
   };
 
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
     const vidId = getYouTubeId(video);
-    if (vidId) return `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg`;
-    return 'https://via.placeholder.com/640x360.png?text=Video+Recording';
-  };
-
-  const handleVideoClick = (video: any, isUnlocked: boolean) => {
-    if (isUnlocked) {
-      setSelectedVideo(video);
-      setIsReady(false); 
-      setIsPlaying(true); 
-      setPlaybackRate(1);
-    } else {
-      alert(`ඔබ තවමත් ${video.year} ${video.month} මාසය සඳහා ${video.class_type} පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න.`);
-    }
+    return vidId ? `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg` : 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
   const formatTime = (seconds: number) => {
     if (!seconds || isNaN(seconds)) return "00:00";
-    const m = Math.floor(seconds / 60);
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Custom Controls Functions
+  // Custom Controls Action Controllers
   const togglePlay = () => {
-    if (!ytPlayerRef.current) return;
+    if (!ytPlayerRef.current || !isCurrentVideoUnlocked) return;
     if (isPlaying) {
       ytPlayerRef.current.pauseVideo();
+      setIsPlaying(false);
     } else {
       ytPlayerRef.current.playVideo();
+      setIsPlaying(true);
+      setHasEnded(false);
     }
+  };
+
+  const handleScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!ytPlayerRef.current) return;
+    const newTime = parseFloat(e.target.value);
+    setCurrentTime(newTime);
+    ytPlayerRef.current.seekTo(newTime, true);
   };
 
   const seekForward = () => {
     if (!ytPlayerRef.current) return;
-    ytPlayerRef.current.seekTo(currentTime + 10, true);
+    const target = Math.min(duration, ytPlayerRef.current.getCurrentTime() + 10);
+    setCurrentTime(target);
+    ytPlayerRef.current.seekTo(target, true);
   };
 
   const seekBackward = () => {
     if (!ytPlayerRef.current) return;
-    ytPlayerRef.current.seekTo(currentTime - 10, true);
+    const target = Math.max(0, ytPlayerRef.current.getCurrentTime() - 10);
+    setCurrentTime(target);
+    ytPlayerRef.current.seekTo(target, true);
   };
 
-  const changeSpeed = () => {
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVol = parseInt(e.target.value);
+    setVolume(newVol);
+    if (ytPlayerRef.current) {
+      ytPlayerRef.current.setVolume(newVol);
+      if (newVol > 0) {
+        ytPlayerRef.current.unMute();
+        setIsMuted(false);
+      }
+    }
+  };
+
+  const toggleMute = () => {
     if (!ytPlayerRef.current) return;
-    const rates = [1, 1.25, 1.5, 2];
-    const nextRateIndex = (rates.indexOf(playbackRate) + 1) % rates.length;
-    const newRate = rates[nextRateIndex];
-    ytPlayerRef.current.setPlaybackRate(newRate);
-    setPlaybackRate(newRate);
+    if (isMuted) {
+      ytPlayerRef.current.unMute();
+      ytPlayerRef.current.setVolume(volume || 50);
+      setIsMuted(false);
+    } else {
+      ytPlayerRef.current.mute();
+      setIsMuted(true);
+    }
+  };
+
+  const handleSpeedSelect = (speed: number) => {
+    setPlaybackRate(speed);
+    if (ytPlayerRef.current && ytPlayerRef.current.setPlaybackRate) {
+      ytPlayerRef.current.setPlaybackRate(speed);
+    }
+    setIsSettingsOpen(false);
+  };
+
+  const handleQualitySelect = (quality: string) => {
+    setCurrentQuality(quality);
+    if (ytPlayerRef.current && ytPlayerRef.current.setPlaybackQuality) {
+      ytPlayerRef.current.setPlaybackQuality(quality);
+    }
+    setIsSettingsOpen(false);
   };
 
   const toggleFullscreen = () => {
@@ -392,6 +420,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
+  // Filter & Grouping Logical Block
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
         return r.year === currentYear && (
@@ -408,16 +437,26 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return acc;
   }, {} as Record<string, any[]>);
 
+  // End Screen Logic Matrix
+  const getNextVideo = () => {
+    if (!selectedVideo) return null;
+    const currentIndex = filteredRecordings.findIndex(v => v.id === selectedVideo.id);
+    if (currentIndex !== -1 && currentIndex < filteredRecordings.length - 1) {
+      return filteredRecordings[currentIndex + 1];
+    }
+    return null;
+  };
+  const nextVideo = getNextVideo();
+
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header & Filters */}
+      {/* Header, Back Button & Month Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button 
             onClick={onBack} 
             className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center"
-            title="Back to Dashboard"
           >
             <ArrowLeft size={24} />
           </button>
@@ -439,56 +478,42 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         </select>
       </div>
 
-      {/* Videos List */}
+      {/* Grid Dashboard */}
       {Object.keys(groupedRecordings).length === 0 ? (
         <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
       ) : (
         Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
           <div key={classType} className="mb-10">
             <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
-            
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
-                
                 return (
                   <div 
                     key={video.id}
-                    onClick={() => handleVideoClick(video, isUnlocked)}
+                    onClick={() => {
+                      setSelectedVideo(video);
+                      setIsReady(false);
+                      setHasEnded(false);
+                    }}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/50 opacity-80' : 'border-emerald-500/50 hover:border-emerald-400'
+                      !isUnlocked ? 'border-red-900/40 opacity-75 hover:opacity-90' : 'border-slate-800 bg-slate-900 hover:border-blue-500'
                     }`}
                   >
-                    <div className="relative aspect-video bg-slate-900">
-                      <img 
-                        src={getVideoThumbnail(video)} 
-                        alt={video.title}
-                        className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${!isUnlocked && 'grayscale blur-[2px]'}`}
-                        onError={(e) => {
-                           (e.target as HTMLImageElement).src = 'https://via.placeholder.com/640x360.png?text=Video+Recording';
-                        }}
-                      />
-                      
-                      <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-md border border-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider text-white z-10 shadow-lg">
-                        <span className="text-blue-400">{video.class_type}</span> | {video.year} {video.month}
-                      </div>
-
+                    <div className="relative aspect-video bg-slate-950">
+                      <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
                       {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 text-center z-20">
-                          <Lock className="w-10 h-10 text-red-500 mb-2" />
-                          <p className="text-red-400 font-bold text-sm">මෙම මාසයට ගෙවීම් කර නොමැත</p>
-                          <p className="text-slate-300 text-xs mt-1">කරුණාකර මුදල් ගෙවා වීඩියෝව නරඹන්න</p>
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
+                          <Lock className="w-8 h-8 text-red-500 mb-1" />
+                          <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
                         </div>
                       ) : (
-                        <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                          <Play className="w-16 h-16 text-white drop-shadow-2xl" fill="currentColor" />
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Play className="w-12 h-12 text-white" fill="currentColor" />
                         </div>
                       )}
                     </div>
-
-                    <div className="p-4 bg-slate-900/90 relative z-30">
-                      <h3 className="text-white font-semibold line-clamp-2 text-sm">{video.title}</h3>
-                    </div>
+                    <div className="p-4 bg-slate-900"><h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3></div>
                   </div>
                 );
               })}
@@ -497,90 +522,227 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Custom Video Player Modal */}
+      {/* Advanced Custom Player Layout Modal */}
       {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
+        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
           
-          <div className="w-full max-w-5xl flex justify-between items-center mb-4 z-50 px-2">
-            <h3 className="text-white font-bold drop-shadow-md text-lg truncate max-w-[80%]">{selectedVideo.title}</h3>
+          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-1">
+            <h3 className="text-slate-200 font-semibold text-base truncate max-w-[80%]">{selectedVideo.title}</h3>
             <button 
               onClick={() => { 
                 stopWatchTimeTracking(); 
                 setSelectedVideo(null); 
                 setIsPlaying(false); 
                 setIsReady(false);
+                setHasEnded(false);
                 if (screenfull.isEnabled && screenfull.isFullscreen) screenfull.exit(); 
               }}
-              className="bg-slate-800 hover:bg-red-500 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors shadow-lg"
-              title="Close Video"
+              className="bg-slate-900 text-slate-400 hover:text-white rounded-full w-9 h-9 flex items-center justify-center transition"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
           </div>
 
-          <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)] group">
+          <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 group shadow-2xl">
             
-            {!isReady && (
-              <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center">
-                <div className="w-12 h-12 border-4 border-slate-600 border-t-blue-500 rounded-full animate-spin mb-4"></div>
-                <p className="text-slate-400 text-sm animate-pulse">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
+            {/* IN-PLAYER SECURITY GUARD BLOCK */}
+            {!isCurrentVideoUnlocked ? (
+              <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
+                <Lock className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
+                <h2 className="text-xl font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
+                <p className="text-slate-300 max-w-md text-sm">ඔබ මෙම මඟහැරුණු පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ගාස්තු ගෙවා නැරඹීමේ අවසරය ලබාගන්න.</p>
               </div>
+            ) : (
+              <>
+                {/* Standard Loading Circle Spinner */}
+                {!isReady && !hasEnded && (
+                  <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
+                    <div className="w-10 h-10 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-3"></div>
+                    <p className="text-slate-500 text-xs tracking-wider">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
+                  </div>
+                )}
+
+                {/* END SCREEN OVERLAY CONTROL PANEL */}
+                {hasEnded && (
+                  <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-4 text-center select-none animate-in fade-in duration-300">
+                    {nextVideo ? (
+                      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-4">
+                        <span className="text-blue-400 text-xs font-bold uppercase tracking-widest block mb-2">ඊළඟ රෙකෝඩින් වීඩියෝව</span>
+                        <div className="relative aspect-video rounded-xl overflow-hidden mb-3">
+                          <img src={getVideoThumbnail(nextVideo)} alt={nextVideo.title} className="w-full h-full object-cover" />
+                          <button 
+                            onClick={() => {
+                              setSelectedVideo(nextVideo);
+                              setIsReady(false);
+                              setHasEnded(false);
+                            }}
+                            className="absolute inset-0 bg-black/40 flex items-center justify-center hover:bg-black/20 transition duration-300 group/btn"
+                          >
+                            <div className="bg-blue-500 p-4 rounded-full shadow-lg group-hover/btn:scale-110 transition"><Play size={24} fill="white" /></div>
+                          </button>
+                        </div>
+                        <h4 className="text-white text-sm font-medium line-clamp-1 mb-3">{nextVideo.title}</h4>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් ඉදිරි වීඩියෝ නොමැත.</p>
+                        <button 
+                          onClick={() => {
+                            if (ytPlayerRef.current) {
+                              ytPlayerRef.current.seekTo(0);
+                              ytPlayerRef.current.playVideo();
+                              setHasEnded(false);
+                              setIsPlaying(true);
+                            }
+                          }}
+                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg"
+                        >
+                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න (Replay)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Secure Iframe Wrapper Box */}
+                <div className="w-full h-full pointer-events-none scale-[1.03] z-0">
+                  <div id="youtube-player-container" className="w-full h-full"></div>
+                </div>
+
+                {/* Transparent Interaction Interceptor Overlay */}
+                <div className="absolute inset-0 z-10" onClick={togglePlay}></div>
+
+                {/* Security Anti-Recording Brand Name Watermark */}
+                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-15 mix-blend-screen select-none">
+                  <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
+                </div>
+
+                {/* PREMIUM CUSTOM MEDIA CONTROLS BAR */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  
+                  {/* Dynamic Interactive Range Slider (Scrubber Timeline) */}
+                  <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
+                    <input 
+                      type="range"
+                      min={0}
+                      max={duration || 100}
+                      value={currentTime}
+                      onChange={handleScrubChange}
+                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 group-hover/timeline:h-1.5 transition-all outline-none"
+                    />
+                  </div>
+
+                  {/* Horizontal Buttons Layout Structure */}
+                  <div className="flex items-center justify-between relative z-30">
+                    <div className="flex items-center gap-4">
+                      {/* Playback Trigger Control */}
+                      <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
+                        {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
+                      </button>
+
+                      {/* Immediate Instant Fast Actions */}
+                      <div className="flex items-center gap-2.5">
+                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
+                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
+                      </div>
+
+                      {/* Precise Volume Range Controller Component */}
+                      <div className="flex items-center gap-2 group/vol">
+                        <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
+                          {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                        </button>
+                        <input 
+                          type="range" min="0" max="100" value={isMuted ? 0 : volume} 
+                          onChange={handleVolumeChange}
+                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
+                        />
+                      </div>
+
+                      {/* High Accuracy Time Stamps */}
+                      <span className="text-slate-300 text-xs font-mono select-none">
+                        {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      {/* NESTED CUSTOM SETTINGS POPUP ENGINE */}
+                      <div className="relative" ref={settingsRef}>
+                        <button 
+                          onClick={() => { setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
+                          className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
+                        >
+                          <Settings size={18} className={isSettingsOpen ? 'animate-spin-slow' : ''} />
+                        </button>
+
+                        {isSettingsOpen && (
+                          <div className="absolute bottom-8 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200">
+                            {settingsMenuMode === 'main' && (
+                              <div className="flex flex-col gap-0.5">
+                                <button onClick={() => setSettingsMenuMode('speed')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
+                                  <span>වේගය (Speed)</span>
+                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={14} /></span>
+                                </button>
+                                <button onClick={() => setSettingsMenuMode('quality')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
+                                  <span>තත්ත්වය (Quality)</span>
+                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={14} /></span>
+                                </button>
+                              </div>
+                            )}
+
+                            {settingsMenuMode === 'speed' && (
+                              <div className="flex flex-col gap-0.5">
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
+                                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
+                                  <button 
+                                    key={speed} onClick={() => handleSpeedSelect(speed)}
+                                    className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                  >
+                                    {speed === 1 ? 'Normal' : `${speed}x`}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {settingsMenuMode === 'quality' && (
+                              <div className="flex flex-col gap-0.5">
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
+                                {availableQualities.length === 0 ? (
+                                  ['hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
+                                    <button 
+                                      key={q} onClick={() => handleQualitySelect(q)}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                    >
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q.replace('hd', '')}
+                                    </button>
+                                  ))
+                                ) : (
+                                  availableQualities.map((q) => (
+                                    <button 
+                                      key={q} onClick={() => handleQualitySelect(q)}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                    >
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q.replace('hd', '')}
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Fullscreen Optimization Button */}
+                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
+                        <Maximize size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                </div>
+              </>
             )}
 
-            {/* Pointer-events-none මගින් YouTube UI එක සම්පූර්ණයෙන්ම අක්‍රීය කරයි */}
-            <div className="w-full h-full pointer-events-none opacity-100 scale-[1.05] relative z-0">
-               <div id="youtube-player-container" className="w-full h-full"></div>
-            </div>
-
-            {/* නොපෙනෙන ආරක්ෂිත ලෙයර් එක - Click Copy / Share වැළැක්වීමට */}
-            <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}></div>
-
-            {/* සිසුවාගේ නම Watermark ලෙස (ස්ක්‍රීන් රෙකෝඩ් කිරීම වැළැක්වීමේ මනෝවිද්‍යාත්මක බාධාව) */}
-            <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center overflow-hidden opacity-30 mix-blend-overlay">
-               <p className="text-white text-3xl md:text-5xl font-black rotate-[-30deg] tracking-widest">
-                  {student.username}
-               </p>
-            </div>
-
-            {/* Custom Controls Bar */}
-            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent pt-12 pb-4 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-               
-               {/* Progress Bar (Visual Only) */}
-               <div className="w-full h-1.5 bg-slate-600 rounded-full mb-4 overflow-hidden">
-                  <div 
-                    className="h-full bg-blue-500 transition-all duration-300"
-                    style={{ width: `${(currentTime / duration) * 100}%` }}
-                  ></div>
-               </div>
-
-               <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                     <button onClick={togglePlay} className="text-white hover:text-blue-400 transition">
-                        {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
-                     </button>
-                     
-                     <div className="flex items-center gap-2 text-white">
-                        <button onClick={seekBackward} className="hover:text-blue-400 transition" title="10s Backward"><Rewind size={20} /></button>
-                        <button onClick={seekForward} className="hover:text-blue-400 transition" title="10s Forward"><FastForward size={20} /></button>
-                     </div>
-
-                     <span className="text-white text-sm font-mono">
-                        {formatTime(currentTime)} / {formatTime(duration)}
-                     </span>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                     <button onClick={changeSpeed} className="text-white hover:text-blue-400 transition flex items-center gap-1 text-sm font-bold bg-slate-800/50 px-2 py-1 rounded">
-                        <Settings size={16} /> {playbackRate}x
-                     </button>
-                     <button onClick={toggleFullscreen} className="text-white hover:text-blue-400 transition">
-                        <Maximize size={20} />
-                     </button>
-                  </div>
-               </div>
-            </div>
           </div>
-
         </div>
       )}
 
