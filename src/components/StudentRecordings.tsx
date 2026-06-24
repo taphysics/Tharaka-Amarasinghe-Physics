@@ -16,6 +16,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string>('current');
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
+  const [viewHistory, setViewHistory] = useState<Record<string, number>>({}); // Track watched seconds for all videos
   
   // Player State
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
@@ -29,7 +30,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [playbackRate, setPlaybackRate] = useState(1);
   const [volume, setVolume] = useState(100);
   const [isMuted, setIsMuted] = useState(false);
-  const [showControls, setShowControls] = useState(true);
   
   // Settings Dropdown Menu State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -43,25 +43,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const ytPlayerRef = useRef<any>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
-  const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
-  // Control Visibility Handler for Mobile Taps
-  const triggerControlsDisplay = () => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsTimeoutRef.current = setTimeout(() => {
-      if (isPlaying) {
-        setShowControls(false);
-        setIsSettingsOpen(false);
-      }
-    }, 3500);
-  };
-
-  // Load YouTube Iframe API
+  // Load YouTube Iframe API & Handle Outside Clicks
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -70,28 +57,32 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
     }
 
-    const handleOutsideClick = (event: MouseEvent) => {
+    // Close settings dropdown when clicking/touching outside (Mobile Bug Fix)
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
         setIsSettingsOpen(false);
       }
     };
+    
     document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick, { passive: true });
+    
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      document.removeEventListener('touchstart', handleOutsideClick);
     };
   }, []);
 
   useEffect(() => {
     if (student) {
-      fetchRecordingsAndPayments();
+      fetchRecordingsAndPaymentsAndViews();
     }
     return () => {
       stopWatchTimeTracking().catch(console.error);
     };
   }, [student, selectedFilter]);
 
-  // Tracking Effect (Fixed useEffect Cleanup Promise Error)
+  // Tracking Effect (Fixed TS Cleanup Error)
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady && !hasEnded) {
       startWatchTimeTracking();
@@ -100,10 +91,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
     
     return () => { 
-      if (syncIntervalRef.current) {
-        clearInterval(syncIntervalRef.current);
-        syncIntervalRef.current = null;
-      }
+      stopWatchTimeTracking().catch(console.error); 
     };
   }, [isPlaying, selectedVideo, isReady, hasEnded]);
 
@@ -138,7 +126,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         width: '100%',
         videoId: selectedYtId,
         playerVars: {
-          autoplay: 1,
+          autoplay: 1, // Auto-play enabled
+          playsinline: 1, // Crucial for Mobile to auto-play inline
           controls: 0, 
           disablekb: 1, 
           fs: 0, 
@@ -147,23 +136,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           enablejsapi: 1,
           iv_load_policy: 3,
           showinfo: 0,
-          playsinline: 1, // Crucial Fix: Prevents native full-screen on Mobile iOS/Android
           origin: window.location.origin
         },
         events: {
           onReady: (event: any) => {
             setIsReady(true);
-            setIsPlaying(true);
-            setHasEnded(false);
+            
+            // Force play instantly to bypass mobile YT UI
+            player.playVideo();
             setDuration(player.getDuration());
             player.setVolume(volume);
-            player.playVideo(); // Force play for mobile touch triggers
-            triggerControlsDisplay();
             
-            // Auto Set to Maximum Original Quality
+            // Set Max Quality automatically
             if (player.getAvailableQualityLevels) {
               const qualities = player.getAvailableQualityLevels();
               setAvailableQualities(qualities);
+              
               if (qualities && qualities.length > 0) {
                  const highestQuality = qualities.find((q: string) => q !== 'auto') || qualities[0];
                  player.setPlaybackQuality(highestQuality);
@@ -173,6 +161,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                  setCurrentQuality('highres');
               }
             }
+            
+            // Resume from where user left off if partially watched
+            const previousTime = viewHistory[selectedVideo.id] || 0;
+            if (previousTime > 0 && previousTime < player.getDuration() - 10) {
+                player.seekTo(previousTime, true);
+            }
           },
           onStateChange: (event: any) => {
             const state = event.data;
@@ -181,11 +175,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               setHasEnded(false);
             } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
-              setShowControls(true); // Keep controls visible when paused
             } else if (state === (window as any).YT.PlayerState.ENDED) {
               setIsPlaying(false);
               setHasEnded(true);
-              setShowControls(true);
               stopWatchTimeTracking().catch(console.error);
             }
           }
@@ -208,7 +200,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [selectedVideo]);
 
-  const fetchRecordingsAndPayments = async () => {
+  const fetchRecordingsAndPaymentsAndViews = async () => {
     try {
       const studentClasses = student.class_types || [];
       if (studentClasses.length === 0) {
@@ -216,6 +208,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
 
+      // Fetch Recordings
       const { data: recData, error: recError } = await supabase
         .from('recordings') 
         .select('*')
@@ -234,6 +227,19 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
+      // Fetch Views mapping for Unwatched/Partial Progress UI
+      const { data: viewsData, error: viewsError } = await supabase
+        .from('recording_views')
+        .select('recording_id, watched_seconds')
+        .eq('username', student.username);
+
+      if (!viewsError && viewsData) {
+        const vMap: Record<string, number> = {};
+        viewsData.forEach((v: any) => { vMap[v.recording_id] = v.watched_seconds; });
+        setViewHistory(vMap);
+      }
+
+      // Fetch Payments
       const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
@@ -242,7 +248,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       if (payError) throw payError;
 
       const statusMap: Record<string, boolean> = {};
-      
       const formatYearMonth = (year: any, month: any) => {
         let yStr = String(year).trim();
         let mStr = String(month).trim();
@@ -288,13 +293,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       }
       setPaymentStatuses(statusMap);
     } catch (error) {
-      console.error("Error fetching recordings & payments:", error);
+      console.error("Error fetching data:", error);
     }
   };
 
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
-    await stopWatchTimeTracking();
+    stopWatchTimeTracking().catch(console.error);
 
     try {
       const { data } = await supabase
@@ -332,6 +337,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               .from('recording_views')
               .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
               .eq('id', currentViewRecordIdRef.current);
+            
+            // Update local state to reflect UI instantly
+            setViewHistory(prev => ({...prev, [selectedVideo.id]: totalWatchedSecondsRef.current}));
           }
         }
       }, 1000);
@@ -347,15 +355,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       syncIntervalRef.current = null;
     }
     if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
-      const secondsToSave = totalWatchedSecondsRef.current;
-      const recordId = currentViewRecordIdRef.current;
-      currentViewRecordIdRef.current = null;
-      totalWatchedSecondsRef.current = 0;
-
       await supabase
         .from('recording_views')
-        .update({ watched_seconds: secondsToSave, last_watched_at: new Date().toISOString() })
-        .eq('id', recordId);
+        .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
+        .eq('id', currentViewRecordIdRef.current);
+        
+      setViewHistory(prev => ({...prev, [selectedVideo.id!]: totalWatchedSecondsRef.current}));
     }
   };
 
@@ -372,20 +377,18 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return vidId ? `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg` : 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
+  // Convert Time to strictly Hours:Minutes:Seconds (HH:MM:SS) format
   const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return "00:00";
+    if (!seconds || isNaN(seconds)) return "00:00:00";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-    }
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Custom Controls Action Controllers
   const togglePlay = () => {
     if (!ytPlayerRef.current || !isCurrentVideoUnlocked) return;
-    triggerControlsDisplay();
     if (isPlaying) {
       ytPlayerRef.current.pauseVideo();
       setIsPlaying(false);
@@ -398,7 +401,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const handleScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!ytPlayerRef.current) return;
-    triggerControlsDisplay();
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
     ytPlayerRef.current.seekTo(newTime, true);
@@ -406,7 +408,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const seekForward = () => {
     if (!ytPlayerRef.current) return;
-    triggerControlsDisplay();
     const target = Math.min(duration, ytPlayerRef.current.getCurrentTime() + 10);
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
@@ -414,7 +415,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const seekBackward = () => {
     if (!ytPlayerRef.current) return;
-    triggerControlsDisplay();
     const target = Math.max(0, ytPlayerRef.current.getCurrentTime() - 10);
     setCurrentTime(target);
     ytPlayerRef.current.seekTo(target, true);
@@ -442,6 +442,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       ytPlayerRef.current.mute();
       setIsMuted(true);
     }
+  };
+
+  const toggleSettingsMenu = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation(); // Prevent menu from instantly closing on touch
+    setIsSettingsOpen(!isSettingsOpen);
+    setSettingsMenuMode('main');
   };
 
   const handleSpeedSelect = (speed: number) => {
@@ -493,16 +499,30 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
   const nextVideo = getNextVideo();
 
+  // Custom Timeline calculation styling
+  const sliderPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
+
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header Panel */}
+      {/* Dynamic CSS for Custom Slider Thumb/Dot cross-browser support */}
+      <style>{`
+        .custom-slider::-webkit-slider-thumb {
+          -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
+          background: #ffffff; cursor: pointer; border: 2px solid #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.8);
+          transition: transform 0.1s;
+        }
+        .custom-slider:active::-webkit-slider-thumb { transform: scale(1.3); }
+        .custom-slider::-moz-range-thumb {
+          width: 14px; height: 14px; border-radius: 50%; background: #ffffff; cursor: pointer;
+          border: 2px solid #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.8);
+        }
+      `}</style>
+
+      {/* Header, Back Button & Month Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
-          <button 
-            onClick={onBack} 
-            className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center"
-          >
+          <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center">
             <ArrowLeft size={24} />
           </button>
           <div>
@@ -514,7 +534,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         <select 
           value={selectedFilter}
           onChange={(e) => setSelectedFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500 w-full md:w-auto"
+          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500"
         >
           <option value="current">මෙම මාසය ({currentYear} {currentMonthName})</option>
           {availableMonths.map((m, idx) => (
@@ -530,32 +550,63 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
           <div key={classType} className="mb-10">
             <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
+                const watchedSecs = viewHistory[video.id] || 0;
+                
+                // Unwatched Check (Green Highlight Logic)
+                const isUnwatched = isUnlocked && watchedSecs === 0;
+                // Partially Watched Logic (Thumbnail Progress Line)
+                const isPartiallyWatched = isUnlocked && watchedSecs > 0;
+                // Estimate default partial percentage for Thumbnail (assuming roughly 2 hours for standard class if duration is unknown)
+                const thumbnailProgressPercent = isPartiallyWatched ? Math.min((watchedSecs / (video.duration_seconds || 7200)) * 100, 95) : 0;
+
                 return (
                   <div 
                     key={video.id}
                     onClick={() => {
-                      if (!isUnlocked) return;
                       setSelectedVideo(video);
                       setIsReady(false);
                       setHasEnded(false);
                     }}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/40 opacity-75 cursor-not-allowed' : 'border-slate-800 bg-slate-900 hover:border-blue-500'
+                      !isUnlocked 
+                        ? 'border-red-900/40 opacity-75 hover:opacity-90' 
+                        : isUnwatched 
+                          ? 'border-green-500 ring-2 ring-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.3)] animate-pulse' // Unwatched Green highlight
+                          : 'border-slate-800 bg-slate-900 hover:border-blue-500'
                     }`}
                   >
                     <div className="relative aspect-video bg-slate-950">
                       <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
+                      
+                      {isUnwatched && (
+                        <div className="absolute top-3 left-3 bg-green-500 text-white text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider">
+                          New (අලුත්)
+                        </div>
+                      )}
+
                       {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center p-4">
-                          <Lock className="w-8 h-8 text-red-500 mb-2" />
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
+                          <Lock className="w-8 h-8 text-red-500 mb-1" />
                           <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
                         </div>
                       ) : (
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <div className="bg-blue-500 p-3 rounded-full text-white shadow-xl"><Play className="w-8 h-8" fill="currentColor" /></div>
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Play className="w-12 h-12 text-white drop-shadow-xl" fill="currentColor" />
+                        </div>
+                      )}
+
+                      {/* Partially Watched Progress Bar Overlay on Thumbnail */}
+                      {isPartiallyWatched && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80">
+                          <div 
+                            className="h-full bg-blue-500 relative" 
+                            style={{ width: `${Math.max(thumbnailProgressPercent, 5)}%` }} // Force min 5% if started
+                          >
+                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full"></div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -568,12 +619,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Advanced Full Screen Video Player Modal */}
+      {/* Advanced Custom Player Layout Modal */}
       {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/95 z-[100] flex flex-col items-center justify-center md:p-6 animate-in zoom-in duration-200">
           
-          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-1">
-            <h3 className="text-slate-200 font-semibold text-sm md:text-base truncate max-w-[8%]">{selectedVideo.title}</h3>
+          <div className="w-full max-w-6xl flex justify-between items-center mb-2 px-2 md:px-0 pt-2 md:pt-0">
+            <h3 className="text-slate-200 font-semibold text-sm md:text-base truncate max-w-[80%]">{selectedVideo.title}</h3>
             <button 
               onClick={() => { 
                 stopWatchTimeTracking().catch(console.error); 
@@ -589,30 +640,29 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             </button>
           </div>
 
-          <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 group shadow-2xl">
+          <div id="custom-player-wrapper" className="w-full h-full max-w-6xl md:aspect-video bg-black md:rounded-xl overflow-hidden relative border-0 md:border border-slate-800 group shadow-2xl">
             
-            {/* Security Verification Overlay */}
             {!isCurrentVideoUnlocked ? (
               <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
-                <Lock className="w-12 h-12 text-red-500 mb-4 animate-bounce" />
-                <h2 className="text-lg font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
-                <p className="text-slate-400 max-w-md text-xs">ඔබ මෙම පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත.</p>
+                <Lock className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
+                <h2 className="text-xl font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
+                <p className="text-slate-300 max-w-md text-sm">ඔබ මෙම මඟහැරුණු පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ගාස්තු ගෙවා නැරඹීමේ අවසරය ලබාගන්න.</p>
               </div>
             ) : (
               <>
-                {/* Loader Spinner */}
-                {!isReady && !hasEnded && (
+                {/* Standard Loading Circle Spinner - Completely Hides YouTube Initial Load Screen */}
+                {(!isReady || !isPlaying) && !hasEnded && (
                   <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
                     <div className="w-10 h-10 border-4 border-slate-800 border-t-blue-500 rounded-full animate-spin mb-3"></div>
                     <p className="text-slate-500 text-xs tracking-wider">වීඩියෝව සූදානම් වෙමින් පවතී...</p>
                   </div>
                 )}
 
-                {/* End Screen Overlay Panel */}
+                {/* END SCREEN OVERLAY CONTROL PANEL */}
                 {hasEnded && (
                   <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-4 text-center select-none animate-in fade-in duration-300">
                     {nextVideo ? (
-                      <div className="max-w-xs w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-4">
+                      <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl p-4">
                         <span className="text-blue-400 text-xs font-bold uppercase tracking-widest block mb-2">ඊළඟ රෙකෝඩින් වීඩියෝව</span>
                         <div className="relative aspect-video rounded-xl overflow-hidden mb-3">
                           <img src={getVideoThumbnail(nextVideo)} alt={nextVideo.title} className="w-full h-full object-cover" />
@@ -622,16 +672,16 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                               setIsReady(false);
                               setHasEnded(false);
                             }}
-                            className="absolute inset-0 bg-black/40 flex items-center justify-center hover:bg-black/20 transition duration-300"
+                            className="absolute inset-0 bg-black/40 flex items-center justify-center hover:bg-black/20 transition duration-300 group/btn"
                           >
-                            <div className="bg-blue-500 p-3 rounded-full shadow-lg"><Play size={20} fill="white" /></div>
+                            <div className="bg-blue-500 p-4 rounded-full shadow-lg group-hover/btn:scale-110 transition"><Play size={24} fill="white" /></div>
                           </button>
                         </div>
-                        <h4 className="text-white text-xs font-medium line-clamp-1 mb-1">{nextVideo.title}</h4>
+                        <h4 className="text-white text-sm font-medium line-clamp-1 mb-3">{nextVideo.title}</h4>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center">
-                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් වීඩියෝ නොමැත.</p>
+                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් ඉදිරි වීඩියෝ නොමැත.</p>
                         <button 
                           onClick={() => {
                             if (ytPlayerRef.current) {
@@ -641,40 +691,34 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                               setIsPlaying(true);
                             }
                           }}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg text-xs"
+                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg"
                         >
-                          <RotateCcw size={14} /> නැවත මුල සිට බලන්න
+                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න (Replay)
                         </button>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Secure YouTube Player Iframe Box */}
+                {/* Secure Iframe Wrapper Box */}
                 <div className="w-full h-full pointer-events-none scale-[1.03] z-0">
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
 
-                {/* Transparent Interaction Interceptor Layer for Mobile and Desktop Taps */}
-                <div 
-                  className="absolute inset-0 z-10 cursor-pointer" 
-                  onClick={triggerControlsDisplay}
-                  onDoubleClick={togglePlay}
-                ></div>
-
-                {/* Security Anti-Recording Watermark */}
-                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-10 mix-blend-screen select-none">
-                  <p className="text-white text-xl md:text-3xl font-extrabold rotate-[-25deg] tracking-widest uppercase">{student.username}</p>
+                {/* Transparent Interaction Interceptor Overlay - Handles Touch to Play/Pause Center Screen */}
+                <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}>
+                   {/* Optional: Add a brief play/pause icon animation here when clicked if desired */}
                 </div>
 
-                {/* PREMIUM CUSTOM CONTROLS BAR (Supports Touch Toggle & Hover) */}
-                <div 
-                  className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pt-14 pb-4 px-4 z-20 transition-opacity duration-300 ${
-                    showControls || !isPlaying ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto'
-                  }`}
-                >
+                {/* Security Anti-Recording Brand Name Watermark */}
+                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-15 mix-blend-screen select-none">
+                  <p className="text-white text-2xl md:text-5xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
+                </div>
+
+                {/* PREMIUM CUSTOM MEDIA CONTROLS BAR */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-16 pb-4 px-3 md:px-5 z-20 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                   
-                  {/* Progress Bar Scrubber */}
+                  {/* Dynamic Custom Dual-Color Timeline Slider */}
                   <div className="w-full relative flex items-center mb-4 group/timeline z-30">
                     <input 
                       type="range"
@@ -682,74 +726,79 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       max={duration || 100}
                       value={currentTime}
                       onChange={handleScrubChange}
-                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:h-1.5 transition-all outline-none"
+                      className="custom-slider w-full h-1.5 appearance-none rounded-lg outline-none"
+                      style={{
+                        background: `linear-gradient(to right, #3b82f6 ${sliderPercentage}%, #475569 ${sliderPercentage}%)`
+                      }}
                     />
                   </div>
 
-                  {/* Controller Action Buttons Layout */}
+                  {/* Horizontal Buttons Layout Structure */}
                   <div className="flex items-center justify-between relative z-30">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      {/* Play/Pause Button */}
-                      <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
-                        {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                    <div className="flex items-center gap-3 md:gap-5">
+                      {/* Playback Trigger Control */}
+                      <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95 p-1">
+                        {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
                       </button>
 
-                      {/* Fast Forward & Rewind */}
-                      <div className="flex items-center gap-2">
-                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={16} /></button>
-                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={16} /></button>
+                      {/* Immediate Instant Fast Actions */}
+                      <div className="flex items-center gap-3">
+                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition p-1"><Rewind size={20} /></button>
+                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition p-1"><FastForward size={20} /></button>
                       </div>
 
-                      {/* Responsive Volume Controller */}
-                      <div className="flex items-center gap-2 group/vol">
+                      {/* High Accuracy Time Stamps (HH:MM:SS) */}
+                      <span className="text-slate-200 text-[11px] md:text-xs font-mono select-none">
+                        {formatTime(currentTime)} <span className="text-slate-500 mx-1">/</span> {formatTime(duration)}
+                      </span>
+
+                      {/* Volume - Hidden on small mobile to save space, visible on MD+ */}
+                      <div className="hidden md:flex items-center gap-2 group/vol ml-2">
                         <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
                           {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                         </button>
                         <input 
                           type="range" min="0" max="100" value={isMuted ? 0 : volume} 
                           onChange={handleVolumeChange}
-                          className="w-0 opacity-0 sm:group-hover/vol:w-16 sm:group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
+                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
                         />
                       </div>
-
-                      {/* Video Time Stamp */}
-                      <span className="text-slate-300 text-xs font-mono select-none hidden sm:inline">
-                        {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
-                      </span>
                     </div>
 
-                    <div className="flex items-center gap-4">
-                      {/* Settings Engine Dynamic Modal Popup */}
-                      <div className="relative" ref={settingsRef}>
+                    <div className="flex items-center gap-3 md:gap-4">
+                      {/* NESTED CUSTOM SETTINGS POPUP ENGINE */}
+                      <div className="relative" ref={settingsRef} onClick={(e) => e.stopPropagation()}>
                         <button 
-                          onClick={() => { setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
-                          className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
+                          onClick={toggleSettingsMenu}
+                          className={`transition p-1.5 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-800' : 'text-slate-300 hover:text-white'}`}
                         >
-                          <Settings size={18} />
+                          <Settings size={20} className={isSettingsOpen ? 'animate-spin-slow' : ''} />
                         </button>
 
                         {isSettingsOpen && (
-                          <div className="absolute bottom-10 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-44 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
+                          <div className="absolute bottom-10 right-0 bg-slate-900/95 backdrop-blur-md border border-slate-700 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
                             {settingsMenuMode === 'main' && (
-                              <div className="flex flex-col gap-0.5">
-                                <button onClick={() => setSettingsMenuMode('speed')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
+                              <div className="flex flex-col gap-1">
+                                <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('speed'); }} className="flex items-center justify-between p-2.5 hover:bg-slate-800 rounded-lg text-left transition">
                                   <span>වේගය (Speed)</span>
-                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={12} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={14} /></span>
                                 </button>
-                                <button onClick={() => setSettingsMenuMode('quality')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
+                                <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('quality'); }} className="flex items-center justify-between p-2.5 hover:bg-slate-800 rounded-lg text-left transition">
                                   <span>තත්ත්වය (Quality)</span>
-                                  <span className="text-blue-400 font-bold flex items-center capitalize truncate max-w-[50px]">{currentQuality.replace('hd', '')} <ChevronRight size={12} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={14} /></span>
                                 </button>
                               </div>
                             )}
 
                             {settingsMenuMode === 'speed' && (
                               <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
+                                <div className="p-1.5 font-bold text-slate-400 border-b border-slate-700 mb-1 flex items-center gap-2">
+                                  <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('main'); }}><ArrowLeft size={14}/></button> Select Speed
+                                </div>
                                 {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
                                   <button 
-                                    key={speed} onClick={() => handleSpeedSelect(speed)}
-                                    className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                    key={speed} onClick={(e) => { e.stopPropagation(); handleSpeedSelect(speed); }}
+                                    className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-800 text-slate-300'}`}
                                   >
                                     {speed === 1 ? 'Normal' : `${speed}x`}
                                   </button>
@@ -759,24 +808,37 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
                             {settingsMenuMode === 'quality' && (
                               <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
-                                {availableQualities.map((q) => (
-                                  <button 
-                                    key={q} onClick={() => handleQualitySelect(q)}
-                                    className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                  >
-                                    {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
-                                  </button>
-                                ))}
+                                <div className="p-1.5 font-bold text-slate-400 border-b border-slate-700 mb-1 flex items-center gap-2">
+                                  <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('main'); }}><ArrowLeft size={14}/></button> Select Quality
+                                </div>
+                                {availableQualities.length === 0 ? (
+                                  ['highres', 'hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
+                                    <button 
+                                      key={q} onClick={(e) => { e.stopPropagation(); handleQualitySelect(q); }}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+                                    >
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
+                                    </button>
+                                  ))
+                                ) : (
+                                  availableQualities.map((q) => (
+                                    <button 
+                                      key={q} onClick={(e) => { e.stopPropagation(); handleQualitySelect(q); }}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+                                    >
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
+                                    </button>
+                                  ))
+                                )}
                               </div>
                             )}
                           </div>
                         )}
                       </div>
 
-                      {/* Fullscreen Trigger */}
-                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
-                        <Maximize size={18} />
+                      {/* Fullscreen Optimization Button */}
+                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition p-1">
+                        <Maximize size={20} />
                       </button>
                     </div>
                   </div>
