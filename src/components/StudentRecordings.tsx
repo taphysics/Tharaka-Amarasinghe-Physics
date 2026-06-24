@@ -1,8 +1,7 @@
 import { supabase } from '../supabaseClient';
 import React, { useState, useEffect, useRef } from 'react';
 import screenfull from 'screenfull';
-
-import { Play, Lock, CheckCircle, Clock, ArrowLeft } from 'lucide-react';
+import { Play, Lock, ArrowLeft } from 'lucide-react';
 
 interface StudentRecordingsProps {
   student: any; 
@@ -24,12 +23,21 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const currentViewRecordIdRef = useRef<string | null>(null);
   const totalWatchedSecondsRef = useRef<number>(0);
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const ytPlayerRef = useRef<any>(null);
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
+
+  // YouTube Iframe API එක Load කිරීම
+  useEffect(() => {
+    if (!(window as any).YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+  }, []);
 
   useEffect(() => {
     if (student) {
@@ -53,7 +61,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [student, selectedFilter]);
 
-  // Tracking Effect
+  // ට්‍රැකින් පද්ධතිය ක්‍රියාත්මක කිරීමේ Effect එක
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady) {
       startWatchTimeTracking();
@@ -62,6 +70,57 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
     return () => { stopWatchTimeTracking(); };
   }, [isPlaying, selectedVideo, isReady]);
+
+  // YouTube Player එක Modal එක තුළ සක්‍රීය කිරීමේ Effect එක
+  useEffect(() => {
+    const selectedYtId = selectedVideo ? getYouTubeId(selectedVideo) : null;
+    if (!selectedVideo || !selectedYtId) return;
+
+    let player: any;
+
+    const initPlayer = () => {
+      player = new (window as any).YT.Player('youtube-player-container', {
+        height: '100%',
+        width: '100%',
+        videoId: selectedYtId,
+        playerVars: {
+          autoplay: 1,
+          rel: 0,
+          modestbranding: 1,
+          enablejsapi: 1,
+          origin: window.location.origin
+        },
+        events: {
+          onReady: () => {
+            setIsReady(true);
+            setIsPlaying(true);
+          },
+          onStateChange: (event: any) => {
+            // event.data === 1 යනු වීඩියෝව Play වන අවස්ථාවයි
+            if (event.data === (window as any).YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+            } else {
+              setIsPlaying(false);
+            }
+          }
+        }
+      });
+      ytPlayerRef.current = player;
+    };
+
+    if ((window as any).YT && (window as any).YT.Player) {
+      initPlayer();
+    } else {
+      (window as any).onYouTubeIframeAPIReady = initPlayer;
+    }
+
+    return () => {
+      if (ytPlayerRef.current && ytPlayerRef.current.destroy) {
+        ytPlayerRef.current.destroy();
+        ytPlayerRef.current = null;
+      }
+    };
+  }, [selectedVideo]);
 
   const fetchRecordingsAndPayments = async () => {
     try {
@@ -80,21 +139,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       if (recError) throw recError;
 
       let processedData = recData || [];
-
-      // --- 🎯 සාම්පල් වීඩියෝව Inject කිරීම (2026 Revision) ---
-      const sampleVideo = {
-        id: 'sample_CQVys_VgwKQ',
-        title: 'තාපය | උෂ්ණත්වමිතිය | Part 01 (Sample Video)',
-        youtube_id: 'CQVys_VgwKQ',
-        video_url: 'https://www.youtube.com/watch?v=CQVys_VgwKQ',
-        class_type: '2026 Revision',
-        year: currentYear,
-        month: currentMonthName, // Current month එකට දමා ඇත, එවිට Default පෙනේ
-        thumbnail_url: 'https://img.youtube.com/vi/CQVys_VgwKQ/maxresdefault.jpg'
-      };
-
-      // 2026 Revision පන්තිය සිසුවාට ඇත්නම් හෝ Sample එක පෙන්විය යුතු නම්
-      processedData.unshift(sampleVideo);
 
       if (processedData) {
         setRecordings(processedData);
@@ -169,6 +213,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
+  // Views සහ Watch Time නිවැරදිව ට්‍රැක් කිරීම
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
     stopWatchTimeTracking(); 
@@ -176,20 +221,36 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     try {
       const { data, error } = await supabase
         .from('recording_views')
-        .select('id, watched_seconds')
+        .select('id, watched_seconds, views')
         .eq('recording_id', selectedVideo.id)
         .eq('username', student.username)
         .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') throw error; // Ignore no rows error
+      if (error && error.code !== 'PGRST116') throw error;
 
       if (data) {
         currentViewRecordIdRef.current = data.id;
         totalWatchedSecondsRef.current = data.watched_seconds;
+        
+        // වීඩියෝව නැවත නැරඹීමේදී Views Count එක 1 කින් වැඩි කිරීම
+        await supabase
+          .from('recording_views')
+          .update({ 
+            views: (data.views || 1) + 1,
+            last_watched_at: new Date().toISOString()
+          })
+          .eq('id', data.id);
       } else {
+        // පළමු වතාවට නරඹන විට නව රෙකෝඩ් එකක් ඇතුළත් කිරීම (Views = 1)
         const { data: newRec, error: insertError } = await supabase
           .from('recording_views')
-          .insert({ recording_id: selectedVideo.id, username: student.username, watched_seconds: 0 })
+          .insert({ 
+            recording_id: selectedVideo.id, 
+            username: student.username, 
+            watched_seconds: 0,
+            views: 1,
+            last_watched_at: new Date().toISOString()
+          })
           .select('id')
           .single();
 
@@ -200,12 +261,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         }
       }
 
+      // තත්පරයෙන් තත්පරයට ශිෂ්‍යයා නරඹන වේලාව ගණනය කිරීම
       let tickCounter = 0;
       syncIntervalRef.current = setInterval(async () => {
         if (isPlaying) {
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
+          // සෑම තත්පර 3 කට වරක්ම ඩේටාබේස් එකට කාලය සින්ක් කිරීම
           if (tickCounter >= 3 && currentViewRecordIdRef.current) {
             tickCounter = 0;
             await supabase
@@ -240,10 +303,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // 🛑 අතිශය නිවැරදි YouTube ID එක ලබාගැනීමේ ශ්‍රිතය
+  // YouTube URL එකකින් ID එක වෙන් කර ගැනීම
   const getYouTubeId = (video: any) => {
     if (!video) return null;
-    
     const rawInput = String(video.video_url || video.youtube_id || video.url || video.link || '');
     const sanitizedInput = rawInput.replace(/[\s"']/g, ''); 
     if (!sanitizedInput) return null;
@@ -260,7 +322,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
 
   const handleVideoClick = (video: any, isUnlocked: boolean) => {
-    if (isUnlocked || video.id.startsWith('sample_')) {
+    if (isUnlocked) {
       setSelectedVideo(video);
       setIsReady(false); 
       setIsPlaying(true); 
@@ -285,16 +347,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return acc;
   }, {} as Record<string, any[]>);
 
-  // Modal එක ඇතුළත Iframe එක සඳහා Embed URL එක සෑදීම
-  const selectedYtId = selectedVideo ? getYouTubeId(selectedVideo) : null;
-  const embedUrl = selectedYtId 
-      ? `https://www.youtube.com/embed/${selectedYtId}?autoplay=1&rel=0&modestbranding=1` 
-      : "";
-
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
       
-      {/* Header, Back Button & Filters */}
+      {/* Header & Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button 
@@ -322,7 +378,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         </select>
       </div>
 
-      {/* Videos Grouped by Class Type */}
+      {/* Videos List */}
       {Object.keys(groupedRecordings).length === 0 ? (
         <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
       ) : (
@@ -332,17 +388,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {videos.map((video: any) => {
-                const isSample = video.id.startsWith('sample_');
-                const isUnlocked = isSample || paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
+                const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
                 
                 return (
                   <div 
                     key={video.id}
                     onClick={() => handleVideoClick(video, isUnlocked)}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/50 opacity-80' : 
-                      isSample ? 'border-purple-500/50 hover:border-purple-400' :
-                      'border-emerald-500/50 hover:border-emerald-400'
+                      !isUnlocked ? 'border-red-900/50 opacity-80' : 'border-emerald-500/50 hover:border-emerald-400'
                     }`}
                   >
                     <div className="relative aspect-video bg-slate-900">
@@ -358,12 +411,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       <div className="absolute top-2 right-2 bg-black/80 backdrop-blur-md border border-slate-600 px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider text-white z-10 shadow-lg">
                         <span className="text-blue-400">{video.class_type}</span> | {video.year} {video.month}
                       </div>
-
-                      {isSample && (
-                        <div className="absolute top-2 left-2 bg-purple-600 px-2 py-1 rounded text-[10px] font-bold text-white z-10 shadow-lg animate-pulse">
-                          FREE SAMPLE
-                        </div>
-                      )}
 
                       {!isUnlocked ? (
                         <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 text-center z-20">
@@ -392,11 +439,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Video Player Modal (Using Raw Embed Iframe) */}
-      {selectedVideo && embedUrl && (
+      {/* Modern Video Player Modal with Native Tracking */}
+      {selectedVideo && (
         <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-10 animate-in zoom-in duration-300">
           
-          {/* Close Button Header */}
           <div className="w-full max-w-6xl flex justify-between items-center mb-4 z-50 px-2">
             <h3 className="text-white font-bold drop-shadow-md text-lg truncate max-w-[80%]">{selectedVideo.title}</h3>
             <button 
@@ -414,12 +460,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             </button>
           </div>
 
-          <div 
-            ref={playerContainerRef}
-            className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)]"
-          >
+          <div className="w-full max-w-6xl aspect-video bg-black rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)]">
             
-            {/* වීඩියෝව ලෝඩ් වනතුරු පෙන්වන Loading Spinner එක */}
             {!isReady && (
               <div className="absolute inset-0 z-30 bg-black flex flex-col items-center justify-center pointer-events-none">
                 <div className="w-12 h-12 border-4 border-slate-600 border-t-blue-500 rounded-full animate-spin mb-4"></div>
@@ -427,19 +469,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               </div>
             )}
 
-            {/* 🔥 Official Native YouTube Iframe Embed 🔥 */}
-            <iframe 
-              width="100%" 
-              height="100%" 
-              src={embedUrl} 
-              title="YouTube video player" 
-              frameBorder="0" 
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
-              referrerPolicy="strict-origin-when-cross-origin" 
-              allowFullScreen
-              className="z-0 relative"
-              onLoad={() => setIsReady(true)}
-            ></iframe>
+            {/* Official API Target Element */}
+            <div id="youtube-player-container" className="w-full h-full z-0 relative"></div>
 
           </div>
         </div>
