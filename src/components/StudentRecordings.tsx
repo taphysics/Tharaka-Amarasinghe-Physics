@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
 import screenfull from 'screenfull';
 
-import { Play, Pause, Maximize, Minimize, SkipBack, SkipForward, Lock, CheckCircle, Clock, RotateCcw, Volume2, VolumeX, ArrowLeft } from 'lucide-react';
+import { Play, Lock, CheckCircle, Clock, ArrowLeft } from 'lucide-react';
 
 const Player: any = ReactPlayer;
 
@@ -24,7 +24,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false); 
   const [played, setPlayed] = useState(0);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   
   // Realtime Watch Tracking Refs
   const currentViewRecordIdRef = useRef<string | null>(null);
@@ -33,35 +32,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const playerRef = useRef<any>(null); 
   const playerContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    if (selectedVideo && !isReady) {
-      timeoutId = setTimeout(() => {
-        setIsReady(true);
-      }, 4000);
-    }
-    return () => clearTimeout(timeoutId);
-  }, [selectedVideo, isReady]);
-
-  const safeSeekTo = (amount: number, type: 'seconds' | 'fraction' = 'seconds') => {
-    if (!playerRef.current) return;
-    if (typeof playerRef.current.seekTo === 'function') {
-      playerRef.current.seekTo(amount, type);
-      return;
-    }
-    if (playerRef.current.player && typeof playerRef.current.player.seekTo === 'function') {
-      playerRef.current.player.seekTo(amount, type);
-      return;
-    }
-    if (typeof playerRef.current.getInternalPlayer === 'function') {
-      const internal = playerRef.current.getInternalPlayer();
-      if (internal && typeof internal.seekTo === 'function') {
-        internal.seekTo(amount, type === 'fraction');
-        return;
-      }
-    }
-  };
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
@@ -90,6 +60,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [student, selectedFilter]);
 
+  // Tracking Effect (Error 1 එක නිවැරදි කර ඇත)
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady) {
       startWatchTimeTracking();
@@ -158,9 +129,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
           const isGloballyFree = student.plan_type?.toLowerCase() === 'free'; 
           const isThisMonthFree = student.free_months?.includes(recMonthStr) || 
-
                                   student.free_months?.includes(recYearMonthStr) || 
-
                                   student.free_months?.includes(standardizedDbMonth);
           
           const paymentRecord = payData?.find((p: any) => {
@@ -277,7 +246,19 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     if (selectedVideo && videoProgress[selectedVideo.id]?.playedSeconds) {
       const savedTime = videoProgress[selectedVideo.id].playedSeconds;
       const resumeTime = savedTime > 10 ? savedTime - 10 : 0; 
-      safeSeekTo(resumeTime, 'seconds');
+      
+      try {
+          if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+              playerRef.current.seekTo(resumeTime, 'seconds');
+          } else if (playerRef.current && playerRef.current.getInternalPlayer) {
+              const internalPlayer = playerRef.current.getInternalPlayer();
+              if (internalPlayer && typeof internalPlayer.seekTo === 'function') {
+                  internalPlayer.seekTo(resumeTime, true);
+              }
+          }
+      } catch (err) {
+          console.warn("Could not seek to previous time:", err);
+      }
     }
   };
 
@@ -295,52 +276,42 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     stopWatchTimeTracking();
   };
 
-  // යාවත්කාලීන කළ URL හඳුනාගැනීමේ ශ්‍රිතය (video_url එකට ප්‍රමුඛතාවය දී ඇත)
   const getCleanVideoUrl = (video: any) => {
     if (!video) return '';
-    
-    // මෙහිදී video_url එකට මුල් තැන ලබාදෙන අතර, පැරණි දත්ත තිබේ නම් fallback එකක් ලෙස youtube_id පරීක්ෂා කරයි.
     const rawInput = video.video_url || video.youtube_id || video.url || video.link || '';
-    
-    if (!rawInput) {
-      console.warn("⚠️ වීඩියෝ ලින්ක් එකක් Database එකෙන් ලැබුණේ නැත!", video);
-      return '';
-    }
+    if (!rawInput) return '';
 
     let val = String(rawInput).trim();
 
-    // iframe කේතයක් ලැබී ඇත්නම් src එක පමණක් වෙන් කරගැනීම
     if (val.includes('<iframe') && val.includes('src=')) {
       const match = val.match(/src=["']([^"']+)["']/);
       if (match) return match[1];
     }
-
-    // සම්පූර්ණ ලින්ක් එකක් (https://...) ලබාදී ඇත්නම් එයම සෘජුව භාවිතා කරයි
     if (val.startsWith('http://') || val.startsWith('https://')) {
       return val;
     }
-
-    // ලින්ක් එකක් නොමැතිව YouTube ID එකක් පමණක් ලැබුණහොත් Standard ලින්ක් එකක් සාදා ගනී
     return `https://www.youtube.com/watch?v=${val}`;
   };
 
-  // 2. යාවත්කාලීන කළ Thumbnail ලබාගැනීමේ ශ්‍රිතය
   const getVideoThumbnail = (video: any) => {
     if (video.thumbnail_url) return video.thumbnail_url;
     
     const url = getCleanVideoUrl(video);
     let vidId = '';
     
-    if (url.includes('youtube.com/watch?v=')) {
-      vidId = url.split('v=')[1]?.split('&')[0];
-    } else if (url.includes('youtu.be/')) {
-      vidId = url.split('youtu.be/')[1]?.split('?')[0];
-    } else if (url.includes('youtube.com/embed/')) {
-      vidId = url.split('embed/')[1]?.split('?')[0];
+    try {
+        if (url.includes('v=')) {
+          vidId = url.split('v=')[1]?.split('&')[0];
+        } else if (url.includes('youtu.be/')) {
+          vidId = url.split('youtu.be/')[1]?.split('?')[0];
+        } else if (url.includes('embed/')) {
+          vidId = url.split('embed/')[1]?.split('?')[0];
+        }
+    } catch(e) {
+        console.warn("Could not extract thumbnail ID from:", url);
     }
 
     if (vidId) return `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg`;
-    
     return 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
@@ -497,7 +468,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 setSelectedVideo(null); 
                 setIsPlaying(false); 
                 setIsReady(false);
-                if(isFullscreen) screenfull.exit(); 
+                // (Error 2 එක නිවැරදි කර ඇත)
+                if (screenfull.isEnabled && screenfull.isFullscreen) screenfull.exit(); 
               }}
               className="bg-slate-800 hover:bg-red-500 text-white rounded-full w-10 h-10 flex items-center justify-center transition-colors shadow-lg"
               title="Close Video"
@@ -519,6 +491,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               </div>
             )}
 
+            {/* Standard YouTube Player */}
             <Player
               ref={playerRef}
               url={getCleanVideoUrl(selectedVideo)} 
@@ -534,7 +507,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               config={{
                 youtube: { 
                   playerVars: { 
-                    origin: typeof window !== 'undefined' ? window.location.origin : '*'
+                    origin: typeof window !== 'undefined' ? window.location.origin : '*',
+                    rel: 0,
+                    modestbranding: 1
                   } 
                 }
               }}
