@@ -672,16 +672,6 @@ const startWatchTimeTracking = async () => {
   </div>
 )}
 
-                      {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
-                          <Lock className="w-8 h-8 text-red-500 mb-1" />
-                          <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
-                        </div>
-                      ) : (
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="w-12 h-12 text-white" fill="currentColor" />
-                        </div>
-                      )}
                     </div>
                     {/* Progress Bar එක පෙන්වන ස්ථානය */}
 {isUnlocked && watchState === 'partial' && (
