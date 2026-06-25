@@ -34,7 +34,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   // Settings Dropdown Menu State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsMenuMode, setSettingsMenuMode] = useState<'main' | 'speed' | 'quality'>('main');
-  const [currentQuality, setCurrentQuality] = useState('hd1080'); // Force 1080p state
+  const [currentQuality, setCurrentQuality] = useState('hd1080'); // Default explicitly to 1080p
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
 
   // Realtime Watch Tracking Refs
@@ -48,6 +48,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
+  // Load YouTube Iframe API
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -105,9 +106,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     ? paymentStatuses[`${selectedVideo.class_type}-${selectedVideo.year}-${selectedVideo.month}`] || false
     : false;
 
-  // ==========================================
-  // YOUTUBE PLAYER INITIALIZATION (FIXED 1080P)
-  // ==========================================
   useEffect(() => {
     const selectedYtId = selectedVideo ? getYouTubeId(selectedVideo) : null;
     if (!selectedVideo || !selectedYtId || !isCurrentVideoUnlocked) return;
@@ -115,10 +113,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     let player: any;
 
     const initPlayer = () => {
+      // Create fresh player instance
       player = new (window as any).YT.Player('youtube-player-container', {
         height: '100%',
         width: '100%',
-        // Do not set videoId here. We will use loadVideoById to force 1080p
+        videoId: selectedYtId,
         playerVars: {
           autoplay: 1,
           controls: 0, 
@@ -129,39 +128,39 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           enablejsapi: 1,
           iv_load_policy: 3,
           showinfo: 0,
-          playsinline: 1,
+          playsinline: 1, // Crucial for iPhone/Mobile playback
           origin: window.location.origin,
-          vq: 'hd1080' // Legacy parameter for fallback
+          vq: 'hd1080' // Suggest 1080p at initialization
         },
         events: {
           onReady: (event: any) => {
             setIsReady(true);
-            setIsPlaying(true);
             setHasEnded(false);
+            setDuration(player.getDuration());
+            player.setVolume(volume);
             
-            // SUPER FIX: Force load the video via loadVideoById with suggestedQuality
-            event.target.loadVideoById({
-                videoId: selectedYtId,
-                suggestedQuality: 'hd1080'
-            });
+            // On mobile, autoplay might be blocked. Attempt to play:
+            const playPromise = player.playVideo();
+            if (playPromise !== undefined) {
+              playPromise.catch((error: any) => {
+                // Autoplay was prevented by mobile browser. 
+                // We leave isPlaying false so the big play button shows.
+                setIsPlaying(false);
+              });
+            } else {
+              setIsPlaying(true);
+            }
 
-            event.target.setVolume(volume);
-
-            setTimeout(() => {
-                if (event.target.getAvailableQualityLevels) {
-                    const qualities = event.target.getAvailableQualityLevels();
-                    setAvailableQualities(qualities);
-                    if (qualities.includes('hd1080')) setCurrentQuality('hd1080');
-                    else if (qualities.length > 0) setCurrentQuality(qualities[0]);
-                }
-            }, 1000);
+            if (player.getAvailableQualityLevels) {
+              const qualities = player.getAvailableQualityLevels();
+              setAvailableQualities(qualities);
+            }
           },
           onStateChange: (event: any) => {
             const state = event.data;
             if (state === (window as any).YT.PlayerState.PLAYING) {
               setIsPlaying(true);
               setHasEnded(false);
-              setDuration(player.getDuration());
             } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
             } else if (state === (window as any).YT.PlayerState.ENDED) {
@@ -320,7 +319,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
-          if (tickCounter >= 300 && currentViewRecordIdRef.current) {
+          if (tickCounter >= 30 && currentViewRecordIdRef.current) {
             tickCounter = 0;
             await supabase
               .from('recording_views')
@@ -445,22 +444,26 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     setIsSettingsOpen(false);
   };
 
-  // ==========================================
-  // QUALITY CHANGER FIX (Force Reload Stream)
-  // ==========================================
+  // ADVANCED QUALITY FIX: Forcing YouTube to fetch the exact quality stream by reloading
   const handleQualitySelect = (quality: string) => {
     setCurrentQuality(quality);
     if (ytPlayerRef.current && selectedVideo) {
-      const currentVidTime = ytPlayerRef.current.getCurrentTime();
-      const videoId = getYouTubeId(selectedVideo);
+      const currentPos = ytPlayerRef.current.getCurrentTime();
+      const isPlayingNow = isPlaying;
       
-      // Iframe API setPlaybackQuality is deprecated. 
-      // The only way to force quality is to reload the video with the exact time and suggested quality.
+      // Instead of setPlaybackQuality (which YT ignores), we reload the video via API
+      // forcing it to fetch the requested quality level stream.
       ytPlayerRef.current.loadVideoById({
-          videoId: videoId,
-          startSeconds: currentVidTime,
-          suggestedQuality: quality
+        videoId: getYouTubeId(selectedVideo),
+        startSeconds: currentPos,
+        suggestedQuality: quality
       });
+      
+      if (!isPlayingNow) {
+        setTimeout(() => ytPlayerRef.current.pauseVideo(), 600);
+      } else {
+        ytPlayerRef.current.playVideo();
+      }
     }
     setIsSettingsOpen(false);
   };
@@ -569,7 +572,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
                 
                 let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
-                if (viewRecord && watchedSeconds > 10) {
+                // 0 ට වඩා වැඩිනම් (එනම් ක්ලික් කල සැනින්ම) එය partial බවට පත් වේ.
+                if (viewRecord && watchedSeconds > 0) {
                   if (watchedSeconds >= (videoTotalDuration * 0.90)) {
                     watchState = 'completed';
                   } else {
@@ -588,12 +592,14 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       setIsReady(false);
                       setHasEnded(false);
                       
-                      if (!viewRecord || watchedSeconds < 1) {
-                         setWatchHistory(prev => ({
-                           ...prev,
-                           [video.id]: { recording_id: video.id, watched_seconds: 10 }
-                         }));
-                      }
+                      // ක්ලික් කල සැනින්ම Local State එක අප්ඩේට් කර New ඇනිමේෂන් එක ඉවත් කිරීම
+                      setWatchHistory(prev => {
+                         const existing = prev[video.id];
+                         if (!existing || existing.watched_seconds === 0) {
+                           return { ...prev, [video.id]: { recording_id: video.id, watched_seconds: 1 } };
+                         }
+                         return prev;
+                      });
                     }}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
                       !isUnlocked 
@@ -648,11 +654,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Custom Player Window */}
+      {/* Custom Player Window - Mobile Responsive */}
       {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-0 md:p-6 animate-in zoom-in duration-200">
           
-          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-1">
+          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-4 md:px-1 pt-4 md:pt-0">
             <h3 className="text-slate-200 font-semibold text-base truncate max-w-[80%]">{selectedVideo.title}</h3>
             <button 
               onClick={() => { 
@@ -669,7 +675,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             </button>
           </div>
 
-          <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 shadow-2xl group">
+          {/* Adding key allows React to fully recreate the wrapper if needed */}
+          <div key={selectedVideo.id} id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black md:rounded-xl overflow-hidden relative border-y md:border border-slate-800 shadow-2xl group">
             
             {!isCurrentVideoUnlocked ? (
               <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
@@ -730,9 +737,12 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
 
-                <div className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
+                {/* Visible Play button overlay on Mobile/Web when paused or autoplay blocked */}
+                <div className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center bg-transparent hover:bg-black/10 transition-colors" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
                   {!isPlaying && isReady && !hasEnded && (
-                    <div className="bg-black/50 p-4 rounded-full text-white animate-pulse"><Play size={28} fill="white" /></div>
+                    <div className="bg-blue-600/80 hover:bg-blue-600 p-5 rounded-full text-white shadow-xl transform transition-transform hover:scale-110">
+                      <Play size={36} fill="white" className="ml-1" />
+                    </div>
                   )}
                 </div>
 
@@ -741,27 +751,27 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 </div>
 
                 {/* Controls Bar */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-3 md:px-4 z-20 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
                   
                   <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
                     <input 
                       type="range" min={0} max={duration || 100} value={currentTime} onChange={handleScrubChange} style={playerLineStyle}
-                      className="custom-slider w-full h-1 rounded-lg appearance-none cursor-pointer group-hover/timeline:h-1.5 transition-all outline-none"
+                      className="custom-slider w-full h-1.5 md:h-1 rounded-lg appearance-none cursor-pointer md:group-hover/timeline:h-1.5 transition-all outline-none"
                     />
                   </div>
 
                   <div className="flex items-center justify-between relative z-30">
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 md:gap-4">
                       <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
                         {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
                       </button>
 
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2 md:gap-2.5">
                         <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
                         <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
                       </div>
 
-                      <div className="flex items-center gap-2 group/vol">
+                      <div className="hidden md:flex items-center gap-2 group/vol">
                         <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
                           {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                         </button>
@@ -771,24 +781,23 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         />
                       </div>
 
-                      <span className="text-slate-300 text-xs font-mono select-none">
+                      <span className="text-slate-300 text-[10px] md:text-xs font-mono select-none">
                         {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 md:gap-4">
                       <div className="relative" ref={settingsRef}>
                         <button 
                           onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
-                          onTouchEnd={(e) => { e.stopPropagation(); setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); }}
-                          className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
+                          className={`transition p-1.5 md:p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
                         >
-                          <Settings size={18} />
+                          <Settings size={20} className="md:w-[18px] md:h-[18px]" />
                         </button>
 
                         {isSettingsOpen && (
-                          <div onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-                            className="absolute bottom-8 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200"
+                          <div onClick={(e) => e.stopPropagation()} 
+                            className="absolute bottom-10 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200"
                           >
                             {settingsMenuMode === 'main' && (
                               <div className="flex flex-col gap-0.5">
@@ -805,7 +814,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
                             {settingsMenuMode === 'speed' && (
                               <div className="flex flex-col gap-0.5">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1 flex items-center gap-2">
+                                  <button onClick={() => setSettingsMenuMode('main')}><ArrowLeft size={14}/></button> Select Speed
+                                </div>
                                 {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
                                   <button key={speed} onClick={() => handleSpeedSelect(speed)}
                                     className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
@@ -818,7 +829,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
                             {settingsMenuMode === 'quality' && (
                               <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1 flex items-center gap-2">
+                                   <button onClick={() => setSettingsMenuMode('main')}><ArrowLeft size={14}/></button> Select Quality
+                                </div>
                                 {availableQualities.length === 0 ? (
                                   ['highres', 'hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
                                     <button key={q} onClick={() => handleQualitySelect(q)}
@@ -842,8 +855,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         )}
                       </div>
 
-                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
-                        <Maximize size={18} />
+                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition p-1.5 md:p-0">
+                        <Maximize size={20} className="md:w-[18px] md:h-[18px]" />
                       </button>
                     </div>
                   </div>
