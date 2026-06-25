@@ -660,43 +660,34 @@ const startWatchTimeTracking = async () => {
                         </div>
                       )}
 
-                      {/* Progress Bar එක පෙන්වන ස්ථානය */}
-{isUnlocked && watchState === 'partial' && (
-  <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
-    <div 
-      className="h-full bg-red-600 relative transition-all duration-300" 
-      style={{ width: `${thumbnailProgressPercent}%` }}
-    >
-      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
-    </div>
-  </div>
-)}
+                      {isUnlocked && watchState === 'partial' && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
+                          <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
+                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
+                          </div>
+                        </div>
+                      )}
 
+                      {!isUnlocked ? (
+                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
+                          <Lock className="w-8 h-8 text-red-500 mb-1" />
+                          <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Play className="w-12 h-12 text-white" fill="currentColor" />
+                        </div>
+                      )}
                     </div>
-                    {/* Progress Bar එක පෙන්වන ස්ථානය */}
-{isUnlocked && watchState === 'partial' && (
-  <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
-    <div 
-      className="h-full bg-red-600 relative transition-all duration-300" 
-      style={{ width: `${thumbnailProgressPercent}%` }}
-    >
-      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
-    </div>
-  </div>
-)}
-
-{/* කාඩ් එකේ පහළ පෙළ (Text) පෙන්වන ස්ථානය */}
-<div className="p-4 bg-slate-900">
-  <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
-  
-  {isUnlocked && watchState === 'partial' && (
-    <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
-  )}
-  
-  {isUnlocked && watchState === 'completed' && (
-    <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත (Completed)</p>
-  )}
-</div>
+                    <div className="p-4 bg-slate-900">
+                      <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
+                      {isUnlocked && watchState === 'partial' && (
+                        <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
+                      )}
+                      {isUnlocked && watchState === 'completed' && (
+                        <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත</p>
+                      )}
+                    </div>
                   </div>
                 );
               })}
