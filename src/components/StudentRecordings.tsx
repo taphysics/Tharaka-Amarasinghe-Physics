@@ -607,9 +607,11 @@ const startWatchTimeTracking = async () => {
           const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
           const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
           
+          // වීඩියෝව නැරඹූ තත්ත්වය නිවැරදිව තීරණය කිරීම
           let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
           if (viewRecord && watchedSeconds > 0) {
-            if (watchedSeconds >= (videoTotalDuration * 0.90)) {
+            // 85% වඩා වැඩි නම් completed ලෙස සලකන්න (මෙහි අගය ඔබට අවශ්‍ය පරිදි වෙනස් කළ හැක)
+            if (watchedSeconds >= (videoTotalDuration * 0.85)) {
               watchState = 'completed';
             } else {
               watchState = 'partial';
@@ -659,7 +661,7 @@ const startWatchTimeTracking = async () => {
                   </div>
                 )}
 
-                {/* Progress Bar (Only visible if state is 'partial') */}
+                {/* Progress Bar - පෙන්වන්නේ partial නම් පමණි */}
                 {isUnlocked && watchState === 'partial' && (
                   <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
                     <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
@@ -683,7 +685,7 @@ const startWatchTimeTracking = async () => {
               <div className="p-4 bg-slate-900">
                 <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
                 
-                {/* Status Text based on Watch State */}
+                {/* Status Text - completed නම් partial පණිවිඩය පෙන්වන්නේ නැත */}
                 {isUnlocked && watchState === 'partial' && (
                   <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
                 )}
