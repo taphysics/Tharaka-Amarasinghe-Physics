@@ -609,15 +609,12 @@ const startWatchTimeTracking = async () => {
           
           let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
           if (viewRecord && watchedSeconds > 0) {
-            // මෙහි 0.90 යනු වීඩියෝවෙන් 90%ක් බැලූ විට සම්පූර්ණ ලෙස සලකයි
             if (watchedSeconds >= (videoTotalDuration * 0.90)) {
               watchState = 'completed';
             } else {
               watchState = 'partial';
             }
           }
-
-          const thumbnailProgressPercent = videoTotalDuration > 0 ? Math.min((watchedSeconds / videoTotalDuration) * 100, 100) : 0;
 
           return (
             <div 
@@ -653,19 +650,10 @@ const startWatchTimeTracking = async () => {
               <div className="relative aspect-video bg-slate-950">
                 <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
                 
-                {/* NEW / UNWATCHED Badge - තවමත් නොබැලූ වීඩියෝ සඳහා පමණි */}
+                {/* NEW / UNWATCHED Badge */}
                 {isUnlocked && watchState === 'unwatched' && (
                   <div className="absolute top-2 left-2 bg-emerald-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full shadow z-10 uppercase tracking-wider">
                     NEW / UNWATCHED
-                  </div>
-                )}
-
-                {/* Progress Bar - බාගෙට නරඹා ඇති විට පමණක් පෙන්වයි */}
-                {isUnlocked && watchState === 'partial' && (
-                  <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
-                    <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
-                    </div>
                   </div>
                 )}
 
@@ -683,7 +671,11 @@ const startWatchTimeTracking = async () => {
               
               <div className="p-4 bg-slate-900">
                 <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
-                {/* අමතර ටෙක්ස්ට් සියල්ල ඉවත් කරන ලදී */}
+                
+                {/* Status Text - Completed පමණක් පෙන්වයි */}
+                {isUnlocked && watchState === 'completed' && (
+                  <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත</p>
+                )}
               </div>
             </div>
           );
