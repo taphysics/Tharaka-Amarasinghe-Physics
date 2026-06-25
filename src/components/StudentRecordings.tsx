@@ -16,7 +16,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string>('current');
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
-  const [viewStats, setViewStats] = useState<Record<string, any>>({});
+  const [watchHistory, setWatchHistory] = useState<Record<string, any>>({});
   
   // Player State
   const [selectedVideo, setSelectedVideo] = useState<any | null>(null);
@@ -48,7 +48,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
-  // Load YouTube Iframe API
+  // Load YouTube Iframe API & Handle Outside Clicks
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -57,18 +57,17 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
     }
 
-    // Fix for Mobile Settings Auto-closing (Touch and Click)
-    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
+    const handleOutsideClose = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
         setIsSettingsOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleOutsideClick);
-    document.addEventListener('touchstart', handleOutsideClick, { passive: true });
+    document.addEventListener('mousedown', handleOutsideClose);
+    document.addEventListener('touchstart', handleOutsideClose);
     
     return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('mousedown', handleOutsideClose);
+      document.removeEventListener('touchstart', handleOutsideClose);
     };
   }, []);
 
@@ -81,7 +80,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     };
   }, [student, selectedFilter]);
 
-  // Tracking Effect (Fixed TypeScript Error)
+  // Tracking Effect
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady && !hasEnded) {
       startWatchTimeTracking();
@@ -125,9 +124,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         width: '100%',
         videoId: selectedYtId,
         playerVars: {
-          autoplay: 1,       // Auto play on load
-          playsinline: 1,    // Crucial for iOS mobile auto-play
-          controls: 0,       // Hide YT controls completely
+          autoplay: 1,
+          controls: 0, 
           disablekb: 1, 
           fs: 0, 
           rel: 0, 
@@ -135,38 +133,30 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           enablejsapi: 1,
           iv_load_policy: 3,
           showinfo: 0,
+          playsinline: 1,
           origin: window.location.origin
         },
         events: {
           onReady: (event: any) => {
             setIsReady(true);
-            
-            // Force play for mobile autostart
-            player.playVideo();
-            
+            setIsPlaying(true);
+            setHasEnded(false);
             setDuration(player.getDuration());
             player.setVolume(volume);
             
-            // Set Quality to Maximum (Original)
+            player.playVideo();
+            
+            // Set Original Max Quality on Load
             if (player.getAvailableQualityLevels) {
               const qualities = player.getAvailableQualityLevels();
               setAvailableQualities(qualities);
               if (qualities && qualities.length > 0) {
-                 const highestQuality = qualities.find((q: string) => q !== 'auto') || qualities[0];
+                 const highestQuality = qualities.find((q: string) => q === 'hd1080' || q === 'highres') || qualities[0];
                  player.setPlaybackQuality(highestQuality);
                  setCurrentQuality(highestQuality);
               } else {
-                 player.setPlaybackQuality('highres');
-                 setCurrentQuality('highres');
-              }
-            }
-
-            // Seek to previously watched time if exists
-            if (viewStats[selectedVideo.id] && viewStats[selectedVideo.id].watched_seconds > 0) {
-              const prevTime = viewStats[selectedVideo.id].watched_seconds;
-              // Only seek if not completed
-              if (!viewStats[selectedVideo.id].is_completed && prevTime < (player.getDuration() - 10)) {
-                player.seekTo(prevTime, true);
+                 player.setPlaybackQuality('hd1080');
+                 setCurrentQuality('hd1080');
               }
             }
           },
@@ -175,6 +165,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             if (state === (window as any).YT.PlayerState.PLAYING) {
               setIsPlaying(true);
               setHasEnded(false);
+              // Update duration in case it changed after quality swap
+              if (player.getDuration) setDuration(player.getDuration());
             } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
             } else if (state === (window as any).YT.PlayerState.ENDED) {
@@ -210,7 +202,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
 
-      // 1. Fetch Recordings
       const { data: recData, error: recError } = await supabase
         .from('recordings') 
         .select('*')
@@ -218,18 +209,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         .order('created_at', { ascending: true }); 
       
       if (recError) throw recError;
-
-      // 2. Fetch User Watch Stats for thumbnails
-      const { data: viewsData } = await supabase
-        .from('recording_views')
-        .select('*')
-        .eq('username', student.username);
-
-      const vMap: Record<string, any> = {};
-      if (viewsData) {
-        viewsData.forEach((v: any) => { vMap[v.recording_id] = v; });
-      }
-      setViewStats(vMap);
 
       if (recData) {
         setRecordings(recData);
@@ -241,7 +220,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      // 3. Fetch Payments
+      // FIXED TS ERROR: Added .select('*')
+      const { data: viewsData, error: viewsError } = await supabase
+        .from('recording_views')
+        .select('*')
+        .eq('username', student.username);
+
+      if (!viewsError && viewsData) {
+        const historyMap: Record<string, any> = {};
+        viewsData.forEach((view: any) => {
+          historyMap[view.recording_id] = view;
+        });
+        setWatchHistory(historyMap);
+      }
+
       const { data: payData, error: payError } = await supabase
         .from('payments')
         .select('*')
@@ -335,17 +327,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
-          // Update DB every 5 minutes (300 seconds)
           if (tickCounter >= 300 && currentViewRecordIdRef.current) {
             tickCounter = 0;
-            const isComp = ytPlayerRef.current ? totalWatchedSecondsRef.current >= (ytPlayerRef.current.getDuration() - 20) : false;
             await supabase
               .from('recording_views')
-              .update({ 
-                watched_seconds: totalWatchedSecondsRef.current, 
-                last_watched_at: new Date().toISOString(),
-                is_completed: isComp
-              })
+              .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
               .eq('id', currentViewRecordIdRef.current);
           }
         }
@@ -362,25 +348,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       syncIntervalRef.current = null;
     }
     if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
-      const isComp = ytPlayerRef.current ? totalWatchedSecondsRef.current >= (ytPlayerRef.current.getDuration() - 20) : false;
       await supabase
         .from('recording_views')
-        .update({ 
-          watched_seconds: totalWatchedSecondsRef.current, 
-          last_watched_at: new Date().toISOString(),
-          is_completed: isComp
-        })
+        .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
         .eq('id', currentViewRecordIdRef.current);
+      
+      // FIXED TS ERROR: Added .select('*')
+      const { data: viewsData } = await supabase
+        .from('recording_views')
+        .select('*')
+        .eq('username', student.username);
         
-      // Update local state so thumbnails reflect immediately
-      setViewStats(prev => ({
-        ...prev,
-        [selectedVideo.id]: {
-          ...prev[selectedVideo.id],
-          watched_seconds: totalWatchedSecondsRef.current,
-          is_completed: isComp
-        }
-      }));
+      if (viewsData) {
+        const historyMap: Record<string, any> = {};
+        viewsData.forEach((view: any) => { historyMap[view.recording_id] = view; });
+        setWatchHistory(historyMap);
+      }
     }
   };
 
@@ -397,18 +380,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return vidId ? `https://img.youtube.com/vi/${vidId}/maxresdefault.jpg` : 'https://via.placeholder.com/640x360.png?text=Video+Recording';
   };
 
-  // Format Time to HH:MM:SS
   const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return "00:00:00";
+    if (!seconds || isNaN(seconds) || seconds < 0) return "00:00:00";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Custom Controls Action Controllers
-  const togglePlay = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+  const togglePlay = () => {
     if (!ytPlayerRef.current || !isCurrentVideoUnlocked) return;
     if (isPlaying) {
       ytPlayerRef.current.pauseVideo();
@@ -465,8 +445,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  const handleSpeedSelect = (speed: number, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleSpeedSelect = (speed: number) => {
     setPlaybackRate(speed);
     if (ytPlayerRef.current && ytPlayerRef.current.setPlaybackRate) {
       ytPlayerRef.current.setPlaybackRate(speed);
@@ -474,11 +453,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     setIsSettingsOpen(false);
   };
 
-  const handleQualitySelect = (quality: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  // FORCE QUALITY CHANGE FIX 
+  const handleQualitySelect = (quality: string) => {
     setCurrentQuality(quality);
-    if (ytPlayerRef.current && ytPlayerRef.current.setPlaybackQuality) {
-      ytPlayerRef.current.setPlaybackQuality(quality);
+    if (ytPlayerRef.current) {
+      const vidTime = ytPlayerRef.current.getCurrentTime();
+      const videoId = getYouTubeId(selectedVideo);
+      
+      // We force YouTube to reload the stream at the requested quality
+      if (quality !== 'auto' && quality !== 'default') {
+        ytPlayerRef.current.loadVideoById({ videoId: videoId, startSeconds: vidTime, suggestedQuality: quality });
+      } else {
+        ytPlayerRef.current.loadVideoById({ videoId: videoId, startSeconds: vidTime });
+      }
+      setIsPlaying(true);
     }
     setIsSettingsOpen(false);
   };
@@ -490,7 +478,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     }
   };
 
-  // Filter & Grouping Logical Block
   const filteredRecordings = recordings.filter((r: any) => {
     if (selectedFilter === 'current') {
         return r.year === currentYear && (
@@ -517,34 +504,53 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   };
   const nextVideo = getNextVideo();
 
-  // Custom CSS for Video Timeline Slider thumb
-  const sliderStyles = `
-    .custom-timeline::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #ef4444; /* Red Dot */
-      cursor: pointer;
-      box-shadow: 0 0 5px rgba(239, 68, 68, 0.8);
-    }
-    .custom-timeline::-moz-range-thumb {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #ef4444;
-      cursor: pointer;
-      border: none;
-      box-shadow: 0 0 5px rgba(239, 68, 68, 0.8);
-    }
-  `;
+  const sliderPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const playerLineStyle = {
+    background: `linear-gradient(to right, #64748b 0%, #64748b ${sliderPercentage}%, #3b82f6 ${sliderPercentage}%, #3b82f6 100%)`
+  };
 
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
-      <style>{sliderStyles}</style>
+      
+      <style>{`
+        @keyframes unwatched-glow {
+          0%, 100% { border-color: rgba(16, 185, 129, 0.6); box-shadow: 0 0 10px rgba(16, 185, 129, 0.2); }
+          50% { border-color: rgba(52, 211, 153, 1); box-shadow: 0 0 18px rgba(52, 211, 153, 0.5); }
+        }
+        .animate-unwatched {
+          animation: unwatched-glow 2.5s infinite ease-in-out;
+        }
+        @keyframes pulse-red-dot {
+          0%, 100% { transform: scale(1); opacity: 0.8; }
+          50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 8px #ef4444; }
+        }
+        .animate-dot-red {
+          animation: pulse-red-dot 1.5s infinite ease-in-out;
+        }
+        .custom-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: #ef4444 !important;
+          cursor: pointer;
+          border: 2px solid #ffffff;
+          transition: transform 0.1s;
+        }
+        .custom-slider::-moz-range-thumb {
+          width: 14px;
+          height: 14px;
+          border: 2px solid #ffffff;
+          border-radius: 50%;
+          background: #ef4444 !important;
+          cursor: pointer;
+        }
+        .custom-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.25);
+        }
+      `}</style>
 
-      {/* Header & Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div className="flex items-center gap-4">
           <button 
@@ -571,7 +577,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         </select>
       </div>
 
-      {/* Grid Dashboard */}
       {Object.keys(groupedRecordings).length === 0 ? (
         <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
       ) : (
@@ -582,31 +587,66 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
               {videos.map((video: any) => {
                 const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
                 
-                // Logic for Thumbnail Overlays & Animations
-                const vStat = viewStats[video.id];
-                const isUnwatched = !vStat || vStat.watched_seconds === 0;
-                const isCompleted = vStat?.is_completed || (video.duration && vStat?.watched_seconds >= video.duration - 10);
-                const isPartiallyWatched = vStat && vStat.watched_seconds > 0 && !isCompleted;
-                const progressPct = vStat && video.duration ? Math.min((vStat.watched_seconds / video.duration) * 100, 95) : 
-                                    (vStat ? Math.min((vStat.watched_seconds / 7200) * 100, 95) : 0); // fallback assumed 2hrs if no duration
+                const viewRecord = watchHistory[video.id];
+                const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
+                const videoTotalDuration = video.duration || video.duration_seconds || 0;
+                
+                let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
+                if (viewRecord && watchedSeconds > 10) {
+                  // 92% කට වඩා බලා ඇත්නම් 'completed' ලෙස සලකයි (එවිට ප්ලේ ලයින් එක පෙන්වන්නේ නැත)
+                  if (videoTotalDuration > 0 && watchedSeconds >= (videoTotalDuration * 0.92)) {
+                    watchState = 'completed';
+                  } else {
+                    watchState = 'partial';
+                  }
+                }
+
+                const thumbnailProgressPercent = videoTotalDuration > 0 ? (watchedSeconds / videoTotalDuration) * 100 : 50;
 
                 return (
                   <div 
                     key={video.id}
                     onClick={() => {
+                      if (!isUnlocked) return;
                       setSelectedVideo(video);
                       setIsReady(false);
                       setHasEnded(false);
                     }}
-                    className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 ${
-                      !isUnlocked ? 'border-red-900/40 opacity-75 hover:opacity-90' : 
-                      isUnwatched ? 'border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)] animate-pulse hover:border-green-400' :
-                      'border-slate-800 bg-slate-900 hover:border-blue-500'
+                    // Hover Effect (Translate Y & Shadow) එක මෙතැනින් එකතු කර ඇත
+                    className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 transform hover:-translate-y-2 hover:shadow-[0_10px_30px_rgba(0,0,0,0.5)] ${
+                      !isUnlocked 
+                        ? 'border-red-900/40 opacity-75' 
+                        : watchState === 'unwatched'
+                        ? 'border-emerald-500 animate-unwatched bg-slate-900'
+                        : 'border-slate-800 bg-slate-900 hover:border-blue-500'
                     }`}
                   >
-                    <div className="relative aspect-video bg-slate-950">
-                      <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
+                    <div className="relative aspect-video bg-slate-950 overflow-hidden">
+                      {/* Image Zoom Hover Effect */}
+                      <img 
+                        src={getVideoThumbnail(video)} 
+                        alt={video.title} 
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
+                      />
                       
+                      {isUnlocked && watchState === 'unwatched' && (
+                        <div className="absolute top-2 left-2 bg-emerald-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full shadow z-10 uppercase tracking-wider">
+                          NEW / UNWATCHED
+                        </div>
+                      )}
+
+                      {/* වීඩියෝව සම්පූර්ණයෙන්ම බලා ඇත්නම් මේ රතු ලයින් එක සඟවයි (Only 'partial' state) */}
+                      {isUnlocked && watchState === 'partial' && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
+                          <div 
+                            className="h-full bg-red-600 relative transition-all duration-300"
+                            style={{ width: `${thumbnailProgressPercent}%` }}
+                          >
+                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
+                          </div>
+                        </div>
+                      )}
+
                       {!isUnlocked ? (
                         <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
                           <Lock className="w-8 h-8 text-red-500 mb-1" />
@@ -614,23 +654,16 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         </div>
                       ) : (
                         <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="w-12 h-12 text-white" fill="currentColor" />
-                        </div>
-                      )}
-
-                      {/* Partially Watched Red Line Animation */}
-                      {isUnlocked && isPartiallyWatched && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80">
-                          <div 
-                            className="h-full bg-red-600 relative transition-all duration-500" 
-                            style={{ width: `${progressPct}%` }}
-                          >
-                            <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3 h-3 bg-red-600 rounded-full shadow-[0_0_8px_rgba(220,38,38,0.9)] animate-pulse"></div>
-                          </div>
+                          <Play className="w-12 h-12 text-white drop-shadow-xl" fill="currentColor" />
                         </div>
                       )}
                     </div>
-                    <div className="p-4 bg-slate-900"><h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3></div>
+                    <div className="p-4 bg-slate-900 z-10 relative">
+                      <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
+                      {isUnlocked && watchState === 'partial' && (
+                        <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -639,12 +672,11 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         ))
       )}
 
-      {/* Advanced Custom Player Layout Modal */}
       {selectedVideo && (
-        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-0 md:p-6 animate-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-2 md:p-6 animate-in zoom-in duration-200">
           
-          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-3 md:px-1 absolute top-4 md:relative z-50 bg-gradient-to-b from-black/80 to-transparent pb-4 md:bg-transparent md:pb-0">
-            <h3 className="text-slate-200 font-semibold text-base md:text-lg truncate max-w-[80%]">{selectedVideo.title}</h3>
+          <div className="w-full max-w-5xl flex justify-between items-center mb-3 px-1">
+            <h3 className="text-slate-200 font-semibold text-base truncate max-w-[80%]">{selectedVideo.title}</h3>
             <button 
               onClick={() => { 
                 stopWatchTimeTracking().catch(console.error); 
@@ -654,19 +686,18 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 setHasEnded(false);
                 if (screenfull.isEnabled && screenfull.isFullscreen) screenfull.exit(); 
               }}
-              className="bg-slate-900 text-slate-400 hover:text-white rounded-full w-10 h-10 flex items-center justify-center transition shadow-lg"
+              className="bg-slate-900 text-slate-400 hover:text-white rounded-full w-9 h-9 flex items-center justify-center transition"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
           </div>
 
-          <div id="custom-player-wrapper" className="w-full h-full md:h-auto max-w-5xl aspect-video bg-black md:rounded-xl overflow-hidden relative border-0 md:border md:border-slate-800 group shadow-2xl flex items-center justify-center">
+          <div id="custom-player-wrapper" className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 group shadow-2xl">
             
             {!isCurrentVideoUnlocked ? (
               <div className="absolute inset-0 bg-slate-950 z-40 flex flex-col items-center justify-center p-6 text-center select-none">
                 <Lock className="w-16 h-16 text-red-500 mb-4 animate-bounce" />
-                <h2 className="text-xl font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත</h2>
-                <p className="text-slate-300 max-w-md text-sm">ඔබ මෙම මඟහැරුණු පාඩමට අදාළ මාසය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර ගාස්තු ගෙවා නැරඹීමේ අවසරය ලබාගන්න.</p>
+                <h2 className="text-xl font-bold text-red-400 mb-2">වීඩියෝව අක්‍රීය කර ඇත (Player Disabled)</h2>
               </div>
             ) : (
               <>
@@ -711,114 +742,121 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                           }}
                           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg"
                         >
-                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න
+                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න (Replay)
                         </button>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Iframe Wrapper Container */}
-                <div className="w-full h-full md:scale-[1.03] z-0 pointer-events-none absolute inset-0 flex items-center justify-center bg-black">
+                {/* Blurry Fix: ඉවත් කරන ලද scale-[1.03] නිසා දැන් වීඩියෝව 100% ක් Clear වේ */}
+                <div className="w-full h-full pointer-events-none z-0">
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
 
-                {/* Touch Overlay for Center Play/Pause */}
-                <div className="absolute inset-0 z-10 cursor-pointer" onClick={togglePlay}></div>
+                <div 
+                  className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlay();
+                  }}
+                >
+                  {!isPlaying && isReady && !hasEnded && (
+                    <div className="bg-black/50 p-4 rounded-full text-white animate-pulse">
+                      <Play size={28} fill="white" />
+                    </div>
+                  )}
+                </div>
 
-                {/* Watermark */}
-                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-15 mix-blend-screen select-none">
+                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-10 mix-blend-screen select-none">
                   <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
                 </div>
 
-                {/* PREMIUM CUSTOM MEDIA CONTROLS BAR */}
-                <div 
-                  className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-16 pb-4 px-4 z-20 transition-opacity duration-300 ${!isPlaying ? 'opacity-100' : 'opacity-0 md:group-hover:opacity-100'}`}
-                  onClick={(e) => e.stopPropagation()} // Prevent triggering center touch
-                >
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                   
-                  {/* Dynamic Interactive Timeline */}
-                  <div className="w-full relative flex items-center mb-4 group/timeline z-30">
+                  <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
                     <input 
                       type="range"
                       min={0}
                       max={duration || 100}
                       value={currentTime}
                       onChange={handleScrubChange}
-                      className="w-full h-1.5 rounded-lg appearance-none cursor-pointer custom-timeline md:group-hover/timeline:h-2 transition-all outline-none"
-                      style={{
-                        background: `linear-gradient(to right, #9ca3af ${(duration > 0 ? (currentTime / duration) * 100 : 0)}%, #3b82f6 ${(duration > 0 ? (currentTime / duration) * 100 : 0)}%)`
-                      }}
+                      style={playerLineStyle}
+                      className="custom-slider w-full h-1 rounded-lg appearance-none cursor-pointer group-hover/timeline:h-1.5 transition-all outline-none"
                     />
                   </div>
 
                   <div className="flex items-center justify-between relative z-30">
-                    <div className="flex items-center gap-3 md:gap-5">
+                    <div className="flex items-center gap-4">
                       <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
-                        {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+                        {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
                       </button>
 
-                      <div className="flex items-center gap-3 md:gap-4">
-                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={20} /></button>
-                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={20} /></button>
+                      <div className="flex items-center gap-2.5">
+                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
+                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
                       </div>
 
-                      <div className="hidden md:flex items-center gap-2 group/vol">
+                      <div className="flex items-center gap-2 group/vol">
                         <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
-                          {isMuted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                          {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
                         </button>
                         <input 
                           type="range" min="0" max="100" value={isMuted ? 0 : volume} 
                           onChange={handleVolumeChange}
-                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1.5 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
+                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
                         />
                       </div>
 
-                      {/* Formatting Time as HH:MM:SS */}
-                      <span className="text-slate-300 text-xs md:text-sm font-mono select-none">
+                      <span className="text-slate-300 text-xs font-mono select-none">
                         {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-4">
-                      {/* Nested Settings with Mobile fix */}
                       <div className="relative" ref={settingsRef}>
                         <button 
                           onClick={(e) => { 
-                            e.stopPropagation();
+                            e.stopPropagation(); 
                             setIsSettingsOpen(!isSettingsOpen); 
                             setSettingsMenuMode('main'); 
                           }}
-                          className={`transition p-1.5 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
+                          onTouchEnd={(e) => {
+                            e.stopPropagation();
+                            setIsSettingsOpen(!isSettingsOpen);
+                            setSettingsMenuMode('main');
+                          }}
+                          className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
                         >
-                          <Settings size={20} className={isSettingsOpen ? 'animate-spin-slow' : ''} />
+                          <Settings size={18} />
                         </button>
 
                         {isSettingsOpen && (
                           <div 
-                            className="absolute bottom-10 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-52 text-sm select-none animate-in fade-in slide-in-from-bottom-2 duration-200 z-50"
-                            onClick={(e) => e.stopPropagation()} // Stop bubbling
+                            onClick={(e) => e.stopPropagation()} 
+                            onTouchEnd={(e) => e.stopPropagation()}
+                            className="absolute bottom-8 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200"
                           >
                             {settingsMenuMode === 'main' && (
-                              <div className="flex flex-col gap-1">
-                                <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('speed'); }} className="flex items-center justify-between p-2.5 hover:bg-slate-900 rounded-lg text-left transition">
+                              <div className="flex flex-col gap-0.5">
+                                <button onClick={() => setSettingsMenuMode('speed')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
                                   <span>වේගය (Speed)</span>
-                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={16} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={14} /></span>
                                 </button>
-                                <button onClick={(e) => { e.stopPropagation(); setSettingsMenuMode('quality'); }} className="flex items-center justify-between p-2.5 hover:bg-slate-900 rounded-lg text-left transition">
+                                <button onClick={() => setSettingsMenuMode('quality')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
                                   <span>තත්ත්වය (Quality)</span>
-                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={16} /></span>
+                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={14} /></span>
                                 </button>
                               </div>
                             )}
 
                             {settingsMenuMode === 'speed' && (
-                              <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
-                                <div className="p-2 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
+                              <div className="flex flex-col gap-0.5">
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
                                 {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
                                   <button 
-                                    key={speed} onClick={(e) => handleSpeedSelect(speed, e)}
-                                    className={`p-2.5 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                    key={speed} onClick={() => handleSpeedSelect(speed)}
+                                    className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
                                   >
                                     {speed === 1 ? 'Normal' : `${speed}x`}
                                   </button>
@@ -827,24 +865,24 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                             )}
 
                             {settingsMenuMode === 'quality' && (
-                              <div className="flex flex-col gap-1 max-h-60 overflow-y-auto">
-                                <div className="p-2 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
+                              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
+                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
                                 {availableQualities.length === 0 ? (
                                   ['highres', 'hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
                                     <button 
-                                      key={q} onClick={(e) => handleQualitySelect(q, e)}
-                                      className={`p-2.5 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                      key={q} onClick={() => handleQualitySelect(q)}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
                                     >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? '1080p (Max)' : q.replace('hd', '')}
                                     </button>
                                   ))
                                 ) : (
                                   availableQualities.map((q) => (
                                     <button 
-                                      key={q} onClick={(e) => handleQualitySelect(q, e)}
-                                      className={`p-2.5 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
+                                      key={q} onClick={() => handleQualitySelect(q)}
+                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
                                     >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
+                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? '1080p (Max)' : q.replace('hd', '')}
                                     </button>
                                   ))
                                 )}
@@ -854,18 +892,20 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         )}
                       </div>
 
-                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition p-1">
-                        <Maximize size={20} />
+                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
+                        <Maximize size={18} />
                       </button>
                     </div>
                   </div>
-                </div>
 
+                </div>
               </>
             )}
+
           </div>
         </div>
       )}
+
     </div>
   );
 }
