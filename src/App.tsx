@@ -40,7 +40,7 @@ import ResetPassword from './components/ResetPassword';
 import StudentDashboard from './components/StudentDashboard';
 import AdminRecordingsManager from './components/AdminRecordingsManager';
 import AdminGlobalConfig from "./components/AdminGlobalConfig";
-
+import AdminLiveControls from './components/AdminLiveControls';
 export default function App() {
 
 // බ්‍රව්සර් එකේ ලින්ක් එක '/reset-password' නම් කෙලින්ම මේ පිටුව පෙන්වන්න
@@ -1973,101 +1973,9 @@ if (isLoading) {
   </div>
 )}
 
+                  {/* අලුත් AdminLiveControls ෆයිල් එක භාවිතා කිරීම */}
                   {activeAdminTab === 'live_classes' && (
-                    <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                      <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                        <Video size={16} className="text-red-400" /> Manage Scheduled Live Classes (YouTube)
-                      </h3>
-
-                      <form onSubmit={handleAddLive} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-slate-900/40 p-4 border border-slate-700/50 rounded-xl">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Class Type (Subject/Batch)</label>
-                          <input 
-                            type="text" 
-                            required
-                            placeholder="e.g. 2026 Theory"
-                            value={liveClassType}
-                            onChange={(e) => setLiveClassType(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-red-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Date & Time (Auto-play trigger)</label>
-                          <input 
-                            type="datetime-local" 
-                            required
-                            value={liveScheduleDate}
-                            onChange={(e) => setLiveScheduleDate(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-red-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">YouTube Unlisted URL</label>
-                          <input 
-                            type="text" 
-                            required
-                            placeholder="https://youtu.be/..."
-                            value={liveUrl}
-                            onChange={(e) => setLiveUrl(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-red-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Lesson Title</label>
-                          <div className="flex gap-2">
-                            <input 
-                              type="text" 
-                              required
-                              placeholder="e.g. Mechanics Week 04"
-                              value={liveTitle}
-                              onChange={(e) => setLiveTitle(e.target.value)}
-                              className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-red-500"
-                            />
-                            <button 
-                              type="submit"
-                              className="bg-red-600 hover:bg-red-500 text-white font-bold px-4 py-1.5 rounded text-xs transition shadow-md cursor-pointer whitespace-nowrap"
-                            >
-                              Add Live
-                            </button>
-                          </div>
-                        </div>
-                      </form>
-
-                      {/* Display scheduled lives */}
-                      <div className="mt-6">
-                         <h4 className="font-bold text-sm text-slate-300 mb-3">Live Broadcast Schedule</h4>
-                         <div className="max-h-[300px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 space-y-2">
-                           {scheduledLives.map((sl, idx) => (
-                             <div key={idx} className="flex flex-col md:flex-row justify-between md:items-center bg-slate-900 border border-slate-800 p-3 rounded-xl gap-2">
-                               <div>
-                                 <strong className="text-white text-xs font-mono">{sl.target_classes?.[0]}</strong>
-                                 <span className="text-slate-400 text-xs ml-2 font-semibold">- {sl.title}</span>
-                                 <div className="text-[10px] text-slate-500 mt-0.5">Scheduled info: {sl.date} • {sl.time}</div>
-                               </div>
-                               <div className="flex items-center gap-3">
-                                 <div className="text-xs text-red-400 font-mono truncate max-w-[200px]">{sl.link}</div>
-                                 <button
-                                   onClick={async () => {
-                                      if(confirm('මෙම සක්‍රීය සැලසුම පවතින ලැයිස්තුවෙන් ඉවත් කිරීමට අවශ්‍යද?')) {
-                                        await supabase.from('scheduled_lives').delete().eq('id', sl.id);
-                                      }
-                                   }}
-                                   className="text-[10px] text-red-500 hover:text-red-400 underline cursor-pointer"
-                                 >
-                                   Delete
-                                 </button>
-                               </div>
-                             </div>
-                           ))}
-                           {scheduledLives.length === 0 && (
-                             <p className="text-[11px] text-slate-500 text-center py-4">No scheduled live broadcasts yet.</p>
-                           )}
-                         </div>
-                      </div>
-
-                      <AdminAttentionLogs scheduledLives={scheduledLives} />
-
-                    </div>
+                    <AdminLiveControls />
                   )}
 
                   {/* අලුතින් සම්බන්ධ කළ නවීන Recordings Manager කොටස */}
