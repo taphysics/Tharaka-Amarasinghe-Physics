@@ -23,7 +23,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [isPlaying, setIsPlaying] = useState(false);
   const [isReady, setIsReady] = useState(false); 
   const [hasEnded, setHasEnded] = useState(false);
-  const [showControls, setShowControls] = useState(true); // For Mobile Support
+  const [showControls, setShowControls] = useState(true); 
   
   // Custom Controls State
   const [currentTime, setCurrentTime] = useState(0);
@@ -104,7 +104,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return () => clearInterval(interval);
   }, [isPlaying, isReady, hasEnded]);
 
-  // Handle Mobile / Desktop Controls auto-hide
   const resetControlsTimeout = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -159,7 +158,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
             setIsPlaying(true);
             setHasEnded(false);
             
-            // Forcing 1080p quality via loadVideoById Workaround
             event.target.loadVideoById({
               videoId: selectedYtId,
               suggestedQuality: 'hd1080'
@@ -313,23 +311,32 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const startWatchTimeTracking = async () => {
     if (!selectedVideo || !student) return;
-    stopWatchTimeTracking().catch(console.error);
+    
+    if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+    }
 
     try {
       const { data } = await supabase
         .from('recording_views')
-        .select('id, watched_seconds, views')
+        .select('id, watched_seconds')
         .eq('recording_id', selectedVideo.id)
         .eq('username', student.username)
         .maybeSingle();
 
       if (data) {
         currentViewRecordIdRef.current = data.id;
-        totalWatchedSecondsRef.current = data.watched_seconds;
+        totalWatchedSecondsRef.current = data.watched_seconds || 1;
       } else {
         const { data: newRec } = await supabase
           .from('recording_views')
-          .insert({ recording_id: selectedVideo.id, username: student.username, watched_seconds: 1, views: 1 })
+          .insert({ 
+              recording_id: selectedVideo.id, 
+              username: student.username, 
+              watched_seconds: 1,
+              last_watched_at: new Date().toISOString()
+          })
           .select('id')
           .single();
 
@@ -345,11 +352,15 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           totalWatchedSecondsRef.current += 1;
           tickCounter += 1;
 
-          if (tickCounter >= 300 && currentViewRecordIdRef.current) {
+          // තත්පර 15කට වරක් දත්ත යාවත්කාලීන කරයි (කලින් තිබුනේ විනාඩි 5)
+          if (tickCounter >= 15 && currentViewRecordIdRef.current) {
             tickCounter = 0;
             await supabase
               .from('recording_views')
-              .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
+              .update({ 
+                  watched_seconds: totalWatchedSecondsRef.current, 
+                  last_watched_at: new Date().toISOString() 
+              })
               .eq('id', currentViewRecordIdRef.current);
           }
         }
@@ -365,22 +376,26 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = null;
     }
-    if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0) {
+    
+    if (currentViewRecordIdRef.current && totalWatchedSecondsRef.current > 0 && selectedVideo) {
+      // ඩේටාබේස් එක අප්ඩේට් කිරීම
       await supabase
         .from('recording_views')
-        .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
+        .update({ 
+            watched_seconds: totalWatchedSecondsRef.current, 
+            last_watched_at: new Date().toISOString() 
+        })
         .eq('id', currentViewRecordIdRef.current);
       
-      const { data: viewsData } = await supabase
-        .from('recording_views')
-        .select('*')
-        .eq('username', student.username);
-        
-      if (viewsData) {
-        const historyMap: Record<string, any> = {};
-        viewsData.forEach((view: any) => { historyMap[view.recording_id] = view; });
-        setWatchHistory(historyMap);
-      }
+      // UI එක ක්ෂණිකව අප්ඩේට් කිරීම (Full fetch එකක් වෙනුවට)
+      setWatchHistory(prev => ({
+        ...prev,
+        [selectedVideo.id]: {
+            ...prev[selectedVideo.id],
+            recording_id: selectedVideo.id,
+            watched_seconds: totalWatchedSecondsRef.current
+        }
+      }));
     }
   };
 
@@ -477,7 +492,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     resetControlsTimeout();
   };
 
-  // 1080p Workaround function implemented here as well
   const handleQualitySelect = (quality: string) => {
     setCurrentQuality(quality);
     if (ytPlayerRef.current && ytPlayerRef.current.loadVideoById) {
@@ -617,20 +631,29 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       setHasEnded(false);
                       setShowControls(true);
                       
-                      // ක්ලික් කල සැනින් Unwatched ඇනිමේෂන් එක ඉවත් කිරීම
+                      // ක්ලික් කල සැනින් ඩේටාබේස් එකට ඇතුලත් කර Unwatched තත්වය ඉවත් කිරීම
                       if (!viewRecord || watchedSeconds < 1) {
-                         // Optimistic Update (Local UI)
+                         
                          setWatchHistory(prev => ({
                            ...prev,
                            [video.id]: { recording_id: video.id, watched_seconds: 1 }
                          }));
-                         // Insert immediately to Supabase
-                         await supabase.from('recording_views').insert({
-                            recording_id: video.id,
-                            username: student.username,
-                            watched_seconds: 1,
-                            views: 1
-                         });
+                         
+                         const { data: existingData } = await supabase
+                           .from('recording_views')
+                           .select('id')
+                           .eq('recording_id', video.id)
+                           .eq('username', student.username)
+                           .maybeSingle();
+
+                         if (!existingData) {
+                           await supabase.from('recording_views').insert({
+                              recording_id: video.id,
+                              username: student.username,
+                              watched_seconds: 1,
+                              last_watched_at: new Date().toISOString()
+                           });
+                         }
                       }
                     }}
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
@@ -709,7 +732,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
           <div 
             id="custom-player-wrapper" 
-            className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 shadow-2xl"
+            className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 shadow-2xl group"
             onMouseMove={resetControlsTimeout}
             onClick={resetControlsTimeout}
             onTouchStart={resetControlsTimeout}
@@ -751,161 +774,77 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         <h4 className="text-white text-sm font-medium line-clamp-1 mb-3">{nextVideo.title}</h4>
                       </div>
                     ) : (
-                      <div className="flex flex-col items-center">
-                        <p className="text-slate-400 text-sm mb-4">මෙම කොටස සඳහා නැරඹීමට තවත් ඉදිරි වීඩියෝ නොමැත.</p>
+                      <div className="text-center">
+                        <p className="text-emerald-400 font-bold mb-4">ඔබ මෙම පන්තියේ සියලුම වීඩියෝ නරඹා අවසන්ය.</p>
                         <button 
-                          onClick={() => {
-                            if (ytPlayerRef.current) {
-                              ytPlayerRef.current.seekTo(0);
-                              ytPlayerRef.current.playVideo();
-                              setHasEnded(false);
-                              setIsPlaying(true);
-                            }
-                          }}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl font-medium transition shadow-lg"
+                          onClick={() => { 
+                            setSelectedVideo(null); setIsPlaying(false); setHasEnded(false); 
+                            if (screenfull.isEnabled && screenfull.isFullscreen) screenfull.exit();
+                          }} 
+                          className="bg-slate-800 text-white px-6 py-2 rounded-lg hover:bg-slate-700 transition"
                         >
-                          <RotateCcw size={16} /> නැවත මුල සිට බලන්න (Replay)
+                          ප්‍රධාන මෙනුවට යන්න
                         </button>
                       </div>
                     )}
                   </div>
                 )}
+                
+                <div id="youtube-player-container" className="w-full h-full pointer-events-none"></div>
 
-                <div className="w-full h-full pointer-events-none z-0">
-                  <div id="youtube-player-container" className="w-full h-full"></div>
-                </div>
-
-                <div className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
-                  {!isPlaying && isReady && !hasEnded && showControls && (
-                    <div className="bg-black/50 p-4 rounded-full text-white animate-pulse"><Play size={28} fill="white" /></div>
-                  )}
-                </div>
-
-                <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-[0.03] select-none">
-                  <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
-                </div>
-
-                {/* Mobile & Desktop Supported Controls Bar */}
-                <div 
-                  className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent pt-14 pb-3 px-4 z-20 transition-opacity duration-300 ${
-                    showControls ? 'opacity-100 visible' : 'opacity-0 invisible'
-                  }`}
-                  onClick={(e) => e.stopPropagation()}
-                  onTouchStart={(e) => e.stopPropagation()}
-                >
-                  
-                  <div className="w-full relative flex items-center mb-3.5 group/timeline z-30">
+                {/* Overlays / Controls */}
+                {showControls && !hasEnded && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-4 flex flex-col gap-2 z-40 transition-opacity duration-300">
                     <input 
-                      type="range" min={0} max={duration || 100} value={currentTime} onChange={handleScrubChange} style={playerLineStyle}
-                      className="custom-slider w-full h-1 rounded-lg appearance-none cursor-pointer group-hover/timeline:h-1.5 transition-all outline-none"
+                      type="range" min="0" max={duration || 100} value={currentTime} onChange={handleScrubChange}
+                      className="w-full h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer custom-slider"
+                      style={playerLineStyle}
                     />
-                  </div>
-
-                  <div className="flex items-center justify-between relative z-30">
-                    <div className="flex items-center gap-4">
-                      <button onClick={togglePlay} className="text-white hover:text-blue-400 transition transform active:scale-95">
-                        {isPlaying ? <Pause size={22} fill="currentColor" /> : <Play size={22} fill="currentColor" />}
-                      </button>
-
-                      <div className="flex items-center gap-2.5">
-                        <button onClick={seekBackward} className="text-slate-300 hover:text-white transition"><Rewind size={18} /></button>
-                        <button onClick={seekForward} className="text-slate-300 hover:text-white transition"><FastForward size={18} /></button>
-                      </div>
-
-                      <div className="hidden md:flex items-center gap-2 group/vol">
-                        <button onClick={toggleMute} className="text-slate-300 hover:text-white transition">
-                          {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                        </button>
-                        <input 
-                          type="range" min="0" max="100" value={isMuted ? 0 : volume} onChange={handleVolumeChange}
-                          className="w-0 opacity-0 group-hover/vol:w-16 group-hover/vol:opacity-100 transition-all duration-300 h-1 bg-slate-600 appearance-none rounded accent-blue-500 cursor-pointer"
-                        />
-                      </div>
-
-                      <span className="text-slate-300 text-xs font-mono select-none">
-                        {formatTime(currentTime)} <span className="text-slate-600">/</span> {formatTime(duration)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="relative" ref={settingsRef}>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); setIsSettingsOpen(!isSettingsOpen); setSettingsMenuMode('main'); resetControlsTimeout(); }}
-                          className={`transition p-1 rounded-lg ${isSettingsOpen ? 'text-blue-400 bg-slate-900' : 'text-slate-300 hover:text-white'}`}
-                        >
-                          <Settings size={18} />
-                        </button>
-
-                        {isSettingsOpen && (
-                          <div onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}
-                            className="absolute bottom-10 right-0 bg-slate-950 border border-slate-800 text-white rounded-xl shadow-2xl p-2 w-48 text-xs select-none animate-in fade-in slide-in-from-bottom-2 duration-200"
-                          >
-                            {settingsMenuMode === 'main' && (
-                              <div className="flex flex-col gap-0.5">
-                                <button onClick={() => setSettingsMenuMode('speed')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
-                                  <span>වේගය (Speed)</span>
-                                  <span className="text-blue-400 font-bold flex items-center">{playbackRate}x <ChevronRight size={14} /></span>
-                                </button>
-                                <button onClick={() => setSettingsMenuMode('quality')} className="flex items-center justify-between p-2 hover:bg-slate-900 rounded-lg text-left transition">
-                                  <span>තත්ත්වය (Quality)</span>
-                                  <span className="text-blue-400 font-bold flex items-center capitalize">{currentQuality.replace('hd', '')} <ChevronRight size={14} /></span>
-                                </button>
-                              </div>
-                            )}
-
-                            {settingsMenuMode === 'speed' && (
-                              <div className="flex flex-col gap-0.5">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Speed</div>
-                                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
-                                  <button key={speed} onClick={() => handleSpeedSelect(speed)}
-                                    className={`p-2 rounded-lg text-left transition ${playbackRate === speed ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                  >
-                                    {speed === 1 ? 'Normal' : `${speed}x`}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            {settingsMenuMode === 'quality' && (
-                              <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto">
-                                <div className="p-1.5 font-bold text-slate-500 border-b border-slate-900 mb-1">Select Quality</div>
-                                {availableQualities.length === 0 ? (
-                                  ['highres', 'hd1080', 'hd720', 'large', 'medium', 'small', 'default'].map((q) => (
-                                    <button key={q} onClick={() => handleQualitySelect(q)}
-                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                    >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
-                                    </button>
-                                  ))
-                                ) : (
-                                  availableQualities.map((q) => (
-                                    <button key={q} onClick={() => handleQualitySelect(q)}
-                                      className={`p-2 rounded-lg text-left transition capitalize ${currentQuality === q ? 'bg-blue-600 font-bold text-white' : 'hover:bg-slate-900 text-slate-300'}`}
-                                    >
-                                      {q === 'large' ? '480p' : q === 'medium' ? '360p' : q === 'default' ? 'Auto' : q === 'highres' ? 'Max (Original)' : q.replace('hd', '')}
-                                    </button>
-                                  ))
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <button onClick={toggleFullscreen} className="text-slate-300 hover:text-white transition">
-                        <Maximize size={18} />
-                      </button>
+                    <div className="flex items-center justify-between text-white mt-2">
+                       <div className="flex items-center gap-4">
+                         <button onClick={togglePlay} className="hover:text-blue-400 transition">
+                           {isPlaying ? <Pause size={20}/> : <Play size={20}/>}
+                         </button>
+                         <button onClick={seekBackward} className="hover:text-blue-400 transition"><Rewind size={20}/></button>
+                         <button onClick={seekForward} className="hover:text-blue-400 transition"><FastForward size={20}/></button>
+                         <div className="flex items-center gap-2 group/vol relative">
+                           <button onClick={toggleMute} className="hover:text-blue-400 transition">
+                             {isMuted || volume === 0 ? <VolumeX size={20}/> : <Volume2 size={20}/>}
+                           </button>
+                           <input 
+                             type="range" min="0" max="100" value={isMuted ? 0 : volume} onChange={handleVolumeChange} 
+                             className="w-0 group-hover/vol:w-20 transition-all duration-300 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer hidden md:block" 
+                           />
+                         </div>
+                         <span className="text-xs font-mono ml-2 opacity-80">{formatTime(currentTime)} / {formatTime(duration)}</span>
+                       </div>
+                       <div className="flex items-center gap-4 relative" ref={settingsRef}>
+                         <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="hover:text-blue-400 transition"><Settings size={20}/></button>
+                         <button onClick={toggleFullscreen} className="hover:text-blue-400 transition"><Maximize size={20}/></button>
+                         
+                         {isSettingsOpen && (
+                            <div className="absolute bottom-10 right-0 bg-slate-900 border border-slate-700 rounded-lg p-2 flex flex-col gap-2 min-w-[150px] shadow-2xl">
+                               <span className="text-xs text-slate-400 font-bold mb-1 border-b border-slate-700 pb-1 px-1">Playback Speed</span>
+                               {[0.5, 0.75, 1, 1.25, 1.5, 2].map(speed => (
+                                 <button 
+                                   key={speed} 
+                                   onClick={() => handleSpeedSelect(speed)} 
+                                   className={`text-sm text-left px-2 py-1.5 hover:bg-slate-800 rounded transition ${playbackRate === speed ? 'text-blue-400 font-bold' : 'text-white'}`}
+                                 >
+                                   {speed === 1 ? 'Normal' : `${speed}x`}
+                                 </button>
+                               ))}
+                            </div>
+                         )}
+                       </div>
                     </div>
                   </div>
-
-                </div>
+                )}
               </>
             )}
-
           </div>
         </div>
       )}
-
     </div>
   );
 }
