@@ -1974,9 +1974,11 @@ if (isLoading) {
 )}
 
                   {/* අලුත් AdminLiveControls ෆයිල් එක භාවිතා කිරීම */}
-                  {activeAdminTab === 'live_classes' && (
-                    <AdminLiveControls />
-                  )}
+{activeAdminTab === 'live_classes' && (
+  <div className="col-span-12 w-full">
+    <AdminLiveControls />
+  </div>
+)}
 
                   {/* අලුතින් සම්බන්ධ කළ නවීන Recordings Manager කොටස */}
                   {activeAdminTab === 'resources' && (

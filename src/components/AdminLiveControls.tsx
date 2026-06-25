@@ -135,7 +135,7 @@ export default function AdminLiveControls() {
   };
 
   return (
-    <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
+    <div className="w-full bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
       
       {/* Header Panel */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
