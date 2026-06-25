@@ -593,108 +593,111 @@ const startWatchTimeTracking = async () => {
       </div>
 
       {/* Grid Dashboard */}
-      {Object.keys(groupedRecordings).length === 0 ? (
-        <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
-      ) : (
-        Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
-          <div key={classType} className="mb-10">
-            <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {videos.map((video: any) => {
-                const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
+{Object.keys(groupedRecordings).length === 0 ? (
+  <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
+) : (
+  Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
+    <div key={classType} className="mb-10">
+      <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {videos.map((video: any) => {
+          const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
+          
+          const viewRecord = watchHistory[video.id];
+          const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
+          const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
+          
+          let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
+          if (viewRecord && watchedSeconds > 0) {
+            if (watchedSeconds >= (videoTotalDuration * 0.90)) {
+              watchState = 'completed';
+            } else {
+              watchState = 'partial';
+            }
+          }
+
+          const thumbnailProgressPercent = videoTotalDuration > 0 ? Math.min((watchedSeconds / videoTotalDuration) * 100, 100) : 0;
+
+          return (
+            <div 
+              key={video.id}
+              onClick={async () => {
+                if (!isUnlocked) return;
+                setSelectedVideo(video);
+                setIsReady(false);
+                setHasEnded(false);
+                setShowControls(true);
                 
-                const viewRecord = watchHistory[video.id];
-                const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
-                const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
-                
-                let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
-                if (viewRecord && watchedSeconds > 0) {
-                  if (watchedSeconds >= (videoTotalDuration * 0.90)) {
-                    watchState = 'completed';
-                  } else {
-                    watchState = 'partial';
-                  }
+                if (!watchHistory[video.id]) {
+                   setWatchHistory(prev => ({
+                     ...prev,
+                     [video.id]: { recording_id: video.id, watched_seconds: 0 }
+                   }));
+                   await supabase.from('recording_views').insert({
+                      recording_id: video.id,
+                      username: student.username,
+                      watched_seconds: 1,
+                      views: 1
+                   });
                 }
+              }}
+              className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
+                !isUnlocked 
+                  ? 'border-red-900/40 opacity-75' 
+                  : watchState === 'unwatched'
+                  ? 'border-emerald-500 animate-unwatched bg-slate-900'
+                  : 'border-slate-800 bg-slate-900 hover:border-blue-500'
+              }`}
+            >
+              <div className="relative aspect-video bg-slate-950">
+                <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
+                
+                {/* NEW / UNWATCHED Badge */}
+                {isUnlocked && watchState === 'unwatched' && (
+                  <div className="absolute top-2 left-2 bg-emerald-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full shadow z-10 uppercase tracking-wider">
+                    NEW / UNWATCHED
+                  </div>
+                )}
 
-                const thumbnailProgressPercent = videoTotalDuration > 0 ? Math.min((watchedSeconds / videoTotalDuration) * 100, 100) : 0;
-
-                return (
-                  <div 
-                    key={video.id}
-                    onClick={async () => {
-                      if (!isUnlocked) return;
-                      setSelectedVideo(video);
-                      setIsReady(false);
-                      setHasEnded(false);
-                      setShowControls(true);
-                      
-                      // වීඩියෝවක් නරඹා නැතිනම් ක්ලික් කළ වහාම දත්ත පාදකයට එක් කිරීම
-  if (!watchHistory[video.id]) {
-     setWatchHistory(prev => ({
-       ...prev,
-       [video.id]: { recording_id: video.id, watched_seconds: 0 }
-     }));
-                         // Insert immediately to Supabase
-                         await supabase.from('recording_views').insert({
-                            recording_id: video.id,
-                            username: student.username,
-                            watched_seconds: 1,
-                            views: 1
-                         });
-                      }
-                    }}
-                    className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
-                      !isUnlocked 
-                        ? 'border-red-900/40 opacity-75' 
-                        : watchState === 'unwatched'
-                        ? 'border-emerald-500 animate-unwatched bg-slate-900'
-                        : 'border-slate-800 bg-slate-900 hover:border-blue-500'
-                    }`}
-                  >
-                    <div className="relative aspect-video bg-slate-950">
-                      <img src={getVideoThumbnail(video)} alt={video.title} className="w-full h-full object-cover" />
-                      
-                      {isUnlocked && watchState === 'unwatched' && (
-                        <div className="absolute top-2 left-2 bg-emerald-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full shadow z-10 uppercase tracking-wider">
-                          NEW / UNWATCHED
-                        </div>
-                      )}
-
-                      {isUnlocked && watchState === 'partial' && (
-                        <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
-                          <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
-                            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
-                          </div>
-                        </div>
-                      )}
-
-                      {!isUnlocked ? (
-                        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
-                          <Lock className="w-8 h-8 text-red-500 mb-1" />
-                          <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
-                        </div>
-                      ) : (
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="w-12 h-12 text-white" fill="currentColor" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="p-4 bg-slate-900">
-                      <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
-                      {isUnlocked && watchState === 'partial' && (
-                        <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
-                      )}
-                      {isUnlocked && watchState === 'completed' && (
-                        <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත</p>
-                      )}
+                {/* Progress Bar (Only visible if state is 'partial') */}
+                {isUnlocked && watchState === 'partial' && (
+                  <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
+                    <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-red-500 rounded-full border border-white animate-dot-red" />
                     </div>
                   </div>
-                );
-              })}
+                )}
+
+                {!isUnlocked ? (
+                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
+                    <Lock className="w-8 h-8 text-red-500 mb-1" />
+                    <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
+                  </div>
+                ) : (
+                  <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Play className="w-12 h-12 text-white" fill="currentColor" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="p-4 bg-slate-900">
+                <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
+                
+                {/* Status Text based on Watch State */}
+                {isUnlocked && watchState === 'partial' && (
+                  <p className="text-red-400 font-semibold text-[11px] mt-1">බාගෙට නරඹා ඇත (Partially Watched)</p>
+                )}
+                {isUnlocked && watchState === 'completed' && (
+                  <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත</p>
+                )}
+              </div>
             </div>
-          </div>
-        ))
-      )}
+          );
+        })}
+      </div>
+    </div>
+  ))
+)}
 
       {/* Custom Player Window */}
       {selectedVideo && (
