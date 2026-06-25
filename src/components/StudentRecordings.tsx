@@ -34,7 +34,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   // Settings Dropdown Menu State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsMenuMode, setSettingsMenuMode] = useState<'main' | 'speed' | 'quality'>('main');
-  const [currentQuality, setCurrentQuality] = useState('hd1080'); // Default to 1080p
+  const [currentQuality, setCurrentQuality] = useState('hd1080'); // Force 1080p state
   const [availableQualities, setAvailableQualities] = useState<string[]>([]);
 
   // Realtime Watch Tracking Refs
@@ -48,7 +48,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
-  // Load YouTube Iframe API
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -106,6 +105,9 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     ? paymentStatuses[`${selectedVideo.class_type}-${selectedVideo.year}-${selectedVideo.month}`] || false
     : false;
 
+  // ==========================================
+  // YOUTUBE PLAYER INITIALIZATION (FIXED 1080P)
+  // ==========================================
   useEffect(() => {
     const selectedYtId = selectedVideo ? getYouTubeId(selectedVideo) : null;
     if (!selectedVideo || !selectedYtId || !isCurrentVideoUnlocked) return;
@@ -116,7 +118,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       player = new (window as any).YT.Player('youtube-player-container', {
         height: '100%',
         width: '100%',
-        videoId: selectedYtId,
+        // Do not set videoId here. We will use loadVideoById to force 1080p
         playerVars: {
           autoplay: 1,
           controls: 0, 
@@ -128,42 +130,38 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           iv_load_policy: 3,
           showinfo: 0,
           playsinline: 1,
-          origin: window.location.origin
+          origin: window.location.origin,
+          vq: 'hd1080' // Legacy parameter for fallback
         },
         events: {
           onReady: (event: any) => {
             setIsReady(true);
             setIsPlaying(true);
             setHasEnded(false);
-            setDuration(player.getDuration());
-            player.setVolume(volume);
-            player.playVideo();
             
-            // Forcefully Request 1080p/Original Quality
-            if (player.setPlaybackQuality) {
-              player.setPlaybackQuality('hd1080'); // Try forcing 1080p
-            }
-            if (player.getAvailableQualityLevels) {
-              const qualities = player.getAvailableQualityLevels();
-              setAvailableQualities(qualities);
-              // Ensure HD is selected if available
-              if (qualities.includes('hd1080')) {
-                setCurrentQuality('hd1080');
-              } else if (qualities.length > 0 && qualities[0] !== 'auto') {
-                setCurrentQuality(qualities[0]);
-                player.setPlaybackQuality(qualities[0]);
-              }
-            }
+            // SUPER FIX: Force load the video via loadVideoById with suggestedQuality
+            event.target.loadVideoById({
+                videoId: selectedYtId,
+                suggestedQuality: 'hd1080'
+            });
+
+            event.target.setVolume(volume);
+
+            setTimeout(() => {
+                if (event.target.getAvailableQualityLevels) {
+                    const qualities = event.target.getAvailableQualityLevels();
+                    setAvailableQualities(qualities);
+                    if (qualities.includes('hd1080')) setCurrentQuality('hd1080');
+                    else if (qualities.length > 0) setCurrentQuality(qualities[0]);
+                }
+            }, 1000);
           },
           onStateChange: (event: any) => {
             const state = event.data;
             if (state === (window as any).YT.PlayerState.PLAYING) {
               setIsPlaying(true);
               setHasEnded(false);
-              // Ensure quality stays at user preference when buffering finishes
-              if (player.setPlaybackQuality && currentQuality !== 'Auto') {
-                 player.setPlaybackQuality(currentQuality);
-              }
+              setDuration(player.getDuration());
             } else if (state === (window as any).YT.PlayerState.PAUSED) {
               setIsPlaying(false);
             } else if (state === (window as any).YT.PlayerState.ENDED) {
@@ -217,7 +215,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         setAvailableMonths(monthsList);
       }
 
-      // FIXED: Added .select('*') before .eq()
       const { data: viewsData, error: viewsError } = await supabase
         .from('recording_views')
         .select('*')
@@ -349,7 +346,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         .update({ watched_seconds: totalWatchedSecondsRef.current, last_watched_at: new Date().toISOString() })
         .eq('id', currentViewRecordIdRef.current);
       
-      // FIXED: Added .select('*') before .eq()
       const { data: viewsData } = await supabase
         .from('recording_views')
         .select('*')
@@ -449,15 +445,22 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     setIsSettingsOpen(false);
   };
 
-  // Fixed Quality Selector to Force Apply instantly
+  // ==========================================
+  // QUALITY CHANGER FIX (Force Reload Stream)
+  // ==========================================
   const handleQualitySelect = (quality: string) => {
     setCurrentQuality(quality);
-    if (ytPlayerRef.current && ytPlayerRef.current.setPlaybackQuality) {
-      ytPlayerRef.current.setPlaybackQuality(quality);
-      
-      // Force buffer Nudge so the video applies the quality immediately
+    if (ytPlayerRef.current && selectedVideo) {
       const currentVidTime = ytPlayerRef.current.getCurrentTime();
-      ytPlayerRef.current.seekTo(currentVidTime, true);
+      const videoId = getYouTubeId(selectedVideo);
+      
+      // Iframe API setPlaybackQuality is deprecated. 
+      // The only way to force quality is to reload the video with the exact time and suggested quality.
+      ytPlayerRef.current.loadVideoById({
+          videoId: videoId,
+          startSeconds: currentVidTime,
+          suggestedQuality: quality
+      });
     }
     setIsSettingsOpen(false);
   };
@@ -563,12 +566,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                 
                 const viewRecord = watchHistory[video.id];
                 const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
-                // Get duration from DB if exists, otherwise fallback to a high number to prevent false completion
                 const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
                 
                 let watchState: 'unwatched' | 'partial' | 'completed' = 'unwatched';
                 if (viewRecord && watchedSeconds > 10) {
-                  // වීඩියෝවෙන් 90% කට වඩා නරඹා ඇත්නම් 'completed' ලෙස සලකයි.
                   if (watchedSeconds >= (videoTotalDuration * 0.90)) {
                     watchState = 'completed';
                   } else {
@@ -587,7 +588,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                       setIsReady(false);
                       setHasEnded(false);
                       
-                      // ක්ලික් කල සැනින් Unwatched ඇනිමේෂන් එක ඉවත් කිරීම
                       if (!viewRecord || watchedSeconds < 1) {
                          setWatchHistory(prev => ({
                            ...prev,
@@ -595,7 +595,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                          }));
                       }
                     }}
-                    // Hover Animation: hover:-translate-y-1.5 hover:shadow-2xl යොදා ඇත
                     className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
                       !isUnlocked 
                         ? 'border-red-900/40 opacity-75' 
@@ -613,7 +612,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                         </div>
                       )}
 
-                      {/* වීඩියෝව සම්පූර්ණයෙන්ම නරඹා ඇත්නම් ට්‍රැක් එක පෙන්වන්නේ නැත */}
                       {isUnlocked && watchState === 'partial' && (
                         <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800/80 z-20">
                           <div className="h-full bg-red-600 relative transition-all duration-300" style={{ width: `${thumbnailProgressPercent}%` }}>
@@ -728,9 +726,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   </div>
                 )}
 
-                {/* වීඩියෝව බොඳ වීමට හේතු වූ scale සහ filter css ඉවත් කර ඇත.
-                  දැන් වීඩියෝව උපරිම Native Quality එකෙන් (1080p) දිස්වනු ඇත. 
-                */}
                 <div className="w-full h-full pointer-events-none z-0">
                   <div id="youtube-player-container" className="w-full h-full"></div>
                 </div>
@@ -741,7 +736,6 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
                   )}
                 </div>
 
-                {/* Watermark එක මඟින් වීඩියෝව බොඳ වීම වැළැක්වීමට mix-blend-screen ඉවත් කර opacity ඉතාම අවම කර ඇත */}
                 <div className="absolute inset-0 z-15 pointer-events-none flex items-center justify-center opacity-[0.03] select-none">
                   <p className="text-white text-2xl md:text-4xl font-extrabold rotate-[-25deg] tracking-widest">{student.username}</p>
                 </div>
