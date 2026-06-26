@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { supabase } from '../supabaseClient';
 import { Lock, Video, FileText, Clock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
+// 🔗 ඔබේ ප්‍රොජෙක්ට් එකේ දැනටමත් සාර්ථකව වැඩ කරන සූපබේස් ක්ලයන්ට් එක මෙතනට ඉම්පෝර්ට් කරන්න
+// (ඔබේ ව්‍යාපෘතියේ ෆෝල්ඩර් සැකැස්මට අනුව මෙම පාත් එක නිවැරදි කරගන්න)
+import { supabase } from '../supabaseClient'; 
 
 interface LiveClassPlayerProps {
   studentId: string;
@@ -31,47 +33,22 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     examSubmittedRef.current = examSubmitted;
   }, [selectedAnswers, examSubmitted]);
 
-  // 1. සිසුවාගේ දත්ත සහ දැනට පවතින සජීවී පන්තිය ලබා ගැනීම
-  useEffect(() => {
-    fetchInitialData();
-
-    // Supabase Realtime Subscription - scheduled_lives වගුවේ සිදුවන වෙනස්කම් ක්ෂණිකව ලබා ගැනීමට
-    const liveChannel = supabase
-      .channel('live_class_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', filter: 'is_active=eq.true', schema: 'public', table: 'scheduled_lives' },
-        (payload: any) => {
-          const updatedLive = payload.new;
-          setActiveLive(updatedLive);
-          if (updatedLive && updatedLive.is_exam_active && updatedLive.active_exam_id) {
-            fetchActiveExam(updatedLive.active_exam_id);
-          } else {
-            setActiveExam(null);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(liveChannel);
-    };
-  }, []);
-
+  // ප්‍රධාන දත්ත ලබා ගන්නා ශ්‍රිතය (Fetch & Sync function)
   const fetchInitialData = async () => {
+    if (!studentId) return;
+    
     try {
-      setLoading(true);
-      // සිසුවාගේ තොරතුරු ලබා ගැනීම
+      // 1. සිසුවාගේ තොරතුරු ලබා ගැනීම
       const { data: studentData, error: sError } = await supabase
         .from('students')
         .select('*')
         .eq('id', studentId)
-        .single();
+        .maybeSingle();
 
       if (sError) throw sError;
       setStudent(studentData);
 
-      // දැනට සක්‍රීය සජීවී පන්තිය ලබා ගැනීම
+      // 2. දැනට සක්‍රීය (is_active = true) සජීවී පන්තිය ලබා ගැනීම
       const { data: liveData, error: lError } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -79,57 +56,60 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
         .maybeSingle();
 
       if (lError) throw lError;
-      setActiveLive(liveData);
-
+      
+      // සක්‍රීය ලයිව් ක්ලාස් එකක් ඇත්නම් පමණක් ඉදිරි පියවර වලට යන්න
       if (liveData) {
-        // ගෙවීම් සහ පන්ති අනුකූලතාව පරීක්ෂා කිරීම
-        checkEligibility(studentData, liveData);
+        setActiveLive(liveData);
+        
+        // ගෙවීම් සහ පන්ති ගැළපීම පරීක්ෂාව
+        if (studentData) {
+          const currentMonth = liveData.target_month; 
+          const isFreePlan = studentData.plan_type?.toLowerCase() === 'free';
+          
+          const paidForMonth = 
+            studentData.active_months?.includes(currentMonth) || 
+            studentData.free_months?.includes(currentMonth) || 
+            studentData.is_paid === true;
 
-        // එක්සෑම් එකක් සක්‍රීය නම් එය ලබා ගැනීම
+          const isClassMatched = studentData.class_types?.includes(liveData.target_class_type);
+
+          setHasPaid(isFreePlan || paidForMonth);
+          setIsEligible(!!(isClassMatched && (isFreePlan || paidForMonth)));
+        }
+
+        // 3. එක්සෑම් එකක් සක්‍රීය නම් එය ලබා ගැනීම
         if (liveData.is_exam_active && liveData.active_exam_id) {
           await fetchActiveExam(liveData.active_exam_id);
+        } else {
+          setActiveExam(null);
         }
+      } else {
+        // සක්‍රීය පන්තියක් නැත්නම් ස්ටේට්ස් හිස් කරන්න
+        setActiveLive(null);
+        setActiveExam(null);
       }
     } catch (error) {
-      console.error("Error fetching initial data:", error);
+      console.error("Error loading live class data:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. සිසුවා අදාළ මාසයට ගෙවීම් කර ඇත්ද සහ පන්තියට අනුකූලදැයි පරික්ෂා කිරීම
-  const checkEligibility = (studentData: any, liveData: any) => {
-    if (!studentData || !liveData) return;
-
-    const currentMonth = liveData.target_month; 
-    const isFreePlan = studentData.plan_type?.toLowerCase() === 'free';
-    
-    // මාසික ගෙවීම් පරීක්ෂාව (active_months හෝ free_months වල අදාළ මාසය පවතීද යන්න)
-    const paidForMonth = 
-      studentData.active_months?.includes(currentMonth) || 
-      studentData.free_months?.includes(currentMonth) || 
-      studentData.is_paid === true;
-
-    // පන්ති වර්ගය ගැළපේදැයි පරික්ෂාව (class_types array එක තුළ target_class_type තිබේද යන්න)
-    const isClassMatched = studentData.class_types?.includes(liveData.target_class_type);
-
-    setHasPaid(isFreePlan || paidForMonth);
-    setIsEligible(isClassMatched && (isFreePlan || paidForMonth));
-  };
-
-  // 3. සක්‍රීය විභාගයේ දත්ත සහ පෙර ලකුණු පුවරු පරීක්ෂාව
+  // විභාගයේ දත්ත ලබා ගැනීම
   const fetchActiveExam = async (examId: string) => {
     try {
       const { data: examData, error: eError } = await supabase
         .from('exams')
         .select('*')
         .eq('id', examId)
-        .single();
+        .maybeSingle();
 
       if (eError) throw eError;
+      if (!examData) return;
+
       setActiveExam(examData);
 
-      // සිසුවා දැනටමත් මෙම විභාගයට මුහුණ දී ඇත්දැයි පරික්ෂා කිරීම
+      // සිසුවා දැනටමත් මෙම විභාගය ලියා ඇත්දැයි පරික්ෂා කිරීම
       const { data: resultData } = await supabase
         .from('exam_results')
         .select('*')
@@ -144,22 +124,42 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
           total: examData.total_questions,
         });
       } else {
-        // විභාගය පෙර ලියා නැත්නම් කවුන්ට්ඩවුන් එක ආරම්භ කිරීම
-        setTimeLeft(examData.duration_minutes * 60);
+        setTimeLeft((examData.duration_minutes || 0) * 60);
         setExamSubmitted(false);
         setExamResult(null);
         setSelectedAnswers({});
       }
     } catch (error) {
-      console.error("Error fetching exam:", error);
+      console.error("Error fetching exam details:", error);
     }
   };
 
-  // 4. විභාගයේ Timer එක ක්‍රියාත්මක වීම
+  // 🔄 Supabase Realtime Subscription - ඇඩ්මින් කරන දේ ක්ෂණයකින් සිසුවාට ලැබීමට
+  useEffect(() => {
+    fetchInitialData();
+
+    // scheduled_lives ටේබල් එකේ ඕනෑම වෙනසක් සිදුවන විට ක්ෂණිකව දත්ත රී-ෆෙච් (Refetch) කරන්න
+    const liveChannel = supabase
+      .channel('table-db-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'scheduled_lives' },
+        () => {
+          fetchInitialData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(liveChannel);
+    };
+  }, [studentId]);
+
+  // විභාගයේ ටයිමරය (Timer Countdown)
   useEffect(() => {
     if (!activeExam || examSubmitted || timeLeft <= 0) {
       if (timeLeft === 0 && activeExam && !examSubmitted) {
-        handleExamSubmit(true); // වේලාව අවසන් වූ විට Auto-Submit වීම
+        handleExamSubmit(true); // වේලාව අවසන් වූ විට ස්වයංක්‍රීයව සබ්මිට් වීම (Auto-Submit)
       }
       return;
     }
@@ -171,7 +171,7 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     return () => clearInterval(timer);
   }, [timeLeft, activeExam, examSubmitted]);
 
-  // 5. පිළිතුරු පත්‍රය Submit කිරීමේ Function එක
+  // පිළිතුරු පත්‍රය සබ්මිට් කිරීම
   const handleExamSubmit = async (isAutoSubmit = false) => {
     if (examSubmittedRef.current || !activeExam || !student) return;
 
@@ -179,15 +179,13 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     const correctAnswers = activeExam.correct_answer || {};
     let finalScore = 0;
 
-    // ලකුණු ගණනය කිරීම
     Object.keys(correctAnswers).forEach((qNum: any) => {
-      if (currentAnswers[qNum] === correctAnswers[qNum]) {
+      if (String(currentAnswers[qNum]) === String(correctAnswers[qNum])) {
         finalScore++;
       }
     });
 
     try {
-      // දත්ත සමුදායට (Database) ප්‍රතිඵල ඇතුළත් කිරීම
       const { error } = await supabase.from('exam_results').insert([
         {
           student_id: studentId,
@@ -207,12 +205,24 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
       });
       setExamSubmitted(true);
     } catch (error) {
-      console.error("Submission error:", error);
-      alert("පිළිතුරු පත්‍රය සුරැකීමේදී ගැටලුවක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
+      console.error("Exam submission error:", error);
+      alert("පිළිතුරු පත්‍රය සුරැකීමට නොහැකි විය. නැවත උත්සාහ කරන්න.");
     }
   };
 
-  // කාලය Format කරන ආකාරය (MM:SS)
+  // සූම් ලින්ක් එක ආරක්ෂිතව Embed URL එකක් බවට හැරවීම (Crash වීම් වළක්වයි)
+  const getZoomEmbedUrl = () => {
+    if (!activeLive) return '';
+    const rawUrl = activeLive.zoom_join_url || activeLive.link || '';
+    if (!rawUrl) return '';
+    
+    // Zoom සාමාන්‍ย ලින්ක් එකක් Web Iframe එකකට ගැළපෙන සේ සැකසීම
+    if (rawUrl.includes('/j/')) {
+      return rawUrl.replace('/j/', '/wc/join/');
+    }
+    return rawUrl;
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -228,7 +238,7 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     );
   }
 
-  // සක්‍රීය පන්තියක් නොමැති විට පෙන්වන UI එක
+  // 🚫 සක්‍රීය ලයිව් ක්ලාස් එකක් නොමැති විට පෙන්වන UI එක
   if (!activeLive) {
     return (
       <div className="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg text-center my-8">
@@ -241,6 +251,7 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4">
+      
       {/* 🛑 ගෙවීම් හෝ පන්ති අනුකූලතාවය නොමැති නම් පෙන්වන Disabled UI එක */}
       {!isEligible ? (
         <div className="w-full bg-gray-100 border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center flex flex-col items-center justify-center min-h-[450px] shadow-sm">
@@ -249,17 +260,18 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
           </div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">සජීවී පන්තිය අවහිර කර ඇත (Disabled)</h2>
           <p className="text-gray-600 max-w-md mb-6">
-            මෙම සජීවී පන්තියට සම්බන්ධ වීමට නම් ඔබ අදාළ පන්තියට ලියාපදිංචි වී සහ මෙම මාසය ({activeLive.target_month}) සඳහා ගෙවීම් සම්පූර්ණ කර තිබිය යුතුය.
+            මෙම සජීවී පන්තියට සම්බන්ධ වීමට නම් ඔබ අදාළ පන්තියට ලියාපදිංචි වී සහ මෙම මාසය ({activeLive.target_month || 'නියමිත මාසය'}) සඳහා ගෙවීම් සම්පූර්ණ කර තිබිය යුතුය.
           </p>
           <div className="bg-white p-4 rounded-xl shadow-inner border border-gray-200 text-left w-full max-w-sm">
             <p className="text-sm font-semibold text-gray-700 mb-1">🔍 වත්මන් තත්ත්වය:</p>
             <div className="text-sm space-y-1 text-gray-600">
               <p>• පන්ති අනුකූලතාව: {student?.class_types?.includes(activeLive.target_class_type) ? "✅ ගැළපේ" : "❌ නොගැළපේ"}</p>
-              <p>• මාසික ගෙවීම්: {hasPaid ? "✅ ගෙවා ඇත" : "❌ ගෙවා නැත"}</p>
+              <p>• මාසික ගෙවීම්: {hasPaid ? "✅ ගෙවා ඇත / Free" : "❌ ගෙවා නැත"}</p>
             </div>
           </div>
         </div>
       ) : (
+        
         /* ✅ සියලු සුදුසුකම් සපුරා ඇති විට පෙන්වන ප්‍රධාන UI එක */
         <div className="space-y-6">
           <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-4 rounded-xl shadow-md flex justify-between items-center">
@@ -270,14 +282,14 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
             <p className="text-sm bg-white/20 px-3 py-1 rounded-full">{activeLive.target_class_type} - {activeLive.target_month}</p>
           </div>
 
-          {/* Layout Dynamic split: විභාගය ක්‍රියාත්මක නම් දෙකට බෙදේ, නැතහොත් Full Screen පෙන්වයි */}
+          {/* Dynamic Split Layout: විභාගය සක්‍රීය නම් Screen එක දෙකට බෙදේ */}
           <div className={`grid grid-cols-1 ${activeLive.is_exam_active && activeExam ? 'lg:grid-cols-2' : 'grid-cols-1'} gap-6 transition-all duration-500`}>
             
-            {/* 🎥 වම් පස / ප්‍රධාන පස: Zoom සජීවී විකාශය (Full Native Experience) */}
+            {/* 🎥 සූම් සජීවී විකාශය (Zoom Iframe Player) */}
             <div className="bg-black rounded-2xl overflow-hidden shadow-xl border border-gray-800 flex flex-col aspect-video min-h-[450px]">
-              {activeLive.zoom_join_url ? (
+              {getZoomEmbedUrl() ? (
                 <iframe
-                  src={activeLive.zoom_join_url.replace('/j/', '/wc/join/')} // Zoom Web Client Iframe එකක් ලෙස පැමිණීමට සුදුසු පරිදි සකස් කිරීම
+                  src={getZoomEmbedUrl()}
                   allow="microphone; camera; fullscreen; speaker; display-capture"
                   className="w-full h-full border-none flex-grow"
                   title="Zoom Live Class"
@@ -285,16 +297,16 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
               ) : (
                 <div className="flex flex-col items-center justify-center text-gray-400 h-full p-6">
                   <AlertCircle className="w-12 h-12 mb-2 text-gray-500" />
-                  <p>Zoom සබැඳිය (Link) සක්‍රීය වෙමින් පවතී...</p>
+                  <p>සූම් සබැඳිය (Zoom Link) සූදානම් වෙමින් පවතී...</p>
                 </div>
               )}
             </div>
 
-            {/* 📝 දකුණු පස: ඔන්ලයින් විභාගය (Admin සක්‍රීය කළ විට පමණක් දිස්වේ) */}
+            {/* 📝 ඔන්ලයින් විභාගය (Admin සක්‍රීය කළ විට පමණක් මනරම්ව දකුණු පසින් දිස්වේ) */}
             {activeLive.is_exam_active && activeExam && (
               <div className="bg-white rounded-2xl shadow-xl border border-gray-200 flex flex-col h-[550px] lg:h-auto overflow-hidden animate-fade-in">
                 
-                {/* Exam Header සහ Countdown Timer */}
+                {/* Exam Header & Countdown Timer */}
                 <div className="bg-slate-900 text-white p-4 flex justify-between items-center border-b border-slate-700">
                   <div className="flex items-center space-x-2">
                     <FileText className="w-5 h-5 text-blue-400" />
@@ -310,11 +322,11 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
                 </div>
 
                 <div className="flex-grow grid grid-cols-1 md:grid-cols-2 overflow-y-auto">
-                  {/* PDF පත්‍රිකාව */}
+                  {/* PDF පේපර් එක බැලීමට */}
                   <div className="border-r border-gray-200 h-full min-h-[300px]">
                     {activeExam.pdf_url ? (
                       <iframe
-                        src={`${activeExam.pdf_url}#toolbar=0`} // සිසුන්ට බාගත කිරීම (Download) අපහසු වන සේ Toolbar එක ඉවත් කිරීම
+                        src={`${activeExam.pdf_url}#toolbar=0`}
                         className="w-full h-full min-h-[350px]"
                         title="Exam Paper PDF"
                       />
@@ -323,10 +335,9 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
                     )}
                   </div>
 
-                  {/* MCQ පිළිතුරු පුවරුව (Answer Sheet) */}
+                  {/* MCQ Answer Sheet */}
                   <div className="p-4 flex flex-col justify-between bg-slate-50 overflow-y-auto h-full">
                     {!examSubmitted ? (
-                      // විභාගය ලියන අවස්ථාවේ පෙනෙන UI එක
                       <>
                         <div className="space-y-4">
                           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">පිළිතුරු සලකුණු කරන්න:</p>
@@ -363,14 +374,14 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
                               handleExamSubmit(false);
                             }
                           }}
-                          className="w-full mt-6 bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-4 rounded-xl font-bold shadow-md transition-all uppercase text-sm tracking-wide"
+                          className="w-full mt-6 bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-4 rounded-xl font-bold shadow-md transition-all text-sm tracking-wide"
                         >
                           විභාගය අවසන් කරන්න (Submit Paper)
                         </button>
                       </>
                     ) : (
-                      // 📊 විභාගය අවසන් වූ පසු ප්‍රතිඵල පෙන්වන මනරම් UI එක
-                      <div className="flex flex-col items-center justify-center text-center p-6 my-auto bg-white rounded-2xl shadow-md border border-emerald-100 animate-scale-in">
+                      /* 📊 ප්‍රතිඵල පෙන්වන කොටස */
+                      <div className="flex flex-col items-center justify-center text-center p-6 my-auto bg-white rounded-2xl shadow-md border border-emerald-100">
                         <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-3" />
                         <h3 className="text-xl font-bold text-gray-800">පිළිතුරු පත්‍රය භාරගන්නා ලදී!</h3>
                         <p className="text-xs text-gray-500 mt-1">මෙම විභාගය සඳහා ඔබට නැවත පිළිතුරු සැපයිය නොහැක.</p>
