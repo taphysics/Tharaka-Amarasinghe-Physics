@@ -37,7 +37,7 @@ export default function AdminLiveControls() {
     class_type: '',
     pdf_url: '',
     total_questions: 50,
-    correct_answer: {} as Record<string, number>,
+    correct_answers: {} as Record<string, number>,
     status: 'pending' 
   });
 
@@ -146,7 +146,7 @@ export default function AdminLiveControls() {
         class_type: examData.class_type || formData.target_classes[0] || 'Theory',
         pdf_url: examData.pdf_url,
         total_questions: examData.total_questions,
-        correct_answer: examData.correct_answer,
+        correct_answers: examData.correct_answers,
         status: examData.status || 'pending'
       };
 
@@ -183,11 +183,11 @@ export default function AdminLiveControls() {
     }
   };
 
-  const handleCorrectAnswerChange = (qIndex: number, ansNum: number) => {
+  const handleCorrectAnswersChange = (qIndex: number, ansNum: number) => {
     setExamData(prev => ({
       ...prev,
-      correct_answer: {
-        ...prev.correct_answer,
+      correct_answers: {
+        ...prev.correct_answers,
         [qIndex.toString()]: ansNum
       }
     }));
@@ -333,7 +333,7 @@ export default function AdminLiveControls() {
                                 class_type: attachedExam.class_type,
                                 pdf_url: attachedExam.pdf_url || '',
                                 total_questions: attachedExam.total_questions || 50,
-                                correct_answer: attachedExam.correct_answer || {},
+                                correct_answers: attachedExam.correct_answers || {},
                                 status: attachedExam.status
                               });
                               setExamModalOpen(true);
@@ -464,7 +464,7 @@ export default function AdminLiveControls() {
               {/* ATTACH LIVE EXAM SECTION (REF: image_bc9e0a.png FIX) */}
               <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
                 <label className="block text-xs font-bold text-amber-500 uppercase mb-2 flex items-center gap-1">
-                  <FileText size={14}/> Attach Live Exam (Answer Sheet & Paper)
+                  <FileText size={14}/> Attach Live Exam (Answers Sheet & Paper)
                 </label>
                 <div className="flex gap-2">
                   <select 
@@ -480,7 +480,7 @@ export default function AdminLiveControls() {
                   <button 
                     type="button"
                     onClick={() => {
-                      setExamData({ id: '', title: `${formData.title || 'Live'} - MCQ Paper`, class_type: formData.target_classes[0] || '', pdf_url: '', total_questions: 50, correct_answer: {}, status: 'pending' });
+                      setExamData({ id: '', title: `${formData.title || 'Live'} - MCQ Paper`, class_type: formData.target_classes[0] || '', pdf_url: '', total_questions: 50, correct_answers: {}, status: 'pending' });
                       setExamModalOpen(true);
                     }} 
                     className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-lg text-sm font-extrabold transition flex items-center gap-1 shrink-0"
@@ -502,19 +502,19 @@ export default function AdminLiveControls() {
         </div>
       )}
 
-      {/* --- EXAM ANSWER SHEET CREATION / MODAL --- */}
+      {/* --- EXAM ANSWERS SHEET CREATION / MODAL --- */}
       {examModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-slate-900 border border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl relative">
             <button onClick={() => setExamModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
             <h2 className="text-xl font-bold text-amber-500 mb-4 border-b border-slate-800 pb-2 flex items-center gap-2">
-              <FileText /> Dynamic Live MCQ Answer Sheet Wizard
+              <FileText /> Dynamic Live MCQ Answers Sheet Wizard
             </h2>
             
             <form onSubmit={handleSaveExam} className="flex flex-col flex-1 overflow-hidden">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 shrink-0">
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-mono text-slate-400 mb-1">Exam / Answer Sheet Name</label>
+                  <label className="block text-xs font-mono text-slate-400 mb-1">Exam / Answers Sheet Name</label>
                   <input required type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm" />
                 </div>
                 <div>
@@ -532,7 +532,7 @@ export default function AdminLiveControls() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                   {Array.from({ length: Math.min(examData.total_questions, 200) }).map((_, i) => {
                     const qNum = i + 1;
-                    const selectedAns = examData.correct_answer[qNum.toString()];
+                    const selectedAns = examData.correct_answers[qNum.toString()];
                     return (
                       <div key={qNum} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800/80">
                         <span className="text-slate-400 font-mono font-bold text-xs w-6">{qNum}.</span>
@@ -541,7 +541,7 @@ export default function AdminLiveControls() {
                             <button
                               key={btnIndex}
                               type="button"
-                              onClick={() => handleCorrectAnswerChange(qNum, btnIndex)}
+                              onClick={() => handleCorrectAnswersChange(qNum, btnIndex)}
                               className={`w-6 h-6 rounded-full text-xs font-bold transition-all ${selectedAns === btnIndex ? 'bg-amber-500 text-black scale-110 shadow-md shadow-amber-500/30' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                             >
                               {btnIndex}
