@@ -1,182 +1,125 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
+import { supabase } from '../supabaseClient'; // ඔබගේ supabase client path එකට වෙනස් කරගන්න
 
 interface LiveClassPlayerProps {
-  currentLiveId: string;
-  studentId: string;
-  studentUsername: string;
+  classId: string; // ප්‍රදර්ශනය කළ යුතු scheduled_lives table එකේ id එක
+  username: string; // දැනට ලොග් වී සිටින සිසුවාගේ username එක
+  studentId: string; // සිසුවාගේ id එක
 }
 
-interface LiveSession {
-  id: string;
-  title: string;
-  zoom_join_url: string;
-  status: string;
-  date: string;
-  time: string;
-  is_exam_active: boolean;
-  active_exam_id: string | null;
-}
-
-interface ExamData {
-  id: string;
-  title: string;
-  pdf_url: string;
-  duration_minutes: number;
-  total_questions: number;
-  correct_answer: Record<string, number>;
-}
-
-export default function LiveClassPlayer({ currentLiveId, studentId, studentUsername }: LiveClassPlayerProps) {
-  const [session, setSession] = useState<LiveSession | null>(null);
-  const [exam, setExam] = useState<ExamData | null>(null);
-  const [isWithinOneHour, setIsWithinOneHour] = useState(false);
-  const [studentAnswers, setStudentAnswers] = useState<Record<number, number>>({});
+export default function LiveClassPlayer({ classId, username, studentId }: LiveClassPlayerProps) {
+  const [liveSession, setLiveSession] = useState<any>(null);
+  const [examDetails, setExamDetails] = useState<any>(null);
   
-  // Exam Countdown Timer States
-  const [timeLeft, setTimeLeft] = useState<number>(0); 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  // Video & Zoom State
+  const [showWaitingVideo, setShowWaitingVideo] = useState(false);
+  
+  // Exam State
+  const [answers, setAnswers] = useState<{ [key: number]: number }>({});
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [examSubmitted, setExamSubmitted] = useState(false);
+  
+  // Result State
+  const [scorePopup, setScorePopup] = useState<{ show: boolean; score: number; total: number }>({ show: false, score: 0, total: 0 });
 
-  // Score Result Modal States
-  const [showResultModal, setShowResultModal] = useState(false);
-  const [calculatedScore, setCalculatedScore] = useState<number>(0);
-  const [totalExamQuestions, setTotalExamQuestions] = useState<number>(0);
-
+  // 1. Initial Data Fetch & Realtime Subscription
   useEffect(() => {
-    fetchSessionDetails();
+    const fetchClassData = async () => {
+      const { data, error } = await supabase
+        .from('scheduled_lives')
+        .select('*')
+        .eq('id', classId)
+        .single();
 
-    // Supabase Realtime Subscription - තත්පරයෙන් තත්පරයට වෙනස්වීම් හඳුනාගැනීම
-    const channel = supabase
-      .channel(`live_room_${currentLiveId}`)
+      if (data) setLiveSession(data);
+    };
+
+    fetchClassData();
+
+    // Realtime listener for status and exam updates from admin
+    const subscription = supabase
+      .channel('live-class-updates')
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'scheduled_lives', filter: `id=eq.${currentLiveId}` },
+        { event: 'UPDATE', schema: 'public', table: 'scheduled_lives', filter: `id=eq.${classId}` },
         (payload) => {
-          const updated = payload.new as LiveSession;
-          setSession(updated);
-          if (updated.is_exam_active && updated.active_exam_id) {
-            fetchExamDetails(updated.active_exam_id);
-          } else {
-            setExam(null);
-          }
+          setLiveSession(payload.new);
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
-      if (timerRef.current) clearInterval(timerRef.current);
+      supabase.removeChannel(subscription);
     };
-  }, [currentLiveId]);
+  }, [classId]);
 
-  const fetchSessionDetails = async () => {
-    const { data, error } = await supabase
-      .from('scheduled_lives')
-      .select('id, title, zoom_join_url, status, date, time, is_exam_active, active_exam_id')
-      .eq('id', currentLiveId)
-      .single();
+  // 2. Waiting Video Logic
+  useEffect(() => {
+    if (!liveSession) return;
 
-    if (!error && data) {
-      setSession(data);
-      checkTimeThreshold(data.date, data.time);
-      if (data.is_exam_active && data.active_exam_id) {
-        fetchExamDetails(data.active_exam_id);
-      }
-    }
-  };
-
-  const fetchExamDetails = async (examId: string) => {
-    const { data, error } = await supabase
-      .from('exams')
-      .select('id, title, pdf_url, duration_minutes, total_questions, correct_answer')
-      .eq('id', examId)
-      .single();
-
-    if (!error && data) {
-      setExam(data);
-      setTimeLeft(data.duration_minutes * 60);
-      startCountdown();
-    }
-  };
-
-  // පන්තිය ආරම්භ වීමට පැයකට පෙර කාලය පරීක්ෂා කිරීම
-  const checkTimeThreshold = (classDate: string, classTime: string) => {
-    try {
-      const classDateTime = new Date(`${classDate}T${classTime}`);
-      const now = new Date();
-      const differenceInMs = classDateTime.getTime() - now.getTime();
+    if (liveSession.status === 'scheduled') {
+      const classDateTime = new Date(`${liveSession.date}T${liveSession.time}`);
+      const currentTime = new Date();
+      const timeDiff = classDateTime.getTime() - currentTime.getTime();
       const oneHourInMs = 60 * 60 * 1000;
-      
-      // ආරම්භ වීමට පැයකට පෙර සහ පන්තිය ආරම්භ වන තෙක්
-      if (differenceInMs <= oneHourInMs && differenceInMs > -oneHourInMs * 5) {
-        setIsWithinOneHour(true);
-      }
-    } catch (e) {
-      console.error('කාලය ගණනය කිරීමේ දෝෂයකි:', e);
-    }
-  };
 
-  // විභාගයේ Countdown Timer එක ක්‍රියාත්මක කිරීම
-  const startCountdown = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
+      // පැයකට පෙර සිට waiting video එක පෙන්වන්න
+      if (timeDiff <= oneHourInMs && timeDiff > 0) {
+        setShowWaitingVideo(true);
+      } else {
+        setShowWaitingVideo(false);
+      }
+    } else {
+      setShowWaitingVideo(false);
+    }
+  }, [liveSession]);
+
+  // 3. Exam Logic & Realtime Fetching
+  useEffect(() => {
+    const fetchExam = async () => {
+      if (liveSession?.is_exam_active && liveSession?.active_exam_id && !examSubmitted) {
+        const { data, error } = await supabase
+          .from('exams')
+          .select('*')
+          .eq('id', liveSession.active_exam_id)
+          .single();
+
+        if (data) {
+          setExamDetails(data);
+          if (timeLeft === null) {
+            setTimeLeft(data.duration_minutes * 60);
+          }
+        }
+      }
+    };
+    fetchExam();
+  }, [liveSession?.is_exam_active, liveSession?.active_exam_id, examSubmitted]);
+
+  // 4. Timer Logic & Auto Submit
+  useEffect(() => {
+    if (timeLeft === null || timeLeft <= 0 || examSubmitted) return;
+
+    const timer = setInterval(() => {
       setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          autoSubmitExam(); // කාලය අවසන් වූ සැනින් ස්වයංක්‍රීයව Submit වීම
+        if (prev !== null && prev <= 1) {
+          clearInterval(timer);
+          submitExam(); // කාලය අවසන් වූ පසු ස්වයංක්‍රීයව submit වීම
           return 0;
         }
-        return prev - 1;
+        return prev ? prev - 1 : 0;
       });
     }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeLeft, examSubmitted]);
+
+  // Helper: Format Google Drive Link to Embed Mode
+  const getEmbedUrl = (url: string) => {
+    if (!url) return '';
+    return url.replace(/\/view.*$/, '/preview');
   };
 
-  const handleSelectAnswer = (qNum: number, option: number) => {
-    setStudentAnswers((prev) => ({ ...prev, [qNum]: option }));
-  };
-
-  // විභාගය අවසන් කර ලකුණු ගණනය කර දත්ත සමුදායට යැවීම
-  const submitExamHander = async () => {
-    if (!exam) return;
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    let score = 0;
-    const answers = exam.correct_answer as Record<string, number>;
-
-    // ලකුණු ගණනය කිරීම
-    for (let q = 1; q <= exam.total_questions; q++) {
-      if (studentAnswers[q] && Number(studentAnswers[q]) === Number(answers[q])) {
-        score++;
-      }
-    }
-
-    // දත්ත සමුදායට ප්‍රතිඵල ඇතුලත් කිරීම
-    await supabase.from('exam_results').insert([
-      {
-        username: studentUsername,
-        student_id: studentId,
-        exam_id: exam.id,
-        score: score,
-        submitted_at: new Date().toISOString(),
-        meta_data: { student_responses: studentAnswers }
-      }
-    ]);
-
-    setCalculatedScore(score);
-    setTotalExamQuestions(exam.total_questions);
-    setShowResultModal(true);
-    setExam(null); // විභාගය ඉවත් කර නැවත ප්ලේයරය පෙන්වීම
-  };
-
-  const autoSubmitExam = () => {
-    submitExamHander();
-  };
-
+  // Helper: Format Time
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -184,167 +127,155 @@ export default function LiveClassPlayer({ currentLiveId, studentId, studentUsern
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  if (!session) return <div className="text-white p-6 text-center">සජීවී විකාශන දත්ත පූරණය වෙමින් පවතී...</div>;
+  // Select Answer
+  const handleAnswerSelect = (questionNo: number, optionNo: number) => {
+    setAnswers({ ...answers, [questionNo]: optionNo });
+  };
 
-  // අවස්ථාව 01: ඇඩ්මින් පන්තිය ලයිව් කිරීමට පෙර (පැයකට පෙර සිට) Waiting වීඩියෝව පෙන්වීම
-  const showWaitingVideo = session.status !== 'active' && isWithinOneHour;
+  // Submit Exam Logic
+  const submitExam = async () => {
+    if (!examDetails || examSubmitted) return;
+    setExamSubmitted(true);
+
+    let correctCount = 0;
+    const correctAnswers = examDetails.correct_answer; // jsonb
+
+    // ලකුණු ගණනය කිරීම
+    for (let i = 1; i <= examDetails.total_questions; i++) {
+      if (answers[i] === correctAnswers[i.toString()]) {
+        correctCount++;
+      }
+    }
+
+    // Database එකට සේව් කිරීම
+    await supabase.from('exam_results').insert({
+      username: username,
+      exam_id: examDetails.id,
+      student_id: studentId,
+      score: correctCount,
+      submitted_at: new Date().toISOString(),
+      meta_data: { student_answers: answers }
+    });
+
+    setScorePopup({ show: true, score: correctCount, total: examDetails.total_questions });
+  };
+
+  if (!liveSession) return <div className="p-10 text-center text-white">Loading...</div>;
 
   return (
-    <div className="w-full bg-black min-h-screen text-white relative">
-      {/* පන්තියේ ඉහල බාර් එක */}
-      <div className="p-4 bg-gray-900 flex justify-between items-center border-b border-gray-800">
-        <h2 className="text-lg font-bold text-cyan-400">{session.title}</h2>
-        <div className="flex items-center space-x-2">
-          <span className={`w-3 h-3 rounded-full ${session.status === 'active' ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'}`} />
-          <span className="text-sm font-semibold">{session.status === 'active' ? 'LIVE' : 'WAITING'}</span>
+    <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+      
+      {/* Top Bar - Session Title */}
+      <div className="bg-gray-800 p-4 text-xl font-bold shadow-md">
+        {liveSession.title}
+      </div>
+
+      <div className="flex-grow p-4 flex gap-4 w-full h-[calc(100vh-80px)]">
+        
+        {/* --- EXAM SECTION (Left Side) --- */}
+        {liveSession.is_exam_active && !examSubmitted && examDetails && (
+          <div className="w-2/3 flex flex-col gap-4 h-full">
+            
+            {/* Timer and Action Bar */}
+            <div className="bg-blue-900 p-4 rounded-lg flex justify-between items-center shadow-lg">
+              <h2 className="text-xl font-bold">Online Exam: {examDetails.title}</h2>
+              <div className="flex items-center gap-4">
+                <span className="text-2xl font-mono text-yellow-400 font-bold">
+                  ⏱ {timeLeft !== null ? formatTime(timeLeft) : '00:00:00'}
+                </span>
+                <button 
+                  onClick={submitExam}
+                  className="bg-red-600 hover:bg-red-700 px-6 py-2 rounded font-bold transition"
+                >
+                  Submit Paper
+                </button>
+              </div>
+            </div>
+
+            {/* PDF Embed (Google Drive) */}
+            <div className="flex-grow bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+              <iframe 
+                src={getEmbedUrl(examDetails.pdf_url)} 
+                className="w-full h-full"
+                allow="autoplay"
+                title="Exam Paper"
+              ></iframe>
+            </div>
+
+            {/* OMR Answer Sheet */}
+            <div className="bg-gray-800 p-4 rounded-lg h-1/3 overflow-y-auto border border-gray-700">
+              <h3 className="mb-4 font-bold text-lg border-b border-gray-600 pb-2">Mark Your Answers</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Array.from({ length: examDetails.total_questions }, (_, i) => i + 1).map((q) => (
+                  <div key={q} className="flex items-center gap-3 bg-gray-700 p-2 rounded">
+                    <span className="w-8 text-center font-bold">{q}.</span>
+                    {[1, 2, 3, 4, 5].map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => handleAnswerSelect(q, opt)}
+                        className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-bold transition-all
+                          ${answers[q] === opt ? 'bg-blue-500 border-blue-500 text-white' : 'border-gray-400 hover:border-blue-400'}`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- ZOOM PLAYER / WAITING VIDEO SECTION (Right Side or Full Screen) --- */}
+        <div className={`${liveSession.is_exam_active && !examSubmitted ? 'w-1/3' : 'w-full'} h-full bg-black rounded-lg overflow-hidden relative shadow-2xl transition-all duration-300`}>
+          
+          {liveSession.status === 'scheduled' && showWaitingVideo ? (
+            <video 
+              src="/videos/waiting-video.mp4" 
+              autoPlay 
+              loop 
+              muted // Unmute if browser policies allow autoplay with sound
+              className="w-full h-full object-cover"
+            />
+          ) : liveSession.status === 'scheduled' ? (
+            <div className="flex items-center justify-center h-full flex-col">
+              <h2 className="text-3xl font-bold mb-2">Class Scheduled</h2>
+              <p className="text-gray-400">Date: {liveSession.date} | Time: {liveSession.time}</p>
+            </div>
+          ) : liveSession.status === 'live' && liveSession.zoom_join_url ? (
+            <iframe 
+              src={liveSession.zoom_join_url} 
+              className="w-full h-full border-0"
+              allow="camera; microphone; fullscreen"
+            ></iframe>
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-xl text-gray-500">Session Completed or Unavailable</p>
+            </div>
+          )}
+
         </div>
       </div>
 
-      {/* ප්‍රධාන වීඩියෝ/විභාග කලාපය */}
-      <div className="w-full h-[calc(100vh-68px)] relative">
-        
-        {/* Waiting Video එක */}
-        {showWaitingVideo && (
-          <div className="absolute inset-0 bg-black flex flex-col justify-center items-center">
-            <video
-              src="/videos/waiting-video.mp4"
-              className="w-full h-full object-cover"
-              autoPlay
-              loop
-              muted
-              playsInline
-            />
-            <div className="absolute bottom-10 left-10 bg-black/80 p-4 rounded-lg border border-gray-700 backdrop-blur">
-              <p className="text-yellow-400 font-bold animate-pulse text-lg">පන්තිය ඉක්මනින්ම ආරම්භ වේ...</p>
-              <p className="text-xs text-gray-400">ගුරුතුමා සම්බන්ධ වන තෙක් රැඳී සිටින්න.</p>
+      {/* --- SCORE POPUP --- */}
+      {scorePopup.show && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-white text-black p-8 rounded-xl shadow-2xl max-w-sm w-full text-center transform transition-all scale-100">
+            <h2 className="text-3xl font-extrabold text-green-600 mb-4">Exam Completed!</h2>
+            <p className="text-lg text-gray-600 mb-6">Your results have been submitted successfully.</p>
+            <div className="text-5xl font-black text-blue-600 mb-8">
+              {scorePopup.score} <span className="text-2xl text-gray-400">/ {scorePopup.total}</span>
             </div>
-          </div>
-        )}
-
-        {/* සක්‍රීය Zoom සජීවී පන්තිය (විභාගයක් නොමැති විට Full Screen) */}
-        {session.status === 'active' && !exam && (
-          <div className="w-full h-full">
-            <iframe
-              src={session.zoom_join_url}
-              className="w-full h-full border-0"
-              allow="microphone; camera; fullscreen"
-            />
-          </div>
-        )}
-
-        {/* අවස්ථාව 02: සජීවී පන්තිය අතරතුර විභාගයක් Push කල විට ලැබෙන Split Screen එක */}
-        {session.status === 'active' && exam && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 h-full w-full bg-gray-950">
-            
-            {/* වම් පස - Google Drive Embedded PDF එක (Zoom, Navigation සහිතයි) */}
-            <div className="h-full border-r border-gray-800 bg-gray-900 relative">
-              <div className="absolute top-2 left-2 bg-black/70 px-3 py-1 rounded text-xs z-10 font-bold text-gray-300">
-                ප්‍රශ්න පත්‍රය (PDF Viewer)
-              </div>
-              <iframe
-                src={exam.pdf_url}
-                className="w-full h-full border-0"
-                allow="autoplay"
-              />
-            </div>
-
-            {/* දකුණු පස - අන්තර්ක්‍රියාකාරී MCQ ෂීට් එක සහ කවුන්ටරය */}
-            <div className="h-full flex flex-col bg-gray-900 overflow-y-auto p-6">
-              
-              {/* ටයිමරය සහ විස්තර */}
-              <div className="flex justify-between items-center bg-gray-800 p-4 rounded-lg mb-6 border border-gray-700 shadow-md">
-                <div>
-                  <h3 className="font-bold text-emerald-400 text-lg">{exam.title}</h3>
-                  <p className="text-xs text-gray-400">සියලුම ප්‍රශ්න සඳහා පිළිතුරු සපයන්න.</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400 font-medium">ඉතිරි කාලය</p>
-                  <p className={`text-2xl font-mono font-bold ${timeLeft < 60 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
-                    {formatTime(timeLeft)}
-                  </p>
-                </div>
-              </div>
-
-              {/* MCQ ගුවන් විදුලි බොත්තම් මැට්‍රික්ස් එක */}
-              <div className="flex-1 space-y-4 pr-2">
-                {Array.from({ length: exam.total_questions }).map((_, idx) => {
-                  const qNum = idx + 1;
-                  return (
-                    <div key={qNum} className="p-3 bg-gray-800/50 rounded-lg border border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <span className="font-bold text-sm text-gray-300">ප්‍රශ්නය {qNum.toString().padStart(2, '0')}</span>
-                      <div className="flex items-center space-x-4">
-                        {[1, 2, 3, 4, 5].map((opt) => (
-                          <label key={opt} className="flex items-center space-x-1 cursor-pointer group">
-                            <input
-                              type="radio"
-                              name={`student-q-${qNum}`}
-                              checked={studentAnswers[qNum] === opt}
-                              onChange={() => handleSelectAnswer(qNum, opt)}
-                              className="w-5 h-5 text-emerald-500 bg-gray-700 border-gray-600 focus:ring-0"
-                            />
-                            <span className="text-sm font-semibold group-hover:text-emerald-400">{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Submit බොත්තම */}
-              <button
-                onClick={submitExamHander}
-                className="mt-6 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold p-3 rounded-lg shadow-lg transition transform active:scale-95"
-              >
-                පිළිතුරු පත්‍රය ඉදිරිපත් කරන්න (Submit Paper)
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* පන්තිය පද්ධතිය තුල සක්‍රීය නොමැති අවස්ථාවක පෙන්වන තිරය */}
-        {session.status !== 'active' && !isWithinOneHour && (
-          <div className="absolute inset-0 bg-gray-950 flex flex-col justify-center items-center p-6 text-center">
-            <div className="p-4 bg-gray-900 rounded-full mb-4 border border-gray-800">
-              <svg className="w-12 h-12 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold mb-1">සජීවී පන්තිය තවමත් ආරම්භ කර නොමැත</h3>
-            <p className="text-gray-400 text-sm max-w-sm">
-              මෙම පන්තිය පැවැත්වීමට නියමිතව ඇත්තේ {session.date} දින {session.time} ටය. පන්තිය ආරම්භ වීමට පැයකට පෙර සිට සජීවී ප්‍රවේශය විවෘත වේ.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* විභාග ලකුණු පෙන්වන Popup Modal එක */}
-      {showResultModal && (
-        <div className="fixed inset-0 bg-black/90 flex justify-center items-center z-50 backdrop-blur-sm p-4">
-          <div className="bg-gray-900 border border-gray-800 p-8 rounded-xl max-w-md w-full text-center shadow-2xl animate-fade-in">
-            <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex justify-center items-center mx-auto mb-4 border border-emerald-500/30">
-              <svg className="w-10 h-10 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <h3 className="text-2xl font-bold text-white mb-2">විභාගය සාර්ථකව අවසන් කලා!</h3>
-            <p className="text-gray-400 text-sm mb-6">ඔබ ලබාදුන් පිළිතුරු ස්වයංක්‍රීයව පද්ධතිය තුල සුරැකින ලදී.</p>
-            
-            <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-800 mb-6">
-              <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">ඔබේ ලකුණු ප්‍රමාණය</span>
-              <span className="text-4xl font-mono font-bold text-yellow-400">{calculatedScore}</span>
-              <span className="text-gray-500 text-lg"> / {totalExamQuestions}</span>
-            </div>
-
-            <button
-              onClick={() => setShowResultModal(false)}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-lg transition"
+            <button 
+              onClick={() => setScorePopup({ ...scorePopup, show: false })}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition"
             >
-              Close & Return to Zoom
+              Close & Return to Class
             </button>
           </div>
         </div>
       )}
+      
     </div>
   );
 }

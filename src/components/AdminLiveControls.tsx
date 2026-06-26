@@ -1,460 +1,521 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-// Supabase Client එක Initialize කිරීම (ඔබගේ පරිසර විචල්‍යයන්ට අනුව වෙනස් කරගන්න)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-);
-
-interface ClassTypeConfig {
-  id: string;
-  class_types: string;
-}
-
-interface ScheduledLive {
-  id: string;
-  title: string;
-  date: string;
-  time: string;
-  class_type: string;
-  status: string;
-  is_exam_active: boolean;
-}
+import { supabase } from '../supabaseClient';
+import { Video, Play, Square, Edit, Plus, Clock, Trash2, CheckSquare, FileText, Send, EyeOff } from 'lucide-react';
 
 export default function AdminLiveControls() {
-  // Class States
-  const [classTypes, setClassTypes] = useState<ClassTypeConfig[]>([]);
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [targetMonth, setTargetMonth] = useState('');
-  const [selectedClassType, setSelectedClassType] = useState('');
-  const [zoomJoinUrl, setZoomJoinUrl] = useState('');
-  const [scheduledClasses, setScheduledClasses] = useState<ScheduledLive[]>([]);
-  const [activeLiveId, setActiveLiveId] = useState<string | null>(null);
+  const [lives, setLives] = useState<any[]>([]);
+  const [classConfigs, setClassConfigs] = useState<any[]>([]);
+  const [exams, setExams] = useState<any[]>([]);
+  
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [examModalOpen, setExamModalOpen] = useState(false);
+  const [currentLiveId, setCurrentLiveId] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Exam States
-  const [examTitle, setExamTitle] = useState('');
-  const [pdfUrl, setPdfUrl] = useState('');
-  const [totalQuestions, setTotalQuestions] = useState<number>(10);
-  const [durationHours, setDurationHours] = useState<number>(0);
-  const [durationMinutes, setDurationMinutes] = useState<number>(30);
-  const [durationSeconds, setDurationSeconds] = useState<number>(0);
-  const [correctAnswers, setCorrectAnswers] = useState<Record<number, number>>({});
+  // Live Class Form State
+  const [formData, setFormData] = useState({
+    id: '',
+    title: '',
+    date: '',
+    time: '',
+    target_month: '', 
+    target_classes: [] as string[],
+    active_exam_id: '',
+    pre_class_video_path: '/videos/waiting-video.mp4',
+    target_class_type: ''
+  });
+
+  // Exam Form State (Duration added as Hours, Mins, Secs)
+  const [examData, setExamData] = useState({
+    id: '',
+    title: '',
+    class_type: '',
+    pdf_url: '',
+    total_questions: 50,
+    durationHours: 1,
+    durationMinutes: 30,
+    durationSeconds: 0,
+    correct_answer: {} as Record<string, number>,
+    status: 'pending' 
+  });
 
   useEffect(() => {
-    fetchClassTypes();
-    fetchScheduledLives();
+    fetchInitialData();
+    
+    // Supabase Realtime - Changes will instantly reflect
+    const channel = supabase.channel('realtime-admin-dashboard')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => { fetchInitialData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => { fetchInitialData(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const fetchClassTypes = async () => {
-    const { data, error } = await supabase
-      .from('class_types_config')
-      .select('id, class_types')
-      .eq('is_active', true);
-    if (!error && data) setClassTypes(data);
+  const fetchInitialData = async () => {
+    try {
+      const { data: livesData } = await supabase.from('scheduled_lives').select('*').order('created_at', { ascending: false });
+      if (livesData) setLives(livesData);
+
+      const { data: configsData } = await supabase.from('class_types_config').select('*');
+      if (configsData) setClassConfigs(configsData);
+
+      const { data: examsData } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
+      if (examsData) setExams(examsData);
+    } catch (err) { console.error("Error fetching data", err); }
   };
 
-  const fetchScheduledLives = async () => {
-    const { data, error } = await supabase
-      .from('scheduled_lives')
-      .select('id, title, date, time, class_type, status, is_exam_active')
-      .order('created_at', { ascending: false });
-    if (!error && data) {
-      setScheduledClasses(data);
-      const active = data.find((c) => c.status === 'active');
-      if (active) setActiveLiveId(active.id);
-    }
-  };
-
-  // 01. නිවැරැදි සූම් පන්තියක් සහ Calendar Event එකක් නිර්මාණය කිරීම
-  const handleCreateClass = async (e: React.FormEvent) => {
+  const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !date || !time || !selectedClassType) {
-      alert('කරුණාකර සියලුම විස්තර ඇතුලත් කරන්න.');
-      return;
-    }
+    setIsLoading(true);
 
-    // scheduled_lives වගුවට දත්ත ඇතුලත් කිරීම
-    const { data: liveData, error: liveError } = await supabase
-      .from('scheduled_lives')
-      .insert([
-        {
-          title,
-          date,
-          time,
-          target_month: targetMonth,
-          class_type: selectedClassType,
-          target_class_type: selectedClassType,
-          zoom_join_url: zoomJoinUrl,
-          status: 'pending',
-          is_exam_active: false,
-          pre_class_video_path: '/videos/waiting-video.mp4',
-          is_active: true,
-          platform: 'zoom'
-        }
-      ])
-      .select();
-
-    if (liveError) {
-      alert('පන්තිය නිර්මාණය කිරීම අසාර්ථකයි: ' + liveError.message);
-      return;
-    }
-
-    // calender_events වගුවට දත්ත ඇතුලත් කර සිසුන්ගේ දින දර්ශන යාවත්කාලීන කිරීම
-    const { error: calError } = await supabase.from('calender_events').insert([
-      {
-        title: title,
-        date: date,
-        start_time: time,
-        class_type: selectedClassType,
-        target_class_type: selectedClassType,
-        status: 'scheduled',
-        description: `${selectedClassType} සජීවී පන්තිය`
+    try {
+      let zoomInfo = null;
+      if (!formData.id) {
+        // Zoom API Edge Function (ඔබගේ තිබෙන ආකාරයටම)
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
+          body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
+        });
+        if (!edgeError) zoomInfo = edgeData;
       }
-    ]);
 
-    if (!calError) {
-      alert('සූම් පන්තිය සහ දින දර්ශන සටහන සාර්ථකව නිර්මාණය කර පබ්ලිෂ් කරන ලදී!');
-      setTitle('');
-      setDate('');
-      setTime('');
-      setZoomJoinUrl('');
-      fetchScheduledLives();
+      const mainClassType = formData.target_classes[0] || 'Theory';
+
+      const payload = {
+        title: formData.title,
+        date: formData.date,
+        time: formData.time,
+        target_month: formData.target_month,
+        target_classes: formData.target_classes,
+        target_class_type: mainClassType, 
+        active_exam_id: formData.active_exam_id || null,
+        is_exam_active: !!formData.active_exam_id,
+        pre_class_video_path: formData.pre_class_video_path,
+        platform: 'zoom',
+        ...(zoomInfo && {
+          zoom_meeting_id: String(zoomInfo.id),
+          zoom_start_url: zoomInfo.start_url,
+          zoom_join_url: zoomInfo.join_url,
+          link: zoomInfo.join_url
+        })
+      };
+
+      if (formData.id) {
+        await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
+      } else {
+        // අලුතින් පන්තියක් සෑදීමේදී එය scheduled_lives වලට සහ calender_events වලට එකතු කිරීම
+        await supabase.from('scheduled_lives').insert([payload]);
+        
+        await supabase.from('calender_events').insert([{
+          date: formData.date,
+          title: formData.title,
+          description: `Zoom Live Class - ${mainClassType}`,
+          status: 'scheduled',
+          target_class_type: mainClassType,
+          class_type: mainClassType,
+          start_time: formData.time
+        }]);
+      }
+
+      setIsModalOpen(false);
+      await fetchInitialData();
+    } catch (err: any) {
+      alert(err.message || "Error saving session.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // පන්තිය සජීවීව ආරම්භ කිරීම හෝ අවසන් කිරීම
-  const toggleLiveStatus = async (id: string, currentStatus: string) => {
-    const nextStatus = currentStatus === 'active' ? 'completed' : 'active';
-    const { error } = await supabase
-      .from('scheduled_lives')
-      .update({ status: nextStatus })
-      .eq('id', id);
-
-    if (!error) {
-      if (nextStatus === 'active') setActiveLiveId(id);
-      else if (activeLiveId === id) setActiveLiveId(null);
-      fetchScheduledLives();
-    }
+  const toggleCheckbox = (className: string) => {
+    setFormData(prev => ({
+      ...prev,
+      target_classes: prev.target_classes.includes(className)
+        ? prev.target_classes.filter(c => c !== className)
+        : [...prev.target_classes, className]
+    }));
   };
 
-  // 02. ඔන්ලයින් එක්සෑම් එකක් නිර්මාණය කර සජීවීව Push කිරීම
-  const handleCreateAndPushExam = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeLiveId) {
-      alert('ප්‍රශ්න පත්‍රයක් ඇටෑච් කිරීමට ප්‍රථම පන්තියක් සජීවීව (Active) පවතී පැවතිය යුතුය.');
-      return;
-    }
-
-    const totalDurationMinutes = durationHours * 60 + durationMinutes + durationSeconds / 60;
-    const selectedClassObj = scheduledClasses.find((c) => c.id === activeLiveId);
-
-    // 1. Exams වගුවට ඇතුලත් කිරීම
-    const { data: examData, error: examError } = await supabase
-      .from('exams')
-      .insert([
-        {
-          title: examTitle,
-          class_type: selectedClassObj?.class_type || '',
-          target_class_type: selectedClassObj?.class_type || '',
-          pdf_url: pdfUrl,
-          duration_minutes: Math.ceil(totalDurationMinutes),
-          total_questions: totalQuestions,
-          correct_answer: correctAnswers,
-          status: 'active'
-        }
-      ])
-      .select();
-
-    if (examError || !examData) {
-      alert('ප්‍රශ්න පත්‍රය සෑදීම අසාර්ථකයි: ' + examError?.message);
-      return;
-    }
-
-    const createdExamId = examData[0].id;
-
-    // 2. දැනට ධාවනය වන සජීවී පන්තියට විභාගය Push කිරීම (Realtime Sync)
-    const { error: liveUpdateError } = await supabase
-      .from('scheduled_lives')
-      .update({
-        is_exam_active: true,
-        active_exam_id: createdExamId
-      })
-      .eq('id', activeLiveId);
-
-    if (!liveUpdateError) {
-      alert('ප්‍රශ්න පත්‍රය සාර්ථකව නිර්මාණය කර සිසුන්ගේ පරිගණක වෙත ක්ෂණිකව Push කරන ලදී!');
-      setExamTitle('');
-      setPdfUrl('');
-      setCorrectAnswers({});
-      fetchScheduledLives();
-    }
-  };
-
+  // Exam Answer Sheet Logic
   const handleAnswerChange = (qNum: number, ans: number) => {
-    setCorrectAnswers((prev) => ({ ...prev, [qNum]: ans }));
+    setExamData(prev => ({
+      ...prev,
+      correct_answer: { ...prev.correct_answer, [qNum]: ans }
+    }));
+  };
+
+  const handleSaveExam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    // DB එකේ int4 (duration_minutes) තිබෙන බැවින් සියලු කාලයන් මිනිත්තු වලට පරිවර්තනය කිරීම
+    const totalMinutes = (examData.durationHours * 60) + examData.durationMinutes + Math.round(examData.durationSeconds / 60);
+
+    try {
+      const payload = {
+        title: examData.title,
+        class_type: examData.class_type || formData.target_classes[0] || 'Theory',
+        target_class_type: examData.class_type || formData.target_classes[0] || 'Theory',
+        pdf_url: examData.pdf_url,
+        total_questions: examData.total_questions,
+        duration_minutes: totalMinutes,
+        correct_answer: examData.correct_answer,
+        status: examData.status || 'pending'
+      };
+
+      let targetExamId = examData.id;
+
+      if (examData.id) {
+        await supabase.from('exams').update(payload).eq('id', examData.id);
+      } else {
+        const { data } = await supabase.from('exams').insert([payload]).select().single();
+        if (data) targetExamId = data.id;
+      }
+
+      // Exam එක Live class එකට Link කිරීම
+      const activeLiveId = currentLiveId || formData.id;
+      if (targetExamId && activeLiveId) {
+        await supabase.from('scheduled_lives')
+          .update({ active_exam_id: targetExamId, is_exam_active: false })
+          .eq('id', activeLiveId);
+      }
+
+      if (!examData.id && targetExamId) {
+        setFormData(prev => ({ ...prev, active_exam_id: targetExamId }));
+      }
+
+      setExamModalOpen(false);
+      setCurrentLiveId(''); 
+      alert("Paper & Answers සාර්ථකව සේව් කරන ලදී!");
+      await fetchInitialData();
+    } catch (error: any) {
+      alert("Exam Save Error: " + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePushExamToStudents = async (liveId: string, examId: string, currentPushState: boolean) => {
+    const nextState = !currentPushState;
+    try {
+      await supabase.from('scheduled_lives').update({ is_exam_active: nextState, active_exam_id: examId }).eq('id', liveId);
+      await supabase.from('exams').update({ status: nextState ? 'active' : 'pending' }).eq('id', examId);
+      await fetchInitialData();
+    } catch (err) {
+      alert("Push operation failed.");
+    }
+  };
+
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    await supabase.from('scheduled_lives').update({ status: newStatus }).eq('id', id);
+    await fetchInitialData();
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirm("මෙම පන්තිය මකා දැමීමට අවශ්‍යද?")) {
+      await supabase.from('scheduled_lives').delete().eq('id', id);
+      await fetchInitialData();
+    }
   };
 
   return (
-    <div className="p-6 bg-gray-900 text-white min-h-screen">
-      <h1 className="text-3xl font-bold mb-8 text-center border-b pb-4 border-gray-700">
-        Admin Live & Exam Control Panel
-      </h1>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* 01. සූම් පන්ති සාදන කොටස */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-          <h2 className="text-xl font-semibold mb-4 text-cyan-400">01. නව සූම් පන්තියක් උපලේඛනගත කිරීම</h2>
-          <form onSubmit={handleCreateClass} className="space-y-4">
-            <div>
-              <label className="block mb-1 text-sm">පන්තියේ මාතෘකාව (Title)</label>
-              <input
-                type="text"
-                className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="उदा: 2026 Theory Live"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block mb-1 text-sm">දිනය</label>
-                <input
-                  type="date"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block mb-1 text-sm">ආරම්භක වේලාව</label>
-                <input
-                  type="time"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block mb-1 text-sm">ඉලක්කගත මාසය</label>
-                <input
-                  type="text"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={targetMonth}
-                  onChange={(e) => setTargetMonth(e.target.value)}
-                  placeholder="उदा: June"
-                />
-              </div>
-              <div>
-                <label className="block mb-1 text-sm">පන්ති වර්ගය (Class Type)</label>
-                <select
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={selectedClassType}
-                  onChange={(e) => setSelectedClassType(e.target.value)}
-                >
-                  <option value="">තෝරන්න...</option>
-                  {classTypes.map((t) => (
-                    <option key={t.id} value={t.class_types}>
-                      {t.class_types}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block mb-1 text-sm">Zoom Join URL (සිසුවා සම්බන්ධ වන ලින්ක් එක)</label>
-              <input
-                type="url"
-                className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                value={zoomJoinUrl}
-                onChange={(e) => setZoomJoinUrl(e.target.value)}
-                placeholder="https://zoom.us/j/..."
-              />
-            </div>
-
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 p-2 rounded font-bold transition">
-              පන්තිය පද්ධතියට එක් කරන්න
-            </button>
-          </form>
+    <div className="w-full bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
+      
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-extrabold text-blue-500 flex items-center gap-2">
+            <Video size={32} className="animate-pulse" /> Live Administration Dashboard
+          </h1>
+          <p className="text-slate-400 text-sm mt-1">සූම් පන්ති සහ ප්‍රශ්න පත්‍ර කළමනාකරණය.</p>
         </div>
-
-        {/* 02. ඔන්ලයින් විභාග Push කරන කොටස */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-          <h2 className="text-xl font-semibold mb-4 text-emerald-400">02. සජීවී විභාගයක් සාදා Push කිරීම</h2>
-          <form onSubmit={handleCreateAndPushExam} className="space-y-4">
-            <div>
-              <label className="block mb-1 text-sm">විභාගයේ සක්‍රීය සජීවී පන්තිය</label>
-              <select
-                className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white font-bold"
-                value={activeLiveId || ''}
-                onChange={(e) => setActiveLiveId(e.target.value || null)}
-              >
-                <option value="">සක්‍රීය පන්තියක් තෝරන්න...</option>
-                {scheduledClasses
-                  .filter((c) => c.status === 'active')
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.title} ({c.class_type})
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block mb-1 text-sm">විභාගයේ නම/මාතෘකාව</label>
-              <input
-                type="text"
-                className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                value={examTitle}
-                onChange={(e) => setExamTitle(e.target.value)}
-                placeholder="उदा: MCQ Paper 01"
-              />
-            </div>
-
-            <div>
-              <label className="block mb-1 text-sm">Google Drive PDF Embed/Preview Link</label>
-              <input
-                type="url"
-                className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                value={pdfUrl}
-                onChange={(e) => setPdfUrl(e.target.value)}
-                placeholder="https://drive.google.com/file/d/.../preview"
-              />
-            </div>
-
-            <div className="grid grid-cols-4 gap-2">
-              <div>
-                <label className="block mb-1 text-xs">ප්‍රශ්න ගණන</label>
-                <input
-                  type="number"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={totalQuestions}
-                  onChange={(e) => setTotalQuestions(Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <label className="block mb-1 text-xs">කාලය (පැය)</label>
-                <input
-                  type="number"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={durationHours}
-                  onChange={(e) => setDurationHours(Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <label className="block mb-1 text-xs">විනාඩි</label>
-                <input
-                  type="number"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={durationMinutes}
-                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                />
-              </div>
-              <div>
-                <label className="block mb-1 text-xs">තත්පර</label>
-                <input
-                  type="number"
-                  className="w-full p-2 rounded bg-gray-700 border border-gray-600 text-white"
-                  value={durationSeconds}
-                  onChange={(e) => setDurationSeconds(Number(e.target.value))}
-                />
-              </div>
-            </div>
-
-            {/* MCQ Answer Marker Matrix */}
-            <div className="bg-gray-900 p-3 rounded border border-gray-700 max-h-48 overflow-y-auto">
-              <p className="text-xs text-gray-400 mb-2">පිළිතුරු පත්‍රය ලකුණු කරන්න (ප්‍රශ්න 1-{totalQuestions}):</p>
-              {Array.from({ length: totalQuestions }).map((_, index) => {
-                const qNum = index + 1;
-                return (
-                  <div key={qNum} className="flex items-center space-x-3 mb-2 text-sm">
-                    <span className="w-8 font-bold text-gray-400">Q{qNum}.</span>
-                    {[1, 2, 3, 4, 5].map((opt) => (
-                      <label key={opt} className="flex items-center space-x-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name={`q-${qNum}`}
-                          checked={correctAnswers[qNum] === opt}
-                          onChange={() => handleAnswerChange(qNum, opt)}
-                          className="text-emerald-500 focus:ring-0"
-                        />
-                        <span>{opt}</span>
-                      </label>
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
-
-            <button
-              type="submit"
-              disabled={!activeLiveId}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed p-2 rounded font-bold transition"
-            >
-              විභාගය සාදා සජීවීව සිසුන්ට Push කරන්න
-            </button>
-          </form>
-        </div>
+        <button 
+          onClick={() => {
+            setFormData({ id: '', title: '', date: '', time: '', target_month: '', target_classes: [], active_exam_id: '', pre_class_video_path: '/videos/waiting-video.mp4', target_class_type: '' });
+            setCurrentLiveId('');
+            setIsModalOpen(true);
+          }}
+          className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl flex items-center gap-2 font-semibold shadow-lg"
+        >
+          <Plus size={20} /> Schedule New Live Class
+        </button>
       </div>
 
-      {/* දැනට පවතින පන්ති ලැයිස්තුව සහ පාලනය */}
-      <div className="mt-8 bg-gray-800 p-6 rounded-lg shadow-lg">
-        <h2 className="text-xl font-semibold mb-4 text-purple-400">පන්ති කළමනාකරණය (Live Room Monitor)</h2>
+      {/* Main Table */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-gray-700 text-gray-400 text-sm">
-                <th className="p-2">පන්තිය</th>
-                <th className="p-2">දිනය & වේලාව</th>
-                <th className="p-2">කාණ්ඩය</th>
-                <th className="p-2">තත්ත්වය</th>
-                <th className="p-2">ක්‍රියාමාර්ග</th>
+            <thead className="bg-slate-950 text-slate-400 text-xs uppercase font-mono border-b border-slate-800">
+              <tr>
+                <th className="p-4">Class Information</th>
+                <th className="p-4">Target Groups</th>
+                <th className="p-4">Live Exam Panel</th>
+                <th className="p-4">Stream Engine</th>
+                <th className="p-4 text-center">Core Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {scheduledClasses.map((c) => (
-                <tr key={c.id} className="border-b border-gray-700 hover:bg-gray-750">
-                  <td className="p-2 font-medium">{c.title}</td>
-                  <td className="p-2 text-sm">
-                    {c.date} | {c.time}
+            <tbody className="divide-y divide-slate-800 text-sm">
+              {lives.map((live) => {
+                const attachedExam = exams.find(e => e.id === live.active_exam_id);
+                const isExamPushedLive = live.is_exam_active;
+
+                return (
+                <tr key={live.id} className="hover:bg-slate-900/50 transition">
+                  <td className="p-4">
+                    <div className="font-bold text-white text-base">{live.title}</div>
+                    <div className="text-slate-400 text-xs mt-1 flex items-center gap-2">
+                      <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time}
+                    </div>
+                    <div className="mt-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/20 bg-emerald-500/5 w-fit px-2 py-0.5 rounded">
+                      Target Month: {live.target_month || 'N/A'}
+                    </div>
                   </td>
-                  <td className="p-2 text-sm">{c.class_type}</td>
-                  <td className="p-2">
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-bold ${
-                        c.status === 'active'
-                          ? 'bg-green-500/20 text-green-400'
-                          : c.status === 'completed'
-                          ? 'bg-gray-500/20 text-gray-400'
-                          : 'bg-yellow-500/20 text-yellow-400'
-                      }`}
-                    >
-                      {c.status.toUpperCase()}
-                    </span>
+
+                  <td className="p-4">
+                    <div className="flex flex-wrap gap-1 max-w-[180px]">
+                      {live.target_classes?.map((c: string) => (
+                        <span key={c} className="bg-slate-950 text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-800">{c}</span>
+                      ))}
+                    </div>
                   </td>
-                  <td className="p-2">
-                    <button
-                      onClick={() => toggleLiveStatus(c.id, c.status)}
-                      className={`text-xs px-3 py-1 rounded font-bold transition ${
-                        c.status === 'active' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
-                      }`}
-                    >
-                      {c.status === 'active' ? 'End Class' : 'Start Live'}
-                    </button>
+                  
+                  {/* EXAM CONTROL COLUMN */}
+                  <td className="p-4">
+                    {attachedExam ? (
+                      <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-w-xs">
+                        <div className="font-bold text-slate-200 text-xs flex justify-between items-center">
+                          <span className="truncate pr-1 text-amber-500">{attachedExam.title}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded ${isExamPushedLive ? 'text-emerald-400 bg-emerald-400/10 border border-emerald-500/20 animate-pulse' : 'text-slate-500'}`}>
+                            {isExamPushedLive ? 'PUSHED' : 'PENDING'}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          <button
+                            onClick={() => handlePushExamToStudents(live.id, attachedExam.id, !!isExamPushedLive)}
+                            className={`text-[11px] px-2.5 py-1 rounded font-bold transition flex items-center gap-1 ${isExamPushedLive ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                          >
+                            {isExamPushedLive ? <EyeOff size={12}/> : <Send size={12}/>}
+                            {isExamPushedLive ? 'Retract Paper' : 'Push Paper Live'}
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setCurrentLiveId(live.id);
+                              setExamData({
+                                id: attachedExam.id,
+                                title: attachedExam.title,
+                                class_type: attachedExam.class_type,
+                                pdf_url: attachedExam.pdf_url || '',
+                                total_questions: attachedExam.total_questions || 50,
+                                durationHours: Math.floor(attachedExam.duration_minutes / 60) || 0,
+                                durationMinutes: attachedExam.duration_minutes % 60 || 0,
+                                durationSeconds: 0,
+                                correct_answer: attachedExam.correct_answer || {},
+                                status: attachedExam.status
+                              });
+                              setExamModalOpen(true);
+                            }}
+                            className="text-[11px] bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1 rounded flex items-center gap-1"
+                          >
+                            <Edit size={12}/> Edit Exam
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setCurrentLiveId(live.id);
+                          setExamData({ 
+                            id: '', 
+                            title: `${live.title} - Exam`, 
+                            class_type: live.target_classes?.[0] || 'Theory', 
+                            pdf_url: '', 
+                            total_questions: 10,
+                            durationHours: 1, durationMinutes: 30, durationSeconds: 0, 
+                            correct_answer: {}, 
+                            status: 'pending' 
+                          });
+                          setExamModalOpen(true);
+                        }}
+                        className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1"
+                      >
+                        <Plus size={12}/> Create & Attach Exam
+                      </button>
+                    )}
+                  </td>
+                  
+                  {/* ZOOM STREAM CONTROL */}
+                  <td className="p-4">
+                    <div className="flex flex-col gap-1.5">
+                      {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-0.5 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
+                      {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> ZOOM LIVE</span>}
+                      {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-0.5 rounded w-fit text-xs">Ended</span>}
+
+                      <div className="flex gap-1 mt-0.5">
+                        {live.status === 'scheduled' && (
+                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center text-white">
+                            <Play size={12} className="mr-1"/> Start Zoom 
+                          </a>
+                        )}
+                        {live.status === 'live' && (
+                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center text-white">
+                            <Square size={12} className="mr-1"/> End Class
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+
+                  {/* ACTION CONTROLS */}
+                  <td className="p-4 text-center">
+                    <div className="flex justify-center gap-2">
+                      <button onClick={() => { setFormData(live); setCurrentLiveId(live.id); setIsModalOpen(true); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded text-amber-400">
+                        <Edit size={16} />
+                      </button>
+                      <button onClick={() => handleDelete(live.id)} className="p-2 bg-slate-800 hover:bg-red-950 text-red-400 rounded">
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* --- LIVE CLASS SCHEDULING MODAL --- */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[50] p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative">
+            <h2 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">
+              {formData.id ? 'Edit Live Session' : 'Schedule New Live Zoom Class'}
+            </h2>
+            <form onSubmit={handleSaveLive} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Class Topic</label>
+                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Date</label>
+                  <input required type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Time</label>
+                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-mono text-emerald-400 uppercase mb-1">Target Month</label>
+                  <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-950 border border-emerald-800 rounded-xl p-3 text-white text-sm font-bold" />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Waiting Video Path</label>
+                  <input required type="text" value={formData.pre_class_video_path} onChange={e => setFormData({...formData, pre_class_video_path: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Select Target Classes (අනිවාර්යයි)</label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
+                  {classConfigs.map((cfg) => {
+                    if (!cfg.class_types) return null; // Using correct DB column name
+                    return (
+                      <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                        <input type="checkbox" checked={formData.target_classes.includes(cfg.class_types)} onChange={() => toggleCheckbox(cfg.class_types)} className="accent-blue-500 w-4 h-4 rounded" />
+                        {cfg.class_types}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 mt-6">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>
+                <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl text-sm font-bold">
+                  {formData.id ? 'Update Class' : 'Schedule Session'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --- EXAM CREATION MODAL --- */}
+      {examModalOpen && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-900 border border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            <h2 className="text-xl font-bold text-white mb-6 border-b border-slate-800 pb-2 flex items-center gap-2">
+              <FileText className="text-amber-500" /> Create / Edit Online Exam
+            </h2>
+            
+            <form onSubmit={handleSaveExam} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">Exam Title</label>
+                  <input required type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 uppercase mb-1">Google Drive PDF URL</label>
+                  <input required type="url" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/file/d/..." className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" />
+                </div>
+              </div>
+
+              {/* DURATION SELECTION */}
+              <div className="bg-slate-950 p-4 border border-slate-800 rounded-xl">
+                <label className="block text-sm font-bold text-slate-300 mb-3">Exam Duration (කාලය තෝරන්න)</label>
+                <div className="flex gap-4">
+                  <div className="flex flex-col">
+                    <label className="text-xs text-slate-500 mb-1">Hours</label>
+                    <input type="number" min="0" value={examData.durationHours} onChange={e => setExamData({...examData, durationHours: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="text-xs text-slate-500 mb-1">Minutes</label>
+                    <input type="number" min="0" max="59" value={examData.durationMinutes} onChange={e => setExamData({...examData, durationMinutes: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                  </div>
+                  <div className="flex flex-col">
+                    <label className="text-xs text-slate-500 mb-1">Seconds</label>
+                    <input type="number" min="0" max="59" value={examData.durationSeconds} onChange={e => setExamData({...examData, durationSeconds: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-300 mb-2">Total Questions Count</label>
+                <input type="number" min="1" max="100" value={examData.total_questions} onChange={e => setExamData({...examData, total_questions: Number(e.target.value)})} className="w-32 bg-slate-950 border border-slate-800 rounded p-2 text-white text-center" />
+              </div>
+
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                <label className="block text-sm font-bold text-amber-500 mb-4">Mark Correct Answers (1-5)</label>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {Array.from({ length: examData.total_questions }, (_, i) => i + 1).map((qNum) => (
+                    <div key={qNum} className="flex items-center gap-2 bg-slate-900 p-2 border border-slate-700 rounded">
+                      <span className="font-bold text-slate-400 w-6">{qNum}.</span>
+                      <select 
+                        required
+                        value={examData.correct_answer[qNum] || ''} 
+                        onChange={(e) => handleAnswerChange(qNum, Number(e.target.value))}
+                        className="bg-slate-800 text-white p-1 rounded w-full border-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        <option value="" disabled>-</option>
+                        {[1, 2, 3, 4, 5].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800 mt-6">
+                <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>
+                <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-black font-bold px-6 py-2 rounded-xl text-sm flex items-center gap-2">
+                  <CheckSquare size={16}/> Save Exam Paper
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
