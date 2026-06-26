@@ -44,16 +44,16 @@ export default function AdminLiveControls() {
   useEffect(() => {
     fetchInitialData();
     
-    // Supabase Realtime Engine
+    // Supabase Realtime Engine සක්‍රීය කිරීම
     const channel = supabase.channel('realtime-admin-live-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchInitialData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, fetchInitialData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => { fetchInitialData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => { fetchInitialData(); })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // වගු එකිනෙකට ස්වාධීනව ලෝඩ් කිරීම (RLS බ්ලොක් වීම් වැළැක්වීමට)
+  // වගු එකිනෙකට ස්වාධීනව ලෝඩ් කිරීම
   const fetchInitialData = async () => {
     try {
       const { data: livesData, error: e1 } = await supabase.from('scheduled_lives').select('*').order('created_at', { ascending: false });
@@ -110,7 +110,7 @@ export default function AdminLiveControls() {
       }
 
       setIsModalOpen(false);
-      fetchInitialData();
+      await fetchInitialData();
     } catch (err: any) {
       alert(err.message || "Error saving session.");
     } finally {
@@ -127,7 +127,7 @@ export default function AdminLiveControls() {
         .eq('id', liveId);
         
       if (error) throw error;
-      fetchInitialData();
+      await fetchInitialData();
     } catch (err: any) {
       alert("Error linking exam: " + err.message);
     } finally {
@@ -138,13 +138,13 @@ export default function AdminLiveControls() {
   const handleDelete = async (id: string) => {
     if (confirm("මෙම පන්තිය මකා දැමීමට අවශ්‍යද?")) {
       await supabase.from('scheduled_lives').delete().eq('id', id);
-      fetchInitialData();
+      await fetchInitialData();
     }
   };
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     await supabase.from('scheduled_lives').update({ status: newStatus }).eq('id', id);
-    fetchInitialData();
+    await fetchInitialData();
   };
 
   const toggleCheckbox = (className: string) => {
@@ -156,7 +156,7 @@ export default function AdminLiveControls() {
     }));
   };
 
-  // Exam සුරැකීමේදී සැනෙකින් Dropdown එකට සහ State එකට Push කිරීම
+  // Exam සුරැකීමේදී සැනෙකින් ලැයිස්තුවට එකතු වීම සහ Live Class එකට Link වීම සකස් කිරීම
   const handleSaveExam = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -181,19 +181,24 @@ export default function AdminLiveControls() {
         if (data) targetExamId = data.id;
       }
 
-      // වහාම දත්ත අලුත් කර ගැනීම
-      const { data: updatedExams } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
-      if (updatedExams) {
-        setExams(updatedExams);
-        if (!examData.id && targetExamId) {
-          // Parent Modal එකේ Dropdown එකට Auto Select කිරීම
-          setFormData(prev => ({ ...prev, active_exam_id: targetExamId }));
-        }
+      // යම් හෙයකින් මෙම Exam එක සෑදුවේ කිසියම් සජීවී පන්තියක සිට කෙලින්ම නම්, එය එම මොහොතේම දත්තගබඩාව තුළද Link කිරීම
+      const activeLiveId = currentLiveId || formData.id;
+      if (targetExamId && activeLiveId) {
+        await supabase.from('scheduled_lives')
+          .update({ active_exam_id: targetExamId, is_exam_active: false })
+          .eq('id', activeLiveId);
+      }
+
+      if (!examData.id && targetExamId) {
+        setFormData(prev => ({ ...prev, active_exam_id: targetExamId }));
       }
 
       setExamModalOpen(false);
-      alert("පිළිතුරු පත්‍රය සාර්ථකව දත්තගබඩාවට යාවත්කාලීන කරන ලදී!");
-      fetchInitialData();
+      setCurrentLiveId(''); 
+      alert("පිළිතුරු පත්‍රය සාර්ථකව දත්තගබඩාවට සහ පාලන පැනලයට යාවත්කාලීන කරන ලදී!");
+      
+      // දත්ත වහාම Refresh කිරීම
+      await fetchInitialData();
     } catch (error: any) {
       alert("Exam Save Error: " + error.message);
     } finally {
@@ -207,7 +212,7 @@ export default function AdminLiveControls() {
       await supabase.from('scheduled_lives').update({ is_exam_active: nextState, active_exam_id: examId }).eq('id', liveId);
       await supabase.from('exams').update({ status: nextState ? 'active' : 'pending' }).eq('id', examId);
       alert(nextState ? "🚀 විභාගය සිසුන්ගේ Screen එකට Push කරන ලදී!" : "🛑 විභාගය සිසුන්ගේ තිරයෙන් ඉවත් කරන ලදී.");
-      fetchInitialData();
+      await fetchInitialData();
     } catch (err) {
       alert("Push operation failed.");
     }
@@ -233,6 +238,7 @@ export default function AdminLiveControls() {
         <button 
           onClick={() => {
             setFormData({ id: '', title: '', date: '', time: '', target_month: '', target_classes: [], active_exam_id: '', pre_class_video_path: '/videos/waiting-video.mp4', target_class_type: '' });
+            setCurrentLiveId('');
             setIsModalOpen(true);
           }}
           className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl flex items-center gap-2 transition font-semibold shadow-lg"
@@ -307,6 +313,7 @@ export default function AdminLiveControls() {
 
                           <button 
                             onClick={() => {
+                              setCurrentLiveId(live.id);
                               setExamData({
                                 id: attachedExam.id,
                                 title: attachedExam.title,
@@ -327,16 +334,37 @@ export default function AdminLiveControls() {
                     ) : (
                       <div className="flex flex-col gap-1.5 max-w-[200px]">
                         <span className="text-slate-500 text-xs italic">No Answer Sheet Linked</span>
-                        {/* Dashboard එකෙන්ම කෙලින්ම Link කිරීමේ Quick Dropdown එක */}
+                        
                         <select
                           onChange={(e) => handleQuickLinkExam(live.id, e.target.value)}
-                          className="bg-slate-950 border border-slate-800 rounded text-xs p-1 text-slate-300 focus:outline-none focus:border-amber-500 cursor-pointer"
+                          className="w-full bg-slate-950 border border-slate-800 rounded text-xs p-1 text-slate-300 focus:outline-none focus:border-amber-500 cursor-pointer"
                         >
                           <option value="">-- Quick Link Exam --</option>
                           {exams.map(ex => (
                             <option key={ex.id} value={ex.id}>{ex.title}</option>
                           ))}
                         </select>
+
+                        {/* කෙලින්ම පේළියෙන්ම අලුත් Exam එකක් සාදා Link කිරීමේ පහසුකම */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCurrentLiveId(live.id);
+                            setExamData({ 
+                              id: '', 
+                              title: `${live.title} - MCQ Paper`, 
+                              class_type: live.target_classes?.[0] || 'Theory', 
+                              pdf_url: '', 
+                              total_questions: 50, 
+                              correct_answer: {}, 
+                              status: 'pending' 
+                            });
+                            setExamModalOpen(true);
+                          }}
+                          className="bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 px-2 py-1 rounded text-[11px] font-bold transition flex items-center justify-center gap-1 mt-0.5"
+                        >
+                          <Plus size={12}/> Create & Link New
+                        </button>
                       </div>
                     )}
                   </td>
@@ -380,7 +408,7 @@ export default function AdminLiveControls() {
                         <BellRing size={13} /> Trigger Attention
                       </button>
                       <div className="flex gap-1.5">
-                        <button onClick={() => { setFormData(live); setIsModalOpen(true); }} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-amber-400 transition">
+                        <button onClick={() => { setFormData(live); setCurrentLiveId(live.id); setIsModalOpen(true); }} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-amber-400 transition">
                           <Edit size={14} />
                         </button>
                         <button onClick={() => handleDelete(live.id)} className="p-1.5 bg-slate-800 hover:bg-red-950 text-red-400 rounded transition">
@@ -468,6 +496,7 @@ export default function AdminLiveControls() {
                   <button 
                     type="button"
                     onClick={() => {
+                      setCurrentLiveId(formData.id || '');
                       setExamData({ id: '', title: `${formData.title || 'Live'} - MCQ Paper`, class_type: formData.target_classes[0] || 'Theory', pdf_url: '', total_questions: 50, correct_answer: {}, status: 'pending' });
                       setExamModalOpen(true);
                     }} 
@@ -494,7 +523,7 @@ export default function AdminLiveControls() {
       {examModalOpen && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-slate-900 border border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl relative">
-            <button onClick={() => setExamModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
+            <button onClick={() => { setExamModalOpen(false); setCurrentLiveId(''); }} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
             <h2 className="text-xl font-bold text-amber-500 mb-4 border-b border-slate-800 pb-2 flex items-center gap-2">
               <FileText /> Dynamic Live MCQ Answer Sheet Wizard
             </h2>
@@ -546,7 +575,7 @@ export default function AdminLiveControls() {
               </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-800 shrink-0 mt-4">
-                <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm transition">Cancel</button>
+                <button type="button" onClick={() => { setExamModalOpen(false); setCurrentLiveId(''); }} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm transition">Cancel</button>
                 <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-2 rounded-lg text-sm font-extrabold transition">
                   {isLoading ? 'Saving Changes...' : 'Save & Compile Sheet'}
                 </button>
