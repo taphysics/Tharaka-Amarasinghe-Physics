@@ -14,8 +14,8 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
   const [activeLive, setActiveLive] = useState<any>(null);
   const [activeExam, setActiveExam] = useState<any>(null);
   const [hasPaid, setHasPaid] = useState<boolean>(false);
-  const [isEligible, setIsEligible] = useState<boolean>(true); // මුලින්ම පන්තිය පෙන්වීමට true කර ඇත
-  const [loading, setLoading] = useState<boolean>(true);
+  const [isEligible, setIsEligible] = useState<boolean>(true); // මුලින්ම ක්ලාස් එක පෙන්වීමට true කර ඇත
+  const [initialLoading, setInitialLoading] = useState<boolean>(true);
 
   // Exam States
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, string>>({});
@@ -32,10 +32,10 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     examSubmittedRef.current = examSubmitted;
   }, [selectedAnswers, examSubmitted]);
 
-  // ප්‍රධාන දත්ත ලබා ගන්නා ශ්‍රිතය (Instant Fetch & Sync)
+  // 🚀 දත්ත පසුබිමෙන් ලබාගන්නා ශ්‍රිතය (Background Fetch - No UI Blocking)
   const fetchInitialData = async () => {
     try {
-      // 1. සක්‍රීය සජීවී පන්තිය ලබා ගැනීම (මෙය සිසුවාගේ ID එක මත රඳා නොපවතින නිසා ක්ෂණිකව ක්‍රියා කරයි)
+      // 1. ඇඩ්මින් දාපු සක්‍රීය ලයිව් ක්ලාස් එක සර්වර් එකෙන් ලබා ගැනීම
       const { data: liveData, error: lError } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -43,17 +43,18 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
         .maybeSingle();
 
       if (lError) throw lError;
-      setActiveLive(liveData);
       
-      // සක්‍රීය පන්තියක් තිබේ නම් විභාගයද පූරණය කරන්න
       if (liveData) {
+        setActiveLive(liveData);
+        
+        // විභාගයක් ඇත්නම් එයද ලබාගන්න
         if (liveData.is_exam_active && liveData.active_exam_id) {
-          await fetchActiveExam(liveData.active_exam_id);
+          fetchActiveExam(liveData.active_exam_id);
         } else {
           setActiveExam(null);
         }
 
-        // 2. සිසුවාගේ ID එක ලැබී තිබේ නම් පමණක් ගෙවීම් සහ පන්ති අනුකූලතාවය බලන්න
+        // 2. සිසුවාගේ ID එක තිබේ නම් පමණක් පසුබිමෙන් ගෙවීම් පරීක්ෂා කරන්න
         if (studentId) {
           const { data: studentData, error: sError } = await supabase
             .from('students')
@@ -62,9 +63,8 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
             .maybeSingle();
 
           if (sError) throw sError;
-          setStudent(studentData);
-
           if (studentData) {
+            setStudent(studentData);
             const currentMonth = liveData.target_month; 
             const isFreePlan = studentData.plan_type?.toLowerCase() === 'free';
             
@@ -84,9 +84,9 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
         setActiveExam(null);
       }
     } catch (error) {
-      console.error("Error loading live class data:", error);
+      console.error("Error fetching live data:", error);
     } finally {
-      setLoading(false); // කුමන තත්ත්වයකදී වුවද Loading Screen එක අයින් කරයි
+      setInitialLoading(false);
     }
   };
 
@@ -128,12 +128,12 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     }
   };
 
-  // 🔄 Supabase Realtime - ඇඩ්මින් පැනලයේ වෙනස්කම් ක්ෂණයකින් අප්ඩේට් වීමට
+  // 🔄 Realtime Synchronization
   useEffect(() => {
     fetchInitialData();
 
     const liveChannel = supabase
-      .channel('live-global-sync')
+      .channel('live-instant-sync')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'scheduled_lives' },
@@ -148,11 +148,11 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     };
   }, [studentId]);
 
-  // විභාගයේ ටයිමරය (Timer)
+  // විභාගයේ ටයිමරය
   useEffect(() => {
     if (!activeExam || examSubmitted || timeLeft <= 0) {
       if (timeLeft === 0 && activeExam && !examSubmitted) {
-        handleExamSubmit(true); // Auto-Submit
+        handleExamSubmit(true);
       }
       return;
     }
@@ -199,16 +199,16 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
       setExamSubmitted(true);
     } catch (error) {
       console.error("Exam submission error:", error);
-      alert("පිළිතුරු පත්‍රය සුරැකීමට නොහැකි විය.");
     }
   };
 
-  // සූම් ලින්ක් එක ආරක්ෂිතව ලබා ගැනීම
+  // 🛠️ සූම් ඇප් එකේ පහසුකම් වෙබ් එකට දෙන Embed URL Generator එක
   const getZoomEmbedUrl = () => {
     if (!activeLive) return '';
     const rawUrl = activeLive.zoom_join_url || activeLive.link || '';
     if (!rawUrl) return '';
     
+    // සාමාන්‍ය සූම් ලින්ක් එකක් Web App App Experience එකක් බවට පරිවර්තනය කිරීම
     if (rawUrl.includes('/j/')) {
       return rawUrl.replace('/j/', '/wc/join/');
     }
@@ -221,29 +221,10 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <Loader2 className="w-12 h-12 animate-spin text-blue-600 mb-2" />
-        <p className="text-gray-600 font-medium">දත්ත පූරණය වෙමින් පවතී...</p>
-      </div>
-    );
-  }
-
-  if (!activeLive) {
-    return (
-      <div className="bg-yellow-50 border-l-4 border-yellow-400 p-6 rounded-lg text-center my-8 max-w-4xl mx-auto">
-        <Video className="w-12 h-12 text-yellow-500 mx-auto mb-3" />
-        <h3 className="text-lg font-bold text-yellow-800">දැනට සක්‍රීය සජීවී පන්ති නොමැත.</h3>
-        <p className="text-yellow-700 mt-1">කරුණාකර පන්තිය ආරම්භ වන තෙක් රැඳී සිටින්න.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="w-full max-w-7xl mx-auto p-4">
       
-      {/* 🛑 අවහිර කර ඇති විට පෙන්වන UI එක */}
+      {/* 🛑 ගෙවීම් අවහිර කර ඇති විට පමණක් පෙන්වන කොටස */}
       {!isEligible ? (
         <div className="w-full bg-gray-100 border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center flex flex-col items-center justify-center min-h-[450px] shadow-sm">
           <div className="bg-red-100 p-4 rounded-full text-red-500 mb-4 animate-pulse">
@@ -251,42 +232,59 @@ export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
           </div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">සජීවී පන්තිය අවහිර කර ඇත (Disabled)</h2>
           <p className="text-gray-600 max-w-md mb-6">
-            මෙම සජීවී පන්තියට සම්බන්ධ වීමට නම් ඔබ අදාළ පන්තියට ලියාපදිංචි වී සහ මෙම මාසය ({activeLive.target_month}) සඳහා ගෙවීම් සම්පූර්ණ කර තිබිය යුතුය.
+            මෙම සජීවී පන්තියට සම්බන්ධ වීමට නම් ඔබ අදාළ පන්තියට ලියාපදිංචි වී සහ මෙම මාසය සඳහා ගෙවීම් සම්පූර්ණ කර තිබිය යුතුය.
           </p>
         </div>
       ) : (
         
-        /* ✅ ප්‍රධාන සජීවී පන්ති මණ්ඩපය (Instant Zoom Viewer) */
+        /* ✅ ප්‍රධාන සජීවී පන්ති මණ්ඩපය (Instant Rendering) */
         <div className="space-y-6">
           <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-4 rounded-xl shadow-md flex justify-between items-center">
             <div>
               <span className="bg-red-500 text-xs uppercase px-2 py-1 rounded-md font-extrabold tracking-wider animate-pulse mr-2">LIVE</span>
-              <h1 className="text-xl font-bold inline-block align-middle">{activeLive.title}</h1>
+              <h1 className="text-xl font-bold inline-block align-middle">
+                {activeLive ? activeLive.title : "සජීවී පන්තිය පූරණය වෙමින්..."}
+              </h1>
             </div>
-            <p className="text-sm bg-white/20 px-3 py-1 rounded-full">{activeLive.target_class_type} - {activeLive.target_month}</p>
+            {activeLive && (
+              <p className="text-sm bg-white/20 px-3 py-1 rounded-full">
+                {activeLive.target_class_type} - {activeLive.target_month}
+              </p>
+            )}
           </div>
 
-          <div className={`grid grid-cols-1 ${activeLive.is_exam_active && activeExam ? 'lg:grid-cols-2' : 'grid-cols-1'} gap-6 transition-all duration-500`}>
+          {/* Grid Layout */}
+          <div className={`grid grid-cols-1 ${activeLive?.is_exam_active && activeExam ? 'lg:grid-cols-2' : 'grid-cols-1'} gap-6 transition-all duration-500`}>
             
-            {/* 🎥 සූම් ප්ලේයර් එක (ලෝඩ් වීම් ප්‍රමාදයකින් තොරව ක්ෂණිකව පෙන්වයි) */}
-            <div className="bg-black rounded-2xl overflow-hidden shadow-xl border border-gray-800 flex flex-col aspect-video min-h-[450px]">
-              {getZoomEmbedUrl() ? (
+            {/* 🎥 සූම් ප්ලේයර් එක (ලෝඩ් වෙනකන් බලන් ඉන්නේ නැතුව ක්ෂණිකව පෙන්වයි) */}
+            <div className="bg-black rounded-2xl overflow-hidden shadow-xl border border-gray-800 flex flex-col aspect-video min-h-[450px] relative">
+              {initialLoading ? (
+                // 1. පේජ් එක ලෝඩ් වන මුල් තත්පරයේ ප්ලේයර් එක ඇතුළේ පෙන්වන Loader එක
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900">
+                  <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-2" />
+                  <p className="text-sm text-gray-400">සජීවී පන්තියට සම්බන්ධ වෙමින් පවතී...</p>
+                </div>
+              ) : activeLive && getZoomEmbedUrl() ? (
+                // 2. සූම් ඇප් එකේ සේම සියලුම පහසුකම් (Mic, Camera, Share) සහිත නිවැරදි Iframe එක
                 <iframe
                   src={getZoomEmbedUrl()}
-                  allow="microphone; camera; fullscreen; speaker; display-capture"
+                  // Zoom Native App පහසුකම් සක්‍රීය කිරීමට මෙම allow ටැග් එක අනිවාර්ය වේ
+                  allow="microphone; camera; fullscreen; speaker; display-capture; clipboard-write; encrypted-media"
                   className="w-full h-full border-none flex-grow"
                   title="Zoom Live Class"
                 />
               ) : (
-                <div className="flex flex-col items-center justify-center text-gray-400 h-full p-6">
-                  <AlertCircle className="w-12 h-12 mb-2 text-gray-500" />
-                  <p>සූම් සබැඳිය සූදානම් වෙමින් පවතී...</p>
+                // 3. ඇඩ්මින් පැනලයෙන් පන්තියක් දමා නොමැති නම් පමණක් පෙන්වන කොටස
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-slate-950 p-6 text-center">
+                  <Video className="w-12 h-12 mb-3 text-yellow-500 animate-pulse" />
+                  <h3 className="text-lg font-bold text-white">දැනට සක්‍රීය සජීවී පන්ති නොමැත.</h3>
+                  <p className="text-gray-500 text-sm mt-1">කරුණාකර පන්තිය ආරම්භ වන තෙක් රැඳී සිටින්න.</p>
                 </div>
               )}
             </div>
 
-            {/* 📝 ඔන්ලයින් විභාගය (ඇඩ්මින් සක්‍රීය කළ විට පමණක් පසෙකින් දිස්වේ) */}
-            {activeLive.is_exam_active && activeExam && (
+            {/* 📝 ඔන්ලයින් විභාගය (ඇඩ්මින් සක්‍රීය කළහොත් පමණක් පසෙකින් දිස්වේ) */}
+            {activeLive?.is_exam_active && activeExam && (
               <div className="bg-white rounded-2xl shadow-xl border border-gray-200 flex flex-col h-[550px] lg:h-auto overflow-hidden animate-fade-in">
                 
                 <div className="bg-slate-900 text-white p-4 flex justify-between items-center border-b border-slate-700">
