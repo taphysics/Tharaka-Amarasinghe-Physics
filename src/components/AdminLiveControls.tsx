@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Video, Play, Square, Edit, Eye, Plus, Users, Clock, Trash2, CheckSquare, AlertCircle, BookOpen, X, FileText, BellRing, Target, RefreshCw } from 'lucide-react';
+import { Video, Play, Square, Edit, Eye, Plus, Users, Clock, Trash2, CheckSquare, AlertCircle, BookOpen, X, FileText, BellRing, Target, RefreshCw, Send, EyeOff } from 'lucide-react';
 
 export default function AdminLiveControls() {
   const [lives, setLives] = useState<any[]>([]);
@@ -23,7 +23,7 @@ export default function AdminLiveControls() {
     title: '',
     date: '',
     time: '',
-    target_month: '', // Format: YYYY-MM
+    target_month: '', 
     target_classes: [] as string[],
     active_exam_id: '',
     pre_class_video_path: '/videos/waiting-video.mp4',
@@ -38,14 +38,14 @@ export default function AdminLiveControls() {
     pdf_url: '',
     total_questions: 50,
     correct_answer: {} as Record<string, number>,
-    status: 'pending' // pending, active, completed
+    status: 'pending' 
   });
 
   useEffect(() => {
     fetchInitialData();
     
-    // Realtime Listeners for instant updates
-    const channel = supabase.channel('realtime-admin-live')
+    // Supabase Realtime Listener - දත්ත වෙනස් වූ සැණින් ඇඩ්මින් පුවරුව යාවත්කාලීන වේ
+    const channel = supabase.channel('realtime-admin-live-dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchInitialData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, fetchInitialData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attention_responses' }, () => {
@@ -59,14 +59,14 @@ export default function AdminLiveControls() {
   const fetchInitialData = async () => {
     const { data: livesData } = await supabase.from('scheduled_lives').select('*').order('created_at', { ascending: false });
     const { data: configsData } = await supabase.from('class_types_config').select('*');
-    const { data: examsData } = await supabase.from('exams').select('*').order('title', { ascending: true });
+    const { data: examsData } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
     
     if (livesData) setLives(livesData);
     if (configsData) setClassConfigs(configsData);
     if (examsData) setExams(examsData);
   };
 
-  // --- Live Class Actions ---
+  // --- Live Class Core Functions ---
   const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -77,7 +77,7 @@ export default function AdminLiveControls() {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
           body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
         });
-        if (edgeError) throw new Error("Zoom meeting creation failed.");
+        if (edgeError) throw new Error("Zoom Edge Function error.");
         zoomInfo = edgeData;
       }
 
@@ -109,7 +109,7 @@ export default function AdminLiveControls() {
       setIsModalOpen(false);
       fetchInitialData();
     } catch (err: any) {
-      alert(err.message || "Failed to save live class.");
+      alert(err.message || "Error processing operation.");
     } finally {
       setIsLoading(false);
     }
@@ -124,6 +124,7 @@ export default function AdminLiveControls() {
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     await supabase.from('scheduled_lives').update({ status: newStatus }).eq('id', id);
+    fetchInitialData();
   };
 
   const toggleCheckbox = (className: string) => {
@@ -135,39 +136,48 @@ export default function AdminLiveControls() {
     }));
   };
 
-  // --- Exam Actions ---
+  // --- Exam Creation & Instant Update Functions ---
   const handleSaveExam = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     try {
       const payload = {
         title: examData.title,
-        class_type: examData.class_type,
+        class_type: examData.class_type || formData.target_classes[0] || 'Theory',
         pdf_url: examData.pdf_url,
         total_questions: examData.total_questions,
         correct_answer: examData.correct_answer,
-        status: examData.status
+        status: examData.status || 'pending'
       };
 
-      let newExamId = examData.id;
+      let targetExamId = examData.id;
 
       if (examData.id) {
-        await supabase.from('exams').update(payload).eq('id', examData.id);
+        // Edit Existing Answer Sheet
+        const { error } = await supabase.from('exams').update(payload).eq('id', examData.id);
+        if (error) throw error;
       } else {
-        const { data } = await supabase.from('exams').insert([payload]).select().single();
-        if (data) newExamId = data.id;
+        // Create New Answer Sheet
+        const { data, error } = await supabase.from('exams').insert([payload]).select().single();
+        if (error) throw error;
+        if (data) targetExamId = data.id;
+      }
+
+      // Sync and force state refresh before closing modal
+      const { data: updatedExams } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
+      if (updatedExams) {
+        setExams(updatedExams);
+        // Automatically link the newly created exam to the main Live Class configuration state
+        if (!examData.id && targetExamId) {
+          setFormData(prev => ({ ...prev, active_exam_id: targetExamId }));
+        }
       }
 
       setExamModalOpen(false);
-      fetchInitialData();
-      
-      // Select the newly created exam in the live form
-      if (newExamId) {
-         setFormData(prev => ({ ...prev, active_exam_id: newExamId }));
-      }
-    } catch (error) {
+      alert("පිළිතුරු පත්‍රය සාර්ථකව දත්තගබඩාවට යාවත්කාලීන කරන ලදී!");
+    } catch (error: any) {
       console.error(error);
-      alert("Error saving exam");
+      alert("Exam Save Error: " + error.message);
     } finally {
       setIsLoading(false);
     }
@@ -183,61 +193,64 @@ export default function AdminLiveControls() {
     }));
   };
 
-  const toggleExamStatus = async (examId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'pending' ? 'active' : 'pending';
-    await supabase.from('exams').update({ status: newStatus }).eq('id', examId);
+  // --- Live Push & Retract System for Students Screen ---
+  const handlePushExamToStudents = async (liveId: string, examId: string, currentPushState: boolean) => {
+    const nextState = !currentPushState;
+    setIsLoading(true);
+    try {
+      // 1. Update live class stream exam activation flag
+      await supabase.from('scheduled_lives')
+        .update({ is_exam_active: nextState, active_exam_id: examId })
+        .eq('id', liveId);
+
+      // 2. Update status mapping inside exams table
+      await supabase.from('exams')
+        .update({ status: nextState ? 'active' : 'pending' })
+        .eq('id', examId);
+
+      alert(nextState ? "🚀 විභාගය සහ පිළිතුරු පත්‍රය සිසුන්ගේ ප්ලෙයර් එකට සජීවීව Push කරන ලදී!" : "🛑 විභාගය සිසුන්ගේ තිරයෙන් ඉවත් කරන ලදී (Retracted).");
+      fetchInitialData();
+    } catch (err) {
+      alert("Push failed, check console.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // --- Attention Tracker ---
+  // --- Attention Tracker Code ---
   const triggerAttention = async (liveId: string) => {
-    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString(); // 10 minutes from now
-    
-    // Clear previous responses for this live session
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString(); 
     await supabase.from('attention_responses').delete().eq('live_id', liveId);
-    
-    // Send trigger
-    await supabase.from('scheduled_lives')
-      .update({ attention_trigger: true, attention_expires_at: expiresAt })
-      .eq('id', liveId);
-      
-    // Auto reset in UI after 10 mins (though DB timestamp prevents students from seeing it after)
-    setTimeout(async () => {
-      await supabase.from('scheduled_lives').update({ attention_trigger: false }).eq('id', liveId);
-    }, 10 * 60000);
-
-    alert("Attention Pop-up sent to all active viewers! It will expire in 10 minutes.");
+    await supabase.from('scheduled_lives').update({ attention_trigger: true, attention_expires_at: expiresAt }).eq('id', liveId);
+    alert("Attention alert dispatched to all active students!");
   };
 
   const fetchAttentionData = async (liveId: string) => {
     setCurrentLiveId(liveId);
-    
-    // 1. Get Live Viewers (Students actively in the session)
     const checkTime = new Date(Date.now() - 3 * 60000).toISOString();
     const { data: attendance } = await supabase.from('live_attendance').select('username').eq('live_class_id', liveId).gt('last_heartbeat', checkTime);
-    
-    // 2. Get Attention Responses
     const { data: responses } = await supabase.from('attention_responses').select('username').eq('live_id', liveId);
     
-    const allActiveUsernames = (attendance || []).map(a => a.username);
-    const respondedUsernames = (responses || []).map(r => r.username);
+    const allActive = (attendance || []).map(a => a.username);
+    const responded = (responses || []).map(r => r.username);
     
-    const marked = respondedUsernames;
-    const unmarked = allActiveUsernames.filter(u => !respondedUsernames.includes(u));
-
-    setAttentionData({ marked, unmarked });
+    setAttentionData({
+      marked: responded,
+      unmarked: allActive.filter(u => !responded.includes(u))
+    });
     setAttentionModalOpen(true);
   };
 
   return (
     <div className="w-full bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
       
-      {/* Header Panel */}
+      {/* Upper Control Banner */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-blue-500 flex items-center gap-2">
-            <Video size={32} className="animate-pulse" /> Manage Scheduled Live Classes
+            <Video size={32} className="animate-pulse" /> Live Administration Dashboard
           </h1>
-          <p className="text-slate-400 text-sm mt-1">සූම් පන්ති, Exam ආන්සර් ශීට් සහ සිසුන්ගේ අවධානය (Attention) පාලනය කිරීමේ පුවරුව.</p>
+          <p className="text-slate-400 text-sm mt-1">සූම් පන්ති, ප්‍රශ්න පත්‍ර (Push Paper) සහ සිසුන්ගේ Attention එකවර පාලනය කරන ප්‍රධාන පැනලය.</p>
         </div>
         <button 
           onClick={() => {
@@ -246,26 +259,27 @@ export default function AdminLiveControls() {
           }}
           className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-3 rounded-xl flex items-center gap-2 transition font-semibold shadow-lg shadow-blue-600/20"
         >
-          <Plus size={20} /> Schedule Zoom Class
+          <Plus size={20} /> Schedule New Live Class
         </button>
       </div>
 
-      {/* Main Grid/Table */}
+      {/* Main Table Interface */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-950 text-slate-400 text-xs uppercase font-mono border-b border-slate-800">
               <tr>
-                <th className="p-4">Class Details & Target Month</th>
-                <th className="p-4">Live Exam / Answer Sheet</th>
-                <th className="p-4">Live Stream Controls</th>
-                <th className="p-4 text-center">Attention & Actions</th>
+                <th className="p-4">Class Information</th>
+                <th className="p-4">Target Groups</th>
+                <th className="p-4">Live Exam Panel & Push Controls</th>
+                <th className="p-4">Stream Engine</th>
+                <th className="p-4 text-center">Attention / Core Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
               {lives.map((live) => {
                 const attachedExam = exams.find(e => e.id === live.active_exam_id);
-                const isAttentionActive = live.attention_trigger && new Date(live.attention_expires_at) > new Date();
+                const isExamPushedLive = live.is_exam_active;
 
                 return (
                 <tr key={live.id} className="hover:bg-slate-900/50 transition">
@@ -274,92 +288,115 @@ export default function AdminLiveControls() {
                     <div className="text-slate-400 text-xs mt-1 flex items-center gap-2">
                       <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time}
                     </div>
-                    <div className="mt-2 text-xs text-amber-500 border border-amber-500/20 bg-amber-500/10 w-fit px-2 py-0.5 rounded">
-                      Month: {live.target_month || 'N/A'}
+                    <div className="mt-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/20 bg-emerald-500/5 w-fit px-2 py-0.5 rounded">
+                      Target Month: {live.target_month || 'Not Configured'}
+                    </div>
+                  </td>
+
+                  <td className="p-4">
+                    <div className="flex flex-wrap gap-1 max-w-[180px]">
+                      {live.target_classes?.map((c: string) => (
+                        <span key={c} className="bg-slate-950 text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-800">{c}</span>
+                      ))}
                     </div>
                   </td>
                   
-                  {/* Live Exam Section */}
+                  {/* LIVE EXAM & PUSH BOX */}
                   <td className="p-4">
                     {attachedExam ? (
-                      <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-lg border border-slate-800">
-                        <div className="font-bold text-blue-400 text-xs flex justify-between">
-                          <span>{attachedExam.title} ({attachedExam.total_questions} Qs)</span>
-                          {attachedExam.status === 'active' ? (
-                             <span className="text-emerald-400 flex items-center gap-1 animate-pulse"><Target size={12}/> Live</span>
+                      <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-w-xs">
+                        <div className="font-bold text-slate-200 text-xs flex justify-between items-center">
+                          <span className="truncate pr-1 text-amber-500">{attachedExam.title}</span>
+                          {isExamPushedLive ? (
+                             <span className="text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider animate-pulse flex items-center gap-1 border border-emerald-500/20"><Send size={10}/> Pushed</span>
                           ) : (
-                             <span className="text-slate-500">Pending</span>
+                             <span className="text-slate-500 text-[10px]">Pending Push</span>
                           )}
                         </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => toggleExamStatus(attachedExam.id, attachedExam.status)} 
-                            className={`text-[10px] px-2 py-1 rounded font-bold transition ${attachedExam.status === 'active' ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}
+
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {/* Main Push Button requested by user */}
+                          <button
+                            onClick={() => handlePushExamToStudents(live.id, attachedExam.id, !!isExamPushedLive)}
+                            className={`text-[11px] px-2.5 py-1 rounded font-bold transition flex items-center gap-1 ${isExamPushedLive ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
                           >
-                            {attachedExam.status === 'active' ? 'Stop Exam' : 'Start Exam'}
+                            {isExamPushedLive ? <EyeOff size={12}/> : <Send size={12}/>}
+                            {isExamPushedLive ? 'Retract Paper' : 'Push Paper Live'}
                           </button>
+
+                          {/* Anytime Edit Button */}
                           <button 
-                            onClick={() => { setExamData(attachedExam); setExamModalOpen(true); }}
-                            className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded flex items-center gap-1 transition"
+                            onClick={() => {
+                              setExamData({
+                                id: attachedExam.id,
+                                title: attachedExam.title,
+                                class_type: attachedExam.class_type,
+                                pdf_url: attachedExam.pdf_url || '',
+                                total_questions: attachedExam.total_questions || 50,
+                                correct_answer: attachedExam.correct_answer || {},
+                                status: attachedExam.status
+                              });
+                              setExamModalOpen(true);
+                            }}
+                            className="text-[11px] bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1 rounded flex items-center gap-1 transition font-medium"
                           >
-                            <Edit size={10}/> Edit Answers
+                            <Edit size={12}/> Edit Answers
                           </button>
                         </div>
                       </div>
                     ) : (
-                      <span className="text-slate-500 text-xs bg-slate-950 px-2 py-1 rounded border border-slate-800">No Exam Attached</span>
+                      <span className="text-slate-500 text-xs italic">No Answer Sheet Linked</span>
                     )}
                   </td>
                   
-                  {/* Status Controls */}
+                  {/* STREAM CONTROL ENGINE */}
                   <td className="p-4">
-                    <div className="flex flex-col gap-2">
-                      {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-1 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
-                      {live.status === 'pre_class' && <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded w-fit text-xs font-bold animate-pulse">Pre-Class Video Loop</span>}
-                      {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/30 px-2 py-1 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> Live on Zoom</span>}
-                      {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-1 rounded w-fit text-xs border border-slate-800">Ended</span>}
+                    <div className="flex flex-col gap-1.5">
+                      {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-0.5 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
+                      {live.status === 'pre_class' && <span className="text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold animate-pulse">Pre-Video Loop</span>}
+                      {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> ZOOM LIVE</span>}
+                      {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-0.5 rounded w-fit text-xs">Ended</span>}
 
-                      <div className="flex gap-1 mt-1">
+                      <div className="flex gap-1 mt-0.5">
                         {live.status === 'scheduled' && (
-                          <button onClick={() => handleStatusChange(live.id, 'pre_class')} className="bg-amber-600 hover:bg-amber-500 px-2 py-1 rounded text-xs transition">
+                          <button onClick={() => handleStatusChange(live.id, 'pre_class')} className="bg-amber-600 hover:bg-amber-500 text-[11px] px-2 py-0.5 rounded transition">
                             Start Video
                           </button>
                         )}
                         {(live.status === 'scheduled' || live.status === 'pre_class') && (
-                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1 text-white">
-                            <Play size={12} fill="currentColor"/> Start Zoom
+                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-2 py-0.5 rounded font-bold flex items-center gap-0.5 text-white">
+                            <Play size={10} fill="currentColor"/> Start Zoom
                           </a>
                         )}
                         {live.status === 'live' && (
-                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1">
-                            <Square size={12} fill="currentColor"/> End Class
+                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-2 py-0.5 rounded font-bold flex items-center gap-0.5">
+                            <Square size={10} fill="currentColor"/> End Class
                           </button>
                         )}
                       </div>
                     </div>
                   </td>
 
-                  {/* Actions & Attention */}
+                  {/* ACTION CONTROLS */}
                   <td className="p-4 text-center">
                     <div className="flex items-center justify-center gap-2 mb-2">
                       <button 
                         onClick={() => triggerAttention(live.id)} 
                         disabled={live.status !== 'live'}
-                        className={`px-3 py-1.5 rounded text-xs font-bold flex items-center gap-1 transition ${isAttentionActive ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse' : live.status === 'live' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
-                        title="Send Attention Pop-up to all students"
+                        className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition ${live.status === 'live' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'}`}
                       >
-                        <BellRing size={14} /> {isAttentionActive ? 'Attention Active' : 'Mark Attention'}
+                        <BellRing size={13} /> Trigger Attention
                       </button>
-                      <button onClick={() => fetchAttentionData(live.id)} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 transition" title="View Attention Stats">
-                        <Users size={16} />
+                      <button onClick={() => fetchAttentionData(live.id)} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 transition" title="Attention Report">
+                        <Users size={14} />
                       </button>
                     </div>
-                    <div className="flex items-center justify-center gap-2 border-t border-slate-800 pt-2">
-                      <button onClick={() => { setFormData(live); setIsModalOpen(true); }} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-amber-400 transition" title="Edit Class">
-                        <Edit size={16} />
+                    <div className="flex items-center justify-center gap-2 border-t border-slate-800/60 pt-2">
+                      <button onClick={() => { setFormData(live); setIsModalOpen(true); }} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-amber-400 transition" title="Modify Session Settings">
+                        <Edit size={14} />
                       </button>
-                      <button onClick={() => handleDelete(live.id)} className="p-1.5 bg-slate-800 hover:bg-red-950 text-red-400 rounded transition" title="Delete">
-                        <Trash2 size={16} />
+                      <button onClick={() => handleDelete(live.id)} className="p-1.5 bg-slate-800 hover:bg-red-950 text-red-400 rounded transition">
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </td>
@@ -370,18 +407,18 @@ export default function AdminLiveControls() {
         </div>
       </div>
 
-      {/* --- LIVE CLASS SCHEDULING MODAL --- */}
+      {/* --- LIVE CLASS SCHEDULING / EDIT MODAL --- */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[50] p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[50] p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl relative">
             <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
             <h2 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">
-              {formData.id ? 'Edit Live Session' : 'Schedule New Live Zoom Class'}
+              {formData.id ? 'Edit Live Session Settings' : 'Schedule New Live Zoom Class'}
             </h2>
             <form onSubmit={handleSaveLive} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Class Topic / Title</label>
-                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm" placeholder="e.g. 2026 Theory Paper Class" />
+                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -397,9 +434,8 @@ export default function AdminLiveControls() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1 text-emerald-400">Target Month (Calendar Picker)</label>
-                  {/* Native month picker outputs YYYY-MM which is perfect for database filtering */}
-                  <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-emerald-500 transition text-sm text-center" />
+                  <label className="block text-xs font-mono text-emerald-400 uppercase mb-1">Target Month (Calendar Picker)</label>
+                  <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-950 border border-emerald-800 rounded-xl p-3 text-white focus:outline-none focus:border-emerald-500 transition text-sm text-center font-bold" />
                 </div>
                 <div>
                   <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Pre-Class Video (Path)</label>
@@ -407,27 +443,35 @@ export default function AdminLiveControls() {
                 </div>
               </div>
 
-              {/* Real DB Class Types Configuration */}
+              {/* RETRIEVED FROM class_type COLUMN (FIXED) */}
               <div>
                 <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Select Target Classes (සිසුන්ට දර්ශනය වන පන්ති වර්‍ග)</label>
                 <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
-                  {classConfigs.map((cfg) => (
-                    <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:bg-slate-900 p-2 rounded border border-transparent hover:border-slate-800 transition">
-                      <input type="checkbox" checked={formData.target_classes.includes(cfg.class_types)} onChange={() => toggleCheckbox(cfg.class_types)} className="accent-blue-500 w-4 h-4 rounded" />
-                      {cfg.class_types}
-                    </label>
-                  ))}
-                  {classConfigs.length === 0 && <div className="text-slate-500 text-xs col-span-2">No class types found in class_types_config table.</div>}
+                  {classConfigs.map((cfg) => {
+                    const cName = cfg.class_type || ''; // Strictly reading from class_type column requested
+                    if (!cName) return null;
+                    return (
+                      <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:bg-slate-900 p-2 rounded border border-transparent hover:border-slate-800 transition">
+                        <input type="checkbox" checked={formData.target_classes.includes(cName)} onChange={() => toggleCheckbox(cName)} className="accent-blue-500 w-4 h-4 rounded" />
+                        {cName}
+                      </label>
+                    );
+                  })}
+                  {classConfigs.length === 0 && <div className="text-slate-500 text-xs p-2">class_types_config වගුවේ දත්ත හමු නොවිණි.</div>}
                 </div>
               </div>
 
-              {/* Live Exam Attachment Box */}
+              {/* ATTACH LIVE EXAM SECTION (REF: image_bc9e0a.png FIX) */}
               <div className="bg-slate-950 border border-slate-800 p-4 rounded-xl">
-                <label className="block text-xs font-bold text-amber-400 uppercase mb-3 flex items-center gap-2">
-                  <FileText size={16}/> Attach Live Exam (Answer Sheet & Paper)
+                <label className="block text-xs font-bold text-amber-500 uppercase mb-2 flex items-center gap-1">
+                  <FileText size={14}/> Attach Live Exam (Answer Sheet & Paper)
                 </label>
                 <div className="flex gap-2">
-                  <select value={formData.active_exam_id || ''} onChange={e => setFormData({...formData, active_exam_id: e.target.value})} className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-amber-500 transition text-sm">
+                  <select 
+                    value={formData.active_exam_id || ''} 
+                    onChange={e => setFormData({...formData, active_exam_id: e.target.value})} 
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-amber-500 transition text-sm"
+                  >
                     <option value="">-- No Exam Attached --</option>
                     {exams.map(ex => (
                       <option key={ex.id} value={ex.id}>{ex.title} ({ex.total_questions} Qs)</option>
@@ -436,10 +480,10 @@ export default function AdminLiveControls() {
                   <button 
                     type="button"
                     onClick={() => {
-                      setExamData({ id: '', title: `${formData.title} - Exam`, class_type: formData.target_classes[0] || '', pdf_url: '', total_questions: 50, correct_answer: {}, status: 'pending' });
+                      setExamData({ id: '', title: `${formData.title || 'Live'} - MCQ Paper`, class_type: formData.target_classes[0] || '', pdf_url: '', total_questions: 50, correct_answer: {}, status: 'pending' });
                       setExamModalOpen(true);
                     }} 
-                    className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-1 shadow-lg shadow-amber-600/20"
+                    className="bg-amber-600 hover:bg-amber-500 text-black px-4 py-2 rounded-lg text-sm font-extrabold transition flex items-center gap-1 shrink-0"
                   >
                     <Plus size={16}/> Create New
                   </button>
@@ -450,7 +494,7 @@ export default function AdminLiveControls() {
                 <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm transition">Cancel</button>
                 <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2">
                   {isLoading ? <RefreshCw className="animate-spin" size={16}/> : <CheckSquare size={16}/>} 
-                  {formData.id ? 'Save Changes' : 'Schedule Live'}
+                  {formData.id ? 'Save Configuration' : 'Schedule Session'}
                 </button>
               </div>
             </form>
@@ -458,52 +502,49 @@ export default function AdminLiveControls() {
         </div>
       )}
 
-      {/* --- EXAM / ANSWER SHEET CREATION MODAL --- */}
+      {/* --- EXAM ANSWER SHEET CREATION / MODAL --- */}
       {examModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-amber-500/30 p-6 rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl relative shadow-amber-500/10">
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-slate-900 border border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl relative">
             <button onClick={() => setExamModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
-            <h2 className="text-2xl font-extrabold text-amber-500 mb-4 border-b border-slate-800 pb-2 flex items-center gap-2">
-              <FileText /> {examData.id ? 'Edit Live Answer Sheet' : 'Create Live Answer Sheet'}
+            <h2 className="text-xl font-bold text-amber-500 mb-4 border-b border-slate-800 pb-2 flex items-center gap-2">
+              <FileText /> Dynamic Live MCQ Answer Sheet Wizard
             </h2>
             
             <form onSubmit={handleSaveExam} className="flex flex-col flex-1 overflow-hidden">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 shrink-0">
-                <div>
-                  <label className="block text-xs font-mono text-slate-400 mb-1">Exam Title</label>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4 shrink-0">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-mono text-slate-400 mb-1">Exam / Answer Sheet Name</label>
                   <input required type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm" />
                 </div>
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 mb-1">Google Drive Paper Link (PDF/JPG View Link)</label>
-                  <input type="url" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/..." className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm" />
+                  <label className="block text-xs font-mono text-slate-400 mb-1">Total Questions (1 - 200)</label>
+                  <input required type="number" min="1" max="200" value={examData.total_questions} onChange={e => setExamData({...examData, total_questions: parseInt(e.target.value) || 0})} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm text-center font-bold" />
                 </div>
-                <div>
-                  <label className="block text-xs font-mono text-slate-400 mb-1">Total Questions (1 to 200)</label>
-                  <input required type="number" min="1" max="200" value={examData.total_questions} onChange={e => setExamData({...examData, total_questions: parseInt(e.target.value) || 0})} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm font-bold text-center" />
+                <div className="md:col-span-3">
+                  <label className="block text-xs font-mono text-slate-400 mb-1">Google Drive Embed/View URL (Questions Sheet)</label>
+                  <input type="url" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/file/d/.../view" className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-500 text-sm text-slate-300" />
                 </div>
               </div>
 
-              {/* Dynamic Answer Sheet Grid */}
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex-1 overflow-y-auto mt-2">
-                <div className="text-xs text-slate-500 mb-4 font-mono text-center bg-slate-900 py-2 rounded">
-                  Select the Correct Answer for Auto-Marking. Changes made here while exam is 'Active' will update for students instantly!
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {/* Dynamic GRID for 1 - 200 Questions */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex-1 overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                   {Array.from({ length: Math.min(examData.total_questions, 200) }).map((_, i) => {
                     const qNum = i + 1;
-                    const currentCorrect = examData.correct_answer[qNum.toString()];
+                    const selectedAns = examData.correct_answer[qNum.toString()];
                     return (
-                      <div key={qNum} className="flex items-center gap-3 bg-slate-900 p-2 rounded-lg border border-slate-800 hover:border-amber-500/50 transition">
-                        <span className="text-white font-bold w-6 text-right text-sm">{qNum}.</span>
-                        <div className="flex gap-1.5">
-                          {[1, 2, 3, 4, 5].map(ansNum => (
+                      <div key={qNum} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800/80">
+                        <span className="text-slate-400 font-mono font-bold text-xs w-6">{qNum}.</span>
+                        <div className="flex gap-1">
+                          {[1, 2, 3, 4, 5].map(btnIndex => (
                             <button
-                              key={ansNum}
+                              key={btnIndex}
                               type="button"
-                              onClick={() => handleCorrectAnswerChange(qNum, ansNum)}
-                              className={`w-6 h-6 rounded-full text-xs font-bold transition-all ${currentCorrect === ansNum ? 'bg-amber-500 text-black scale-110 shadow-lg shadow-amber-500/50' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                              onClick={() => handleCorrectAnswerChange(qNum, btnIndex)}
+                              className={`w-6 h-6 rounded-full text-xs font-bold transition-all ${selectedAns === btnIndex ? 'bg-amber-500 text-black scale-110 shadow-md shadow-amber-500/30' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
                             >
-                              {ansNum}
+                              {btnIndex}
                             </button>
                           ))}
                         </div>
@@ -516,7 +557,7 @@ export default function AdminLiveControls() {
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-800 shrink-0 mt-4">
                 <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm transition">Cancel</button>
                 <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-black px-6 py-2 rounded-lg text-sm font-extrabold transition">
-                  {isLoading ? 'Saving...' : 'Save Answer Sheet to Database'}
+                  {isLoading ? 'Saving Changes...' : 'Save & Compile Sheet'}
                 </button>
               </div>
             </form>
@@ -526,41 +567,23 @@ export default function AdminLiveControls() {
 
       {/* --- ATTENTION MARKING RESULTS MODAL --- */}
       {attentionModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4 animate-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative">
             <button onClick={() => setAttentionModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2 border-b border-slate-800 pb-2">
-              <Target className="text-indigo-500" /> Attention Report
+            <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2 border-b border-slate-800 pb-2">
+              <Target className="text-indigo-500" /> Attention Tracking Metrics
             </h2>
-            
-            <div className="grid grid-cols-2 gap-6">
-              {/* Marked Students */}
-              <div className="bg-slate-950 border border-emerald-500/20 rounded-xl overflow-hidden flex flex-col h-80">
-                <div className="bg-emerald-500/10 text-emerald-400 p-3 font-bold text-sm text-center border-b border-emerald-500/20">
-                  Marked Attention ({attentionData.marked.length})
-                </div>
-                <div className="p-2 overflow-y-auto flex-1 divide-y divide-slate-800/50">
-                  {attentionData.marked.length === 0 ? <p className="text-slate-500 text-xs text-center mt-4">No data yet</p> : null}
-                  {attentionData.marked.map((u, i) => (
-                    <div key={i} className="text-sm font-mono text-slate-300 p-2 hover:bg-slate-900 transition flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div> {u}
-                    </div>
-                  ))}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-950 border border-emerald-500/10 rounded-xl flex flex-col h-72">
+                <div className="bg-emerald-500/10 text-emerald-400 p-2.5 font-bold text-xs text-center border-b border-emerald-500/20">Marked Active ({attentionData.marked.length})</div>
+                <div className="p-2 overflow-y-auto flex-1 font-mono text-xs text-slate-300 divide-y divide-slate-900">
+                  {attentionData.marked.map((u, i) => <div key={i} className="p-1.5">✅ {u}</div>)}
                 </div>
               </div>
-
-              {/* Unmarked Students */}
-              <div className="bg-slate-950 border border-red-500/20 rounded-xl overflow-hidden flex flex-col h-80">
-                <div className="bg-red-500/10 text-red-400 p-3 font-bold text-sm text-center border-b border-red-500/20">
-                  Ignored / Not Marked ({attentionData.unmarked.length})
-                </div>
-                <div className="p-2 overflow-y-auto flex-1 divide-y divide-slate-800/50">
-                  {attentionData.unmarked.length === 0 ? <p className="text-slate-500 text-xs text-center mt-4">All clear!</p> : null}
-                  {attentionData.unmarked.map((u, i) => (
-                    <div key={i} className="text-sm font-mono text-slate-400 p-2 hover:bg-slate-900 transition flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 bg-red-500/50 rounded-full"></div> {u}
-                    </div>
-                  ))}
+              <div className="bg-slate-950 border border-red-500/10 rounded-xl flex flex-col h-72">
+                <div className="bg-red-500/10 text-red-400 p-2.5 font-bold text-xs text-center border-b border-red-500/20">Not Responded ({attentionData.unmarked.length})</div>
+                <div className="p-2 overflow-y-auto flex-1 font-mono text-xs text-slate-400 divide-y divide-slate-900">
+                  {attentionData.unmarked.map((u, i) => <div key={i} className="p-1.5">❌ {u}</div>)}
                 </div>
               </div>
             </div>
