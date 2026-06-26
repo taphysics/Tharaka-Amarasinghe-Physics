@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Plus, Trash2, Edit2, Save, X, DollarSign, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Edit2, Save, X, DollarSign, CheckCircle, XCircle, RefreshCw, Link } from 'lucide-react';
 import { supabase } from '../supabaseClient'; 
 
 interface ClassType {
@@ -7,12 +7,14 @@ interface ClassType {
   class_type: string; 
   monthly_fee: number;
   is_active: boolean;
+  whatsapp_link?: string; // නව පහසුකම සඳහා Interface එක යාවත්කාලීන කරන ලදී
 }
 
 const ClassTypesFeesManager = () => {
   const [classTypes, setClassTypes] = useState<ClassType[]>([]);
   const [className, setClassName] = useState('');
   const [monthlyFee, setMonthlyFee] = useState('');
+  const [whatsappLink, setWhatsappLink] = useState(''); // WhatsApp Link එක සඳහා නව State එකක්
   const [isActive, setIsActive] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,11 +74,12 @@ const ClassTypesFeesManager = () => {
 
     setIsLoading(true);
     
-    // Database එකේ ඇති කොලම් වල නම් වලට හරියටම ගැලපෙන Payload එක
+    // Database එකේ ඇති කොලම් වල නම් වලට හරියටම ගැලපෙන Payload එක (whatsapp_link එකතු කරන ලදී)
     const payload = {
       class_type: className.trim(),
       monthly_fee: parsedFee,
-      is_active: isActive
+      is_active: isActive,
+      whatsapp_link: whatsappLink.trim() || null // හිස්ව තිබුනොත් null ලෙස සුරැකේ
     };
 
     try {
@@ -87,20 +90,19 @@ const ClassTypesFeesManager = () => {
           .eq('id', editingId);
 
         if (error) throw error;
-        alert('පන්ති විස්තර සජීවීව යාවත්කාලීන කරන ලදී!');
+        alert('පන්ති විස්තර සහ වට්ස්ඇප් ලින්ක් එක සජීවීව යාවත්කාලීන කරන ලදී!');
       } else {
         const { error } = await supabase
           .from('class_types_config')
           .insert([payload]);
 
         if (error) throw error;
-        alert('නව පන්ති වර්ගය සාර්ථකව පද්ධතියට එකතු කරන ලදී!');
+        alert('නව පන්ති වර්ගය සහ වට්ස්ඇප් ලින්ක් එක සාර්ථකව පද්ධතියට එකතු කරන ලදී!');
       }
       
       resetForm();
       await fetchClassTypes(); 
     } catch (error: any) {
-      // මෙතනින් අපිට හරියටම Supabase Error එක Console එකේ බලාගන්න පුළුවන්
       console.error("Supabase Save Error Object:", error);
       alert('ක්‍රියාවලියේදී දෝෂයක් ඇතිවිය: ' + error.message + '\n(Inspect Console එක පරීක්ෂා කරන්න)');
     } finally {
@@ -113,6 +115,7 @@ const ClassTypesFeesManager = () => {
     setClassName(cls.class_type); 
     setMonthlyFee(cls.monthly_fee.toString());
     setIsActive(cls.is_active);
+    setWhatsappLink(cls.whatsapp_link || ''); // එඩිට් කිරීමේදී පවතින ලින්ක් එක Form එකට ලබාදීම
   };
 
   const handleDelete = async (id: string) => {
@@ -159,6 +162,7 @@ const ClassTypesFeesManager = () => {
     setEditingId(null);
     setClassName('');
     setMonthlyFee('');
+    setWhatsappLink(''); // Form එක Reset කිරීමේදී ලින්ක් එකද ඉවත් කිරීම
     setIsActive(true);
   };
 
@@ -205,6 +209,20 @@ const ClassTypesFeesManager = () => {
                   value={monthlyFee}
                   onChange={(e) => setMonthlyFee(e.target.value)}
                   className="w-full p-2.5 pl-9 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white outline-none focus:border-emerald-500 transition-all"
+                />
+              </div>
+            </div>
+
+            {/* WhatsApp Group Link එකතු කිරීම සඳහා නව Input ක්ෂේත්‍රය */}
+            <div className="flex flex-col space-y-1.5">
+              <label className="text-xs text-slate-400 font-medium">WhatsApp Group Link (වැට්ස්ඇප් සමූහ ලින්ක් එක)</label>
+              <div className="relative">
+                <input 
+                  type="url"
+                  placeholder="e.g. https://chat.whatsapp.com/..."
+                  value={whatsappLink}
+                  onChange={(e) => setWhatsappLink(e.target.value)}
+                  className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-sm text-white outline-none focus:border-emerald-500 transition-all text-xs"
                 />
               </div>
             </div>
@@ -261,12 +279,12 @@ const ClassTypesFeesManager = () => {
                     cls.is_active ? 'border-slate-800/80' : 'border-red-950/40 bg-red-950/5'
                   }`}
                 >
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
                     <div className={`p-2 rounded-lg mt-0.5 ${cls.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
                       <BookOpen size={16} />
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-sm text-slate-200">{cls.class_type}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold uppercase tracking-wide ${
                           cls.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'
@@ -274,14 +292,33 @@ const ClassTypesFeesManager = () => {
                           {cls.is_active ? 'Active' : 'Hidden'}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-                        <DollarSign size={13} className="text-emerald-500" /> Monthly Fee: 
-                        <span className="text-emerald-400 font-bold font-mono">Rs. {cls.monthly_fee}</span>
-                      </p>
+                      
+                      <div className="flex flex-col space-y-1 mt-1">
+                        <p className="text-xs text-slate-400 flex items-center gap-1">
+                          <DollarSign size={13} className="text-emerald-500" /> Monthly Fee: 
+                          <span className="text-emerald-400 font-bold font-mono">Rs. {cls.monthly_fee}</span>
+                        </p>
+                        
+                        {/* ලයිස්තුවේ WhatsApp Link එක පෙන්වීම සඳහා වූ කොටස */}
+                        {cls.whatsapp_link && (
+                          <p className="text-xs text-slate-400 flex items-center gap-1 min-w-0">
+                            <Link size={13} className="text-teal-400 flex-shrink-0" /> WhatsApp: 
+                            <a 
+                              href={cls.whatsapp_link} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="text-teal-400 hover:underline truncate text-[11px]"
+                              title={cls.whatsapp_link}
+                            >
+                              {cls.whatsapp_link}
+                            </a>
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 self-end sm:self-center">
+                  <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
                     
                     <button
                       onClick={() => toggleActiveStatus(cls.id!, cls.is_active)}
