@@ -1,385 +1,347 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Lock, Video, FileText, Clock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
-// 🔗 ඔබේ ප්‍රොජෙක්ට් එකේ දැනටමත් සාර්ථකව වැඩ කරන සූපබේස් ක්ලයන්ට් එක මෙතනට ඉම්පෝර්ට් කරන්න
-import { supabase } from '../supabaseClient'; 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
 
 interface LiveClassPlayerProps {
+  currentLiveId: string;
   studentId: string;
+  studentUsername: string;
 }
 
-export default function LiveClassPlayer({ studentId }: LiveClassPlayerProps) {
-  // State Management
-  const [student, setStudent] = useState<any>(null);
-  const [activeLive, setActiveLive] = useState<any>(null);
-  const [activeExam, setActiveExam] = useState<any>(null);
-  const [hasPaid, setHasPaid] = useState<boolean>(false);
-  const [isEligible, setIsEligible] = useState<boolean>(true); // මුලින්ම ක්ලාස් එක පෙන්වීමට true කර ඇත
-  const [initialLoading, setInitialLoading] = useState<boolean>(true);
+interface LiveSession {
+  id: string;
+  title: string;
+  zoom_join_url: string;
+  status: string;
+  date: string;
+  time: string;
+  is_exam_active: boolean;
+  active_exam_id: string | null;
+}
 
-  // Exam States
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<number, string>>({});
-  const [timeLeft, setTimeLeft] = useState<number>(0);
-  const [examSubmitted, setExamSubmitted] = useState<boolean>(false);
-  const [examResult, setExamResult] = useState<any>(null);
+interface ExamData {
+  id: string;
+  title: string;
+  pdf_url: string;
+  duration_minutes: number;
+  total_questions: number;
+  correct_answer: Record<string, number>;
+}
 
-  // Auto-submit Refs
-  const answersRef = useRef(selectedAnswers);
-  const examSubmittedRef = useRef(examSubmitted);
+export default function LiveClassPlayer({ currentLiveId, studentId, studentUsername }: LiveClassPlayerProps) {
+  const [session, setSession] = useState<LiveSession | null>(null);
+  const [exam, setExam] = useState<ExamData | null>(null);
+  const [isWithinOneHour, setIsWithinOneHour] = useState(false);
+  const [studentAnswers, setStudentAnswers] = useState<Record<number, number>>({});
+  
+  // Exam Countdown Timer States
+  const [timeLeft, setTimeLeft] = useState<number>(0); 
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Score Result Modal States
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [calculatedScore, setCalculatedScore] = useState<number>(0);
+  const [totalExamQuestions, setTotalExamQuestions] = useState<number>(0);
 
   useEffect(() => {
-    answersRef.current = selectedAnswers;
-    examSubmittedRef.current = examSubmitted;
-  }, [selectedAnswers, examSubmitted]);
+    fetchSessionDetails();
 
-  // 🚀 දත්ත පසුබිමෙන් ලබාගන්නා ශ්‍රිතය (Background Fetch - No UI Blocking)
-  const fetchInitialData = async () => {
-    try {
-      // 1. ඇඩ්මින් දාපු සක්‍රීය ලයිව් ක්ලාස් එක සර්වර් එකෙන් ලබා ගැනීම
-      const { data: liveData, error: lError } = await supabase
-        .from('scheduled_lives')
-        .select('*')
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (lError) throw lError;
-      
-      if (liveData) {
-        setActiveLive(liveData);
-        
-        // විභාගයක් ඇත්නම් එයද ලබාගන්න
-        if (liveData.is_exam_active && liveData.active_exam_id) {
-          fetchActiveExam(liveData.active_exam_id);
-        } else {
-          setActiveExam(null);
-        }
-
-        // 2. සිසුවාගේ ID එක තිබේ නම් පමණක් පසුබිමෙන් ගෙවීම් පරීක්ෂා කරන්න
-        if (studentId) {
-          const { data: studentData, error: sError } = await supabase
-            .from('students')
-            .select('*')
-            .eq('id', studentId)
-            .maybeSingle();
-
-          if (sError) throw sError;
-          if (studentData) {
-            setStudent(studentData);
-            const currentMonth = liveData.target_month; 
-            const isFreePlan = studentData.plan_type?.toLowerCase() === 'free';
-            
-            const paidForMonth = 
-              studentData.active_months?.includes(currentMonth) || 
-              studentData.free_months?.includes(currentMonth) || 
-              studentData.is_paid === true;
-
-            const isClassMatched = studentData.class_types?.includes(liveData.target_class_type);
-
-            setHasPaid(isFreePlan || paidForMonth);
-            setIsEligible(!!(isClassMatched && (isFreePlan || paidForMonth)));
-          }
-        }
-      } else {
-        setActiveLive(null);
-        setActiveExam(null);
-      }
-    } catch (error) {
-      console.error("Error fetching live data:", error);
-    } finally {
-      setInitialLoading(false);
-    }
-  };
-
-  // විභාගයේ දත්ත ලබා ගැනීම
-  const fetchActiveExam = async (examId: string) => {
-    try {
-      const { data: examData, error: eError } = await supabase
-        .from('exams')
-        .select('*')
-        .eq('id', examId)
-        .maybeSingle();
-
-      if (eError) throw eError;
-      if (!examData) return;
-
-      setActiveExam(examData);
-
-      const { data: resultData } = await supabase
-        .from('exam_results')
-        .select('*')
-        .eq('exam_id', examId)
-        .eq('student_id', studentId)
-        .maybeSingle();
-
-      if (resultData) {
-        setExamSubmitted(true);
-        setExamResult({
-          score: resultData.score,
-          total: examData.total_questions,
-        });
-      } else {
-        setTimeLeft((examData.duration_minutes || 0) * 60);
-        setExamSubmitted(false);
-        setExamResult(null);
-        setSelectedAnswers({});
-      }
-    } catch (error) {
-      console.error("Error fetching exam details:", error);
-    }
-  };
-
-  // 🔄 Realtime Synchronization
-  useEffect(() => {
-    fetchInitialData();
-
-    const liveChannel = supabase
-      .channel('live-instant-sync')
+    // Supabase Realtime Subscription - තත්පරයෙන් තත්පරයට වෙනස්වීම් හඳුනාගැනීම
+    const channel = supabase
+      .channel(`live_room_${currentLiveId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'scheduled_lives' },
-        () => {
-          fetchInitialData();
+        { event: 'UPDATE', schema: 'public', table: 'scheduled_lives', filter: `id=eq.${currentLiveId}` },
+        (payload) => {
+          const updated = payload.new as LiveSession;
+          setSession(updated);
+          if (updated.is_exam_active && updated.active_exam_id) {
+            fetchExamDetails(updated.active_exam_id);
+          } else {
+            setExam(null);
+          }
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(liveChannel);
+      supabase.removeChannel(channel);
+      if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [studentId]);
+  }, [currentLiveId]);
 
-  // විභාගයේ ටයිමරය
-  useEffect(() => {
-    if (!activeExam || examSubmitted || timeLeft <= 0) {
-      if (timeLeft === 0 && activeExam && !examSubmitted) {
-        handleExamSubmit(true);
+  const fetchSessionDetails = async () => {
+    const { data, error } = await supabase
+      .from('scheduled_lives')
+      .select('id, title, zoom_join_url, status, date, time, is_exam_active, active_exam_id')
+      .eq('id', currentLiveId)
+      .single();
+
+    if (!error && data) {
+      setSession(data);
+      checkTimeThreshold(data.date, data.time);
+      if (data.is_exam_active && data.active_exam_id) {
+        fetchExamDetails(data.active_exam_id);
       }
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => prev - 1);
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [timeLeft, activeExam, examSubmitted]);
-
-  // පිළිතුරු පත්‍රය සබ්මිට් කිරීම
-  const handleExamSubmit = async (isAutoSubmit = false) => {
-    if (examSubmittedRef.current || !activeExam || !student) return;
-
-    const currentAnswers = answersRef.current;
-    const correctAnswers = activeExam.correct_answer || {};
-    let finalScore = 0;
-
-    Object.keys(correctAnswers).forEach((qNum: any) => {
-      if (String(currentAnswers[qNum]) === String(correctAnswers[qNum])) {
-        finalScore++;
-      }
-    });
-
-    try {
-      const { error } = await supabase.from('exam_results').insert([
-        {
-          student_id: studentId,
-          username: student.username,
-          exam_id: activeExam.id,
-          score: finalScore,
-          submitted_at: new Date().toISOString(),
-          meta_data: { answers: currentAnswers, auto_submitted: isAutoSubmit }
-        }
-      ]);
-
-      if (error) throw error;
-
-      setExamResult({
-        score: finalScore,
-        total: activeExam.total_questions
-      });
-      setExamSubmitted(true);
-    } catch (error) {
-      console.error("Exam submission error:", error);
     }
   };
 
-  // 🛠️ සූම් ඇප් එකේ පහසුකම් වෙබ් එකට දෙන Embed URL Generator එක
-  const getZoomEmbedUrl = () => {
-    if (!activeLive) return '';
-    const rawUrl = activeLive.zoom_join_url || activeLive.link || '';
-    if (!rawUrl) return '';
-    
-    // සාමාන්‍ය සූම් ලින්ක් එකක් Web App App Experience එකක් බවට පරිවර්තනය කිරීම
-    if (rawUrl.includes('/j/')) {
-      return rawUrl.replace('/j/', '/wc/join/');
+  const fetchExamDetails = async (examId: string) => {
+    const { data, error } = await supabase
+      .from('exams')
+      .select('id, title, pdf_url, duration_minutes, total_questions, correct_answer')
+      .eq('id', examId)
+      .single();
+
+    if (!error && data) {
+      setExam(data);
+      setTimeLeft(data.duration_minutes * 60);
+      startCountdown();
     }
-    return rawUrl;
+  };
+
+  // පන්තිය ආරම්භ වීමට පැයකට පෙර කාලය පරීක්ෂා කිරීම
+  const checkTimeThreshold = (classDate: string, classTime: string) => {
+    try {
+      const classDateTime = new Date(`${classDate}T${classTime}`);
+      const now = new Date();
+      const differenceInMs = classDateTime.getTime() - now.getTime();
+      const oneHourInMs = 60 * 60 * 1000;
+      
+      // ආරම්භ වීමට පැයකට පෙර සහ පන්තිය ආරම්භ වන තෙක්
+      if (differenceInMs <= oneHourInMs && differenceInMs > -oneHourInMs * 5) {
+        setIsWithinOneHour(true);
+      }
+    } catch (e) {
+      console.error('කාලය ගණනය කිරීමේ දෝෂයකි:', e);
+    }
+  };
+
+  // විභාගයේ Countdown Timer එක ක්‍රියාත්මක කිරීම
+  const startCountdown = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current!);
+          autoSubmitExam(); // කාලය අවසන් වූ සැනින් ස්වයංක්‍රීයව Submit වීම
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleSelectAnswer = (qNum: number, option: number) => {
+    setStudentAnswers((prev) => ({ ...prev, [qNum]: option }));
+  };
+
+  // විභාගය අවසන් කර ලකුණු ගණනය කර දත්ත සමුදායට යැවීම
+  const submitExamHander = async () => {
+    if (!exam) return;
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    let score = 0;
+    const answers = exam.correct_answer as Record<string, number>;
+
+    // ලකුණු ගණනය කිරීම
+    for (let q = 1; q <= exam.total_questions; q++) {
+      if (studentAnswers[q] && Number(studentAnswers[q]) === Number(answers[q])) {
+        score++;
+      }
+    }
+
+    // දත්ත සමුදායට ප්‍රතිඵල ඇතුලත් කිරීම
+    await supabase.from('exam_results').insert([
+      {
+        username: studentUsername,
+        student_id: studentId,
+        exam_id: exam.id,
+        score: score,
+        submitted_at: new Date().toISOString(),
+        meta_data: { student_responses: studentAnswers }
+      }
+    ]);
+
+    setCalculatedScore(score);
+    setTotalExamQuestions(exam.total_questions);
+    setShowResultModal(true);
+    setExam(null); // විභාගය ඉවත් කර නැවත ප්ලේයරය පෙන්වීම
+  };
+
+  const autoSubmitExam = () => {
+    submitExamHander();
   };
 
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  if (!session) return <div className="text-white p-6 text-center">සජීවී විකාශන දත්ත පූරණය වෙමින් පවතී...</div>;
+
+  // අවස්ථාව 01: ඇඩ්මින් පන්තිය ලයිව් කිරීමට පෙර (පැයකට පෙර සිට) Waiting වීඩියෝව පෙන්වීම
+  const showWaitingVideo = session.status !== 'active' && isWithinOneHour;
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-4">
-      
-      {/* 🛑 ගෙවීම් අවහිර කර ඇති විට පමණක් පෙන්වන කොටස */}
-      {!isEligible ? (
-        <div className="w-full bg-gray-100 border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center flex flex-col items-center justify-center min-h-[450px] shadow-sm">
-          <div className="bg-red-100 p-4 rounded-full text-red-500 mb-4 animate-pulse">
-            <Lock className="w-12 h-12" />
-          </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">සජීවී පන්තිය අවහිර කර ඇත (Disabled)</h2>
-          <p className="text-gray-600 max-w-md mb-6">
-            මෙම සජීවී පන්තියට සම්බන්ධ වීමට නම් ඔබ අදාළ පන්තියට ලියාපදිංචි වී සහ මෙම මාසය සඳහා ගෙවීම් සම්පූර්ණ කර තිබිය යුතුය.
-          </p>
+    <div className="w-full bg-black min-h-screen text-white relative">
+      {/* පන්තියේ ඉහල බාර් එක */}
+      <div className="p-4 bg-gray-900 flex justify-between items-center border-b border-gray-800">
+        <h2 className="text-lg font-bold text-cyan-400">{session.title}</h2>
+        <div className="flex items-center space-x-2">
+          <span className={`w-3 h-3 rounded-full ${session.status === 'active' ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'}`} />
+          <span className="text-sm font-semibold">{session.status === 'active' ? 'LIVE' : 'WAITING'}</span>
         </div>
-      ) : (
+      </div>
+
+      {/* ප්‍රධාන වීඩියෝ/විභාග කලාපය */}
+      <div className="w-full h-[calc(100vh-68px)] relative">
         
-        /* ✅ ප්‍රධාන සජීවී පන්ති මණ්ඩපය (Instant Rendering) */
-        <div className="space-y-6">
-          <div className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white p-4 rounded-xl shadow-md flex justify-between items-center">
-            <div>
-              <span className="bg-red-500 text-xs uppercase px-2 py-1 rounded-md font-extrabold tracking-wider animate-pulse mr-2">LIVE</span>
-              <h1 className="text-xl font-bold inline-block align-middle">
-                {activeLive ? activeLive.title : "සජීවී පන්තිය පූරණය වෙමින්..."}
-              </h1>
+        {/* Waiting Video එක */}
+        {showWaitingVideo && (
+          <div className="absolute inset-0 bg-black flex flex-col justify-center items-center">
+            <video
+              src="/videos/waiting-video.mp4"
+              className="w-full h-full object-cover"
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+            <div className="absolute bottom-10 left-10 bg-black/80 p-4 rounded-lg border border-gray-700 backdrop-blur">
+              <p className="text-yellow-400 font-bold animate-pulse text-lg">පන්තිය ඉක්මනින්ම ආරම්භ වේ...</p>
+              <p className="text-xs text-gray-400">ගුරුතුමා සම්බන්ධ වන තෙක් රැඳී සිටින්න.</p>
             </div>
-            {activeLive && (
-              <p className="text-sm bg-white/20 px-3 py-1 rounded-full">
-                {activeLive.target_class_type} - {activeLive.target_month}
-              </p>
-            )}
           </div>
+        )}
 
-          {/* Grid Layout */}
-          <div className={`grid grid-cols-1 ${activeLive?.is_exam_active && activeExam ? 'lg:grid-cols-2' : 'grid-cols-1'} gap-6 transition-all duration-500`}>
+        {/* සක්‍රීය Zoom සජීවී පන්තිය (විභාගයක් නොමැති විට Full Screen) */}
+        {session.status === 'active' && !exam && (
+          <div className="w-full h-full">
+            <iframe
+              src={session.zoom_join_url}
+              className="w-full h-full border-0"
+              allow="microphone; camera; fullscreen"
+            />
+          </div>
+        )}
+
+        {/* අවස්ථාව 02: සජීවී පන්තිය අතරතුර විභාගයක් Push කල විට ලැබෙන Split Screen එක */}
+        {session.status === 'active' && exam && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 h-full w-full bg-gray-950">
             
-            {/* 🎥 සූම් ප්ලේයර් එක (ලෝඩ් වෙනකන් බලන් ඉන්නේ නැතුව ක්ෂණිකව පෙන්වයි) */}
-            <div className="bg-black rounded-2xl overflow-hidden shadow-xl border border-gray-800 flex flex-col aspect-video min-h-[450px] relative">
-              {initialLoading ? (
-                // 1. පේජ් එක ලෝඩ් වන මුල් තත්පරයේ ප්ලේයර් එක ඇතුළේ පෙන්වන Loader එක
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900">
-                  <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-2" />
-                  <p className="text-sm text-gray-400">සජීවී පන්තියට සම්බන්ධ වෙමින් පවතී...</p>
-                </div>
-              ) : activeLive && getZoomEmbedUrl() ? (
-                // 2. සූම් ඇප් එකේ සේම සියලුම පහසුකම් (Mic, Camera, Share) සහිත නිවැරදි Iframe එක
-                <iframe
-                  src={getZoomEmbedUrl()}
-                  // Zoom Native App පහසුකම් සක්‍රීය කිරීමට මෙම allow ටැග් එක අනිවාර්ය වේ
-                  allow="microphone; camera; fullscreen; speaker; display-capture; clipboard-write; encrypted-media"
-                  className="w-full h-full border-none flex-grow"
-                  title="Zoom Live Class"
-                />
-              ) : (
-                // 3. ඇඩ්මින් පැනලයෙන් පන්තියක් දමා නොමැති නම් පමණක් පෙන්වන කොටස
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 bg-slate-950 p-6 text-center">
-                  <Video className="w-12 h-12 mb-3 text-yellow-500 animate-pulse" />
-                  <h3 className="text-lg font-bold text-white">දැනට සක්‍රීය සජීවී පන්ති නොමැත.</h3>
-                  <p className="text-gray-500 text-sm mt-1">කරුණාකර පන්තිය ආරම්භ වන තෙක් රැඳී සිටින්න.</p>
-                </div>
-              )}
+            {/* වම් පස - Google Drive Embedded PDF එක (Zoom, Navigation සහිතයි) */}
+            <div className="h-full border-r border-gray-800 bg-gray-900 relative">
+              <div className="absolute top-2 left-2 bg-black/70 px-3 py-1 rounded text-xs z-10 font-bold text-gray-300">
+                ප්‍රශ්න පත්‍රය (PDF Viewer)
+              </div>
+              <iframe
+                src={exam.pdf_url}
+                className="w-full h-full border-0"
+                allow="autoplay"
+              />
             </div>
 
-            {/* 📝 ඔන්ලයින් විභාගය (ඇඩ්මින් සක්‍රීය කළහොත් පමණක් පසෙකින් දිස්වේ) */}
-            {activeLive?.is_exam_active && activeExam && (
-              <div className="bg-white rounded-2xl shadow-xl border border-gray-200 flex flex-col h-[550px] lg:h-auto overflow-hidden animate-fade-in">
-                
-                <div className="bg-slate-900 text-white p-4 flex justify-between items-center border-b border-slate-700">
-                  <div className="flex items-center space-x-2">
-                    <FileText className="w-5 h-5 text-blue-400" />
-                    <span className="font-bold text-sm lg:text-base truncate max-w-[180px] lg:max-w-[250px]">{activeExam.title}</span>
-                  </div>
-                  
-                  {!examSubmitted && (
-                    <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg font-mono text-lg font-bold ${timeLeft < 60 ? 'bg-red-600 animate-pulse text-white' : 'bg-slate-800 text-emerald-400'}`}>
-                      <Clock className="w-5 h-5" />
-                      <span>{formatTime(timeLeft)}</span>
-                    </div>
-                  )}
+            {/* දකුණු පස - අන්තර්ක්‍රියාකාරී MCQ ෂීට් එක සහ කවුන්ටරය */}
+            <div className="h-full flex flex-col bg-gray-900 overflow-y-auto p-6">
+              
+              {/* ටයිමරය සහ විස්තර */}
+              <div className="flex justify-between items-center bg-gray-800 p-4 rounded-lg mb-6 border border-gray-700 shadow-md">
+                <div>
+                  <h3 className="font-bold text-emerald-400 text-lg">{exam.title}</h3>
+                  <p className="text-xs text-gray-400">සියලුම ප්‍රශ්න සඳහා පිළිතුරු සපයන්න.</p>
                 </div>
-
-                <div className="flex-grow grid grid-cols-1 md:grid-cols-2 overflow-y-auto">
-                  {/* PDF Viewer */}
-                  <div className="border-r border-gray-200 h-full min-h-[300px]">
-                    {activeExam.pdf_url ? (
-                      <iframe
-                        src={`${activeExam.pdf_url}#toolbar=0`}
-                        className="w-full h-full min-h-[350px]"
-                        title="Exam Paper PDF"
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-gray-500">PDF එක පූරණය වෙමින් පවතී...</div>
-                    )}
-                  </div>
-
-                  {/* MCQ Answer Sheet */}
-                  <div className="p-4 flex flex-col justify-between bg-slate-50 overflow-y-auto h-full">
-                    {!examSubmitted ? (
-                      <>
-                        <div className="space-y-4">
-                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">පිළිතුරු සලකුණු කරන්න:</p>
-                          {Array.from({ length: activeExam.total_questions || 0 }).map((_, index) => {
-                            const qNum = index + 1;
-                            return (
-                              <div key={qNum} className="flex items-center justify-between bg-white p-2.5 rounded-xl shadow-sm border border-gray-200">
-                                <span className="font-bold text-gray-700 text-sm">ප්‍රශ්නය {qNum.toString().padStart(2, '0')} :</span>
-                                <div className="flex space-x-1.5">
-                                  {['1', '2', '3', '4', '5'].map((option) => (
-                                    <button
-                                      key={option}
-                                      type="button"
-                                      onClick={() => setSelectedAnswers(prev => ({ ...prev, [qNum]: option }))}
-                                      className={`w-7 h-7 text-xs font-bold rounded-full border transition-all ${
-                                        selectedAnswers[qNum] === option
-                                          ? 'bg-blue-600 text-white border-blue-600 scale-110 shadow-sm'
-                                          : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-gray-300'
-                                      }`}
-                                    >
-                                      {option}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if(confirm("ඔබට පිළිතුරු පත්‍රය ඉදිරිපත් කිරීමට අවශ්‍ය බව ස්ථිරද?")) {
-                              handleExamSubmit(false);
-                            }
-                          }}
-                          className="w-full mt-6 bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-4 rounded-xl font-bold shadow-md transition-all text-sm tracking-wide"
-                        >
-                          විභාගය අවසන් කරන්න
-                        </button>
-                      </>
-                    ) : (
-                      /* ලකුණු පුවරුව */
-                      <div className="flex flex-col items-center justify-center text-center p-6 my-auto bg-white rounded-2xl shadow-md border border-emerald-100">
-                        <CheckCircle2 className="w-16 h-16 text-emerald-500 mb-3" />
-                        <h3 className="text-xl font-bold text-gray-800">පිළිතුරු පත්‍රය භාරගන්නා ලදී!</h3>
-                        <div className="my-6 p-4 bg-slate-50 rounded-xl border border-gray-200 w-full max-w-xs">
-                          <p className="text-gray-600 text-xs font-semibold uppercase">ලබාගත් සමස්ත ලකුණු තත්ත්වය</p>
-                          <div className="text-4xl font-extrabold text-blue-700 my-1">
-                            {examResult?.score} <span className="text-xl text-gray-400 font-normal">/ {examResult?.total}</span>
-                          </div>
-                          <p className="text-xs font-medium text-emerald-600 mt-2">
-                            ප්‍රතිශතය: {Math.round(((examResult?.score || 0) / (examResult?.total || 1)) * 100)}%
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
+                <div className="text-right">
+                  <p className="text-xs text-gray-400 font-medium">ඉතිරි කාලය</p>
+                  <p className={`text-2xl font-mono font-bold ${timeLeft < 60 ? 'text-red-500 animate-pulse' : 'text-yellow-400'}`}>
+                    {formatTime(timeLeft)}
+                  </p>
                 </div>
               </div>
-            )}
+
+              {/* MCQ ගුවන් විදුලි බොත්තම් මැට්‍රික්ස් එක */}
+              <div className="flex-1 space-y-4 pr-2">
+                {Array.from({ length: exam.total_questions }).map((_, idx) => {
+                  const qNum = idx + 1;
+                  return (
+                    <div key={qNum} className="p-3 bg-gray-800/50 rounded-lg border border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="font-bold text-sm text-gray-300">ප්‍රශ්නය {qNum.toString().padStart(2, '0')}</span>
+                      <div className="flex items-center space-x-4">
+                        {[1, 2, 3, 4, 5].map((opt) => (
+                          <label key={opt} className="flex items-center space-x-1 cursor-pointer group">
+                            <input
+                              type="radio"
+                              name={`student-q-${qNum}`}
+                              checked={studentAnswers[qNum] === opt}
+                              onChange={() => handleSelectAnswer(qNum, opt)}
+                              className="w-5 h-5 text-emerald-500 bg-gray-700 border-gray-600 focus:ring-0"
+                            />
+                            <span className="text-sm font-semibold group-hover:text-emerald-400">{opt}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Submit බොත්තම */}
+              <button
+                onClick={submitExamHander}
+                className="mt-6 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold p-3 rounded-lg shadow-lg transition transform active:scale-95"
+              >
+                පිළිතුරු පත්‍රය ඉදිරිපත් කරන්න (Submit Paper)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* පන්තිය පද්ධතිය තුල සක්‍රීය නොමැති අවස්ථාවක පෙන්වන තිරය */}
+        {session.status !== 'active' && !isWithinOneHour && (
+          <div className="absolute inset-0 bg-gray-950 flex flex-col justify-center items-center p-6 text-center">
+            <div className="p-4 bg-gray-900 rounded-full mb-4 border border-gray-800">
+              <svg className="w-12 h-12 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold mb-1">සජීවී පන්තිය තවමත් ආරම්භ කර නොමැත</h3>
+            <p className="text-gray-400 text-sm max-w-sm">
+              මෙම පන්තිය පැවැත්වීමට නියමිතව ඇත්තේ {session.date} දින {session.time} ටය. පන්තිය ආරම්භ වීමට පැයකට පෙර සිට සජීවී ප්‍රවේශය විවෘත වේ.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* විභාග ලකුණු පෙන්වන Popup Modal එක */}
+      {showResultModal && (
+        <div className="fixed inset-0 bg-black/90 flex justify-center items-center z-50 backdrop-blur-sm p-4">
+          <div className="bg-gray-900 border border-gray-800 p-8 rounded-xl max-w-md w-full text-center shadow-2xl animate-fade-in">
+            <div className="w-20 h-20 bg-emerald-500/10 rounded-full flex justify-center items-center mx-auto mb-4 border border-emerald-500/30">
+              <svg className="w-10 h-10 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h3 className="text-2xl font-bold text-white mb-2">විභාගය සාර්ථකව අවසන් කලා!</h3>
+            <p className="text-gray-400 text-sm mb-6">ඔබ ලබාදුන් පිළිතුරු ස්වයංක්‍රීයව පද්ධතිය තුල සුරැකින ලදී.</p>
+            
+            <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-800 mb-6">
+              <span className="text-xs text-gray-400 block uppercase tracking-wider font-semibold">ඔබේ ලකුණු ප්‍රමාණය</span>
+              <span className="text-4xl font-mono font-bold text-yellow-400">{calculatedScore}</span>
+              <span className="text-gray-500 text-lg"> / {totalExamQuestions}</span>
+            </div>
+
+            <button
+              onClick={() => setShowResultModal(false)}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-lg transition"
+            >
+              Close & Return to Zoom
+            </button>
           </div>
         </div>
       )}
