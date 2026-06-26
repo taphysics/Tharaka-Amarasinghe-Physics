@@ -1,11 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../supabaseClient';
 import { Lock, Video, FileText, Clock, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
-// Supabase Client Initialization (ඔබේ ව්‍යාපෘතියට අනුව වෙනස් කරගන්න)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface LiveClassPlayerProps {
   studentId: string;
