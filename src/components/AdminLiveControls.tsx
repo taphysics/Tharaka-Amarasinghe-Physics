@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Video, Play, Square, Edit, Plus, Clock, Trash2, CheckSquare, FileText, Send, EyeOff } from 'lucide-react';
+import { Video, Play, Square, Edit, Plus, Clock, Trash2, CheckSquare, FileText, Send, EyeOff, MessageCircle } from 'lucide-react';
 
 export default function AdminLiveControls() {
   const [lives, setLives] = useState<any[]>([]);
@@ -64,6 +64,39 @@ export default function AdminLiveControls() {
     } catch (err) { console.error("Error fetching data", err); }
   };
 
+  // WhatsApp ඔටෝ මැසේජ් එක ජෙනරේට් කර ගෲප් ලින්ක් එකට යැවීමේ ෆන්ක්ෂන් එක
+  const handleWhatsAppNotify = (live: any) => {
+    const mainClassType = live.target_class_type || live.target_classes?.[0] || 'Theory';
+    
+    // class_types_config ටේබලයෙන් අදාළ පන්ති වර්ගයට ගැලපෙන රෙකෝඩ් එක සෙවීම
+    const config = classConfigs.find(cfg => cfg.class_type === mainClassType);
+    const whatsappGroupUrl = config?.whatsapp_url;
+
+    // ඔටෝ ජෙනරේට් වන සිංහල පණිවුඩය
+    const message = `🚨 *සජීවී පන්ති දැනුම්දීම (Live Class Alert)* 🚨\n\n` +
+                    `📚 *පන්ති වර්ගය:* ${mainClassType}\n` +
+                    `📝 *මාතෘකාව:* ${live.title}\n` +
+                    `📅 *පටන් ගන්න දිනය:* ${live.date}\n` +
+                    `⏰ *වේලාව:* ${live.time}\n\n` +
+                    `⚠️ පන්තිය ආරම්භ වීමට පෙර වෙබ් අඩවියට පිවිස සූදානම් වී සිටින්න.\n\n` +
+                    `🌐 *වෙබ්සයිට් ලින්ක් එක:* ${window.location.origin}\n` +
+                    (whatsappGroupUrl ? `👥 *WhatsApp සමූහය:* ${whatsappGroupUrl}` : '');
+
+    // ක්ලිප්බෝඩ් එකට මැසේජ් එක කොපි කිරීම (පේස්ට් කිරීමට පහසු වීමට)
+    navigator.clipboard.writeText(message).catch(err => console.error("Clipboard error", err));
+
+    if (whatsappGroupUrl) {
+      // වට්ස්ඇප් ගෲප් එකේ url එකට මැසේජ් එකත් සමඟ යොමු කිරීම
+      const finalUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+      window.open(finalUrl, '_blank');
+    } else {
+      // වට්ස්ඇප් යූආර්එල් එකක් නැතිනම් පොදුවේ ශෙයා කිරීමට විවෘත කිරීම
+      const generalUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+      window.open(generalUrl, '_blank');
+      alert("මෙම පන්ති වර්ගය සඳහා WhatsApp URL එකක් class_types_config හි සොයාගත නොහැකි බැවින් පොදු ශෙයා කිරීමේ ලින්ක් එක විවෘත විය.");
+    }
+  };
+
   const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -71,7 +104,7 @@ export default function AdminLiveControls() {
     try {
       let zoomInfo = null;
       if (!formData.id) {
-        // Zoom API Edge Function (ඔබගේ තිබෙන ආකාරයටම)
+        // Zoom API Edge Function
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
           body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
         });
@@ -102,7 +135,6 @@ export default function AdminLiveControls() {
       if (formData.id) {
         await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
       } else {
-        // අලුතින් පන්තියක් සෑදීමේදී එය scheduled_lives වලට සහ calender_events වලට එකතු කිරීම
         await supabase.from('scheduled_lives').insert([payload]);
         
         await supabase.from('calender_events').insert([{
@@ -146,7 +178,6 @@ export default function AdminLiveControls() {
     e.preventDefault();
     setIsLoading(true);
     
-    // DB එකේ int4 (duration_minutes) තිබෙන බැවින් සියලු කාලයන් මිනිත්තු වලට පරිවර්තනය කිරීම
     const totalMinutes = (examData.durationHours * 60) + examData.durationMinutes + Math.round(examData.durationSeconds / 60);
 
     try {
@@ -254,7 +285,17 @@ export default function AdminLiveControls() {
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
               {lives.map((live) => {
-                const attachedExam = exams.find(e => e.id === live.active_exam_id);
+                // 1. මුලින්ම active_exam_id එකෙන් අදාළ එක්සෑම් එක සොයයි
+                let attachedExam = exams.find(e => e.id === live.active_exam_id);
+                
+                // 2. ඉදිරියෙන් ඩේටාබේස් එකේ ඇඩ්වී ඇති සියලුම ඔන්ලයින් එක්සෑම් පංති වර්ගයට අනුව ස්වයංක්‍රීයව පෙන්වීමට fallback එකක් තැබීම
+                if (!attachedExam) {
+                  const mainClassType = live.target_class_type || live.target_classes?.[0];
+                  if (mainClassType) {
+                    attachedExam = exams.find(e => e.class_type === mainClassType);
+                  }
+                }
+
                 const isExamPushedLive = live.is_exam_active;
 
                 return (
@@ -277,42 +318,44 @@ export default function AdminLiveControls() {
                     </div>
                   </td>
                   
-                  {/* EXAM CONTROL COLUMN */}
+                  {/* LIVE EXAM PANEL COLUMN */}
                   <td className="p-4">
                     {attachedExam ? (
                       <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-w-xs">
-                        <div className="font-bold text-slate-200 text-xs flex justify-between items-center">
-                          <span className="truncate pr-1 text-amber-500">{attachedExam.title}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded ${isExamPushedLive ? 'text-emerald-400 bg-emerald-400/10 border border-emerald-500/20 animate-pulse' : 'text-slate-500'}`}>
+                        <div className="font-bold text-slate-200 text-xs flex justify-between items-center gap-2">
+                          <span className="truncate text-amber-500 font-medium">{attachedExam.title}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded shrink-0 ${isExamPushedLive ? 'text-emerald-400 bg-emerald-400/10 border border-emerald-500/20 animate-pulse' : 'text-slate-500 bg-slate-900'}`}>
                             {isExamPushedLive ? 'PUSHED' : 'PENDING'}
                           </span>
                         </div>
                         <div className="flex flex-wrap gap-1 mt-1">
                           <button
-                            onClick={() => handlePushExamToStudents(live.id, attachedExam.id, !!isExamPushedLive)}
+                            onClick={() => handlePushExamToStudents(live.id, attachedExam!.id, !!isExamPushedLive)}
                             className={`text-[11px] px-2.5 py-1 rounded font-bold transition flex items-center gap-1 ${isExamPushedLive ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                           >
                             {isExamPushedLive ? <EyeOff size={12}/> : <Send size={12}/>}
                             {isExamPushedLive ? 'Retract Paper' : 'Push Paper Live'}
                           </button>
+                          
+                          {/* එක්සෑම් එක එඩිට් කිරීමේ පහසුකම සපයන බටන් එක */}
                           <button 
                             onClick={() => {
                               setCurrentLiveId(live.id);
                               setExamData({
-                                id: attachedExam.id,
-                                title: attachedExam.title,
-                                class_type: attachedExam.class_type,
-                                pdf_url: attachedExam.pdf_url || '',
-                                total_questions: attachedExam.total_questions || 50,
-                                durationHours: Math.floor(attachedExam.duration_minutes / 60) || 0,
-                                durationMinutes: attachedExam.duration_minutes % 60 || 0,
+                                id: attachedExam!.id,
+                                title: attachedExam!.title,
+                                class_type: attachedExam!.class_type,
+                                pdf_url: attachedExam!.pdf_url || '',
+                                total_questions: attachedExam!.total_questions || 50,
+                                durationHours: Math.floor(attachedExam!.duration_minutes / 60) || 0,
+                                durationMinutes: attachedExam!.duration_minutes % 60 || 0,
                                 durationSeconds: 0,
-                                correct_answer: attachedExam.correct_answer || {},
-                                status: attachedExam.status
+                                correct_answer: attachedExam!.correct_answer || {},
+                                status: attachedExam!.status
                               });
                               setExamModalOpen(true);
                             }}
-                            className="text-[11px] bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1 rounded flex items-center gap-1"
+                            className="text-[11px] bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1 rounded flex items-center gap-1 border border-slate-700"
                           >
                             <Edit size={12}/> Edit Exam
                           </button>
@@ -325,7 +368,7 @@ export default function AdminLiveControls() {
                           setExamData({ 
                             id: '', 
                             title: `${live.title} - Exam`, 
-                            class_type: live.target_classes?.[0] || 'Theory', 
+                            class_type: live.target_class_type || live.target_classes?.[0] || 'Theory', 
                             pdf_url: '', 
                             total_questions: 10,
                             durationHours: 1, durationMinutes: 30, durationSeconds: 0, 
@@ -341,24 +384,32 @@ export default function AdminLiveControls() {
                     )}
                   </td>
                   
-                  {/* ZOOM STREAM CONTROL */}
+                  {/* ZOOM STREAM CONTROL & WHATSAPP ALERT */}
                   <td className="p-4">
                     <div className="flex flex-col gap-1.5">
                       {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-0.5 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
                       {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> ZOOM LIVE</span>}
                       {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-0.5 rounded w-fit text-xs">Ended</span>}
 
-                      <div className="flex gap-1 mt-0.5">
+                      <div className="flex flex-col gap-1 mt-0.5">
                         {live.status === 'scheduled' && (
-                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center text-white">
+                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white">
                             <Play size={12} className="mr-1"/> Start Zoom 
                           </a>
                         )}
                         {live.status === 'live' && (
-                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center text-white">
+                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white">
                             <Square size={12} className="mr-1"/> End Class
                           </button>
                         )}
+
+                        {/* වට්ස්ඇප් ඔටෝ පණිවුඩය යවන නව බටන් එක */}
+                        <button 
+                          onClick={() => handleWhatsAppNotify(live)}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white gap-1 transition shadow-md"
+                        >
+                          <MessageCircle size={12}/> Send WhatsApp Alert
+                        </button>
                       </div>
                     </div>
                   </td>
@@ -416,15 +467,22 @@ export default function AdminLiveControls() {
                 </div>
               </div>
 
+              {/* SELECT TARGET CLASSES SECTION - BUG FIXED */}
               <div>
                 <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Select Target Classes (අනිවාර්යයි)</label>
                 <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
                   {classConfigs.map((cfg) => {
-                    if (!cfg.class_types) return null; // Using correct DB column name
+                    // class_types_config වගුවේ නිවැරදි කොළම් එක වන class_type භාවිතයෙන් බග් එක විසඳා ඇත
+                    if (!cfg.class_type) return null; 
                     return (
-                      <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                        <input type="checkbox" checked={formData.target_classes.includes(cfg.class_types)} onChange={() => toggleCheckbox(cfg.class_types)} className="accent-blue-500 w-4 h-4 rounded" />
-                        {cfg.class_types}
+                      <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:text-white transition">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.target_classes.includes(cfg.class_type)} 
+                          onChange={() => toggleCheckbox(cfg.class_type)} 
+                          className="accent-blue-500 w-4 h-4 rounded" 
+                        />
+                        {cfg.class_type}
                       </label>
                     );
                   })}
