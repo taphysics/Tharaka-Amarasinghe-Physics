@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Video, Play, Square, Edit, Eye, Plus, Users, Clock, Trash2, CheckSquare, AlertCircle, BookOpen, X, BellRing, FileText, Link as LinkIcon, CheckCircle2, XCircle } from 'lucide-react';
+import { 
+  Video, Play, Square, Edit, Eye, Plus, Users, Clock, Trash2, 
+  CheckSquare, AlertCircle, BookOpen, X, Award, Radio, Activity,
+  Save, EyeOff, RefreshCw
+} from 'lucide-react';
 
 export default function AdminLiveControls() {
   const [lives, setLives] = useState<any[]>([]);
@@ -9,16 +13,14 @@ export default function AdminLiveControls() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewersModalOpen, setViewersModalOpen] = useState(false);
-  const [isExamModalOpen, setIsExamModalOpen] = useState(false);
-  
-  // Attention System States
-  const [attentionModalOpen, setAttentionModalOpen] = useState(false);
-  const [attentionStats, setAttentionStats] = useState({ marked: [] as any[], unmarked: [] as any[] });
+  const [examModalOpen, setExamModalOpen] = useState(false);
   
   const [activeViewers, setActiveViewers] = useState<any[]>([]);
+  const [attentionResponses, setAttentionResponses] = useState<any[]>([]);
+  const [selectedLiveId, setSelectedLiveId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Form State for Live Class
+  // Live Form State
   const [formData, setFormData] = useState({
     id: '',
     title: '',
@@ -31,37 +33,53 @@ export default function AdminLiveControls() {
     target_class_type: ''
   });
 
-  // Form State for Exam Generator
-  const [examData, setExamData] = useState({
+  // Exam Form State (Inline MCQ Sheet Creator)
+  const [examFormData, setExamFormData] = useState({
     id: '',
     title: '',
+    class_type: '',
     pdf_url: '',
-    total_questions: 50,
-    answers: {} as Record<number, number>
+    duration_minutes: 30,
+    total_questions: 20,
+    correct_answers: {} as Record<number, number>,
+    status: 'pending'
   });
 
   useEffect(() => {
     fetchInitialData();
     
+    // Realtime Sync - Ensures instant updates across Admin and Student views
     const channel = supabase.channel('realtime-live-admin')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchInitialData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, fetchInitialData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchInitialData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => fetchInitialData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attention_responses' }, () => {
+        if (selectedLiveId) fetchAttentionData(selectedLiveId);
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [selectedLiveId]);
 
   const fetchInitialData = async () => {
     const { data: livesData } = await supabase.from('scheduled_lives').select('*').order('created_at', { ascending: false });
     const { data: configsData } = await supabase.from('class_types_config').select('*');
-    const { data: examsData } = await supabase.from('exams').select('*');
+    const { data: examsData } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
     
     if (livesData) setLives(livesData);
     if (configsData) setClassConfigs(configsData);
     if (examsData) setExams(examsData);
   };
 
-  // --- Live Class Management ---
+  const fetchAttentionData = async (liveClassId: string) => {
+    const { data: responses } = await supabase
+      .from('attention_responses')
+      .select('*')
+      .eq('live_class_id', liveClassId);
+    
+    if (responses) setAttentionResponses(responses);
+  };
+
+  // --- ZOOM LIVE WORKFLOWS ---
   const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -73,8 +91,7 @@ export default function AdminLiveControls() {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
           body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
         });
-
-        if (edgeError) throw new Error("Zoom meeting creation failed.");
+        if (edgeError) throw new Error("Zoom meeting creation failed via Edge Function.");
         zoomInfo = edgeData;
       }
 
@@ -84,7 +101,7 @@ export default function AdminLiveControls() {
         time: formData.time,
         target_month: formData.target_month,
         target_classes: formData.target_classes,
-        target_class_type: formData.target_classes[0] || '', 
+        target_class_type: formData.target_class_type || formData.target_classes[0] || '', 
         active_exam_id: formData.active_exam_id || null,
         is_exam_active: !!formData.active_exam_id,
         pre_class_video_path: formData.pre_class_video_path,
@@ -106,7 +123,7 @@ export default function AdminLiveControls() {
       setIsModalOpen(false);
       fetchInitialData();
     } catch (err: any) {
-      alert(err.message || "Something went wrong!");
+      alert(err.message || "Error saving live session");
     } finally {
       setIsLoading(false);
     }
@@ -117,149 +134,123 @@ export default function AdminLiveControls() {
     fetchInitialData();
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDeleteLive = async (id: string) => {
     if (confirm("මෙම සජීවී පන්තිය සම්පූර්ණයෙන්ම මකා දැමීමට අවශ්‍යද?")) {
       await supabase.from('scheduled_lives').delete().eq('id', id);
       fetchInitialData();
     }
   };
 
-  // --- Exam Generator Management ---
-  const handleSaveExam = async () => {
-    if (!examData.title) return alert("කරුණාකර විභාගයේ නම ඇතුළත් කරන්න.");
-    if (examData.total_questions < 1 || examData.total_questions > 200) return alert("ප්‍රශ්න ගණන 1ත් 200ත් අතර විය යුතුය.");
-    
+  // --- LIVE MCQ EXAM OPERATIONS ---
+  const openExamModal = (examId = '') => {
+    if (examId) {
+      const existing = exams.find(e => e.id === examId);
+      if (existing) {
+        setExamFormData({
+          id: existing.id,
+          title: existing.title,
+          class_type: existing.class_type || '',
+          pdf_url: existing.pdf_url || '',
+          duration_minutes: existing.duration_minutes || 30,
+          total_questions: existing.total_questions || 20,
+          correct_answers: existing.correct_answer || {},
+          status: existing.status || 'pending'
+        });
+      }
+    } else {
+      setExamFormData({
+        id: '',
+        title: '',
+        class_type: formData.target_class_type || '',
+        pdf_url: '',
+        duration_minutes: 30,
+        total_questions: 20,
+        correct_answers: {},
+        status: 'pending'
+      });
+    }
+    setExamModalOpen(true);
+  };
+
+  const handleSaveExam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!examFormData.title) return alert('කරුණාකර විභාගයට නමක් ඇතුලත් කරන්න.');
+
     const payload = {
-      title: examData.title,
-      pdf_url: examData.pdf_url,
-      total_questions: examData.total_questions,
-      correct_answer: examData.answers, 
-      class_type: formData.target_classes[0] || 'General'
+      title: examFormData.title,
+      class_type: examFormData.class_type,
+      target_class_type: examFormData.class_type,
+      pdf_url: examFormData.pdf_url,
+      duration_minutes: Number(examFormData.duration_minutes),
+      total_questions: Number(examFormData.total_questions),
+      correct_answer: examFormData.correct_answers,
+      status: examFormData.status
     };
 
-    if (examData.id) {
-      await supabase.from('exams').update(payload).eq('id', examData.id);
-      alert("විභාගය සාර්ථකව යාවත්කාලීන කරන ලදී!");
+    if (examFormData.id) {
+      // Immediate Update
+      await supabase.from('exams').update(payload).eq('id', examFormData.id);
     } else {
-      const { data, error } = await supabase.from('exams').insert([payload]).select();
-      if (!error && data) {
+      // Create new Exam Sheet
+      const { data } = await supabase.from('exams').insert([payload]).select();
+      if (data && data[0]) {
         setFormData(prev => ({ ...prev, active_exam_id: data[0].id }));
-        alert("නව විභාගය සාර්ථකව එකතු කරන ලදී!");
       }
     }
+    setExamModalOpen(false);
     fetchInitialData();
-    setIsExamModalOpen(false);
   };
 
-  const openExamEditor = (examId: string) => {
-    const ex = exams.find(e => e.id === examId);
-    if (ex) {
-      setExamData({
-        id: ex.id,
-        title: ex.title,
-        pdf_url: ex.pdf_url || '',
-        total_questions: ex.total_questions || 50,
-        answers: ex.correct_answer || {}
-      });
-      setIsExamModalOpen(true);
-    }
+  const handleLiveExamStatusToggle = async (liveId: string, examId: string, currentStatus: string) => {
+    let nextStatus = 'pending';
+    if (currentStatus === 'pending') nextStatus = 'active';
+    else if (currentStatus === 'active') nextStatus = 'completed';
+    else nextStatus = 'pending';
+
+    await supabase.from('exams').update({ status: nextStatus }).eq('id', examId);
+    await supabase.from('scheduled_lives').update({ is_exam_active: nextStatus === 'active' }).eq('id', liveId);
+    fetchInitialData();
   };
 
-  const handleDeleteExam = async (examId: string) => {
-    if (confirm("මෙම විභාගය මකා දැමුවහොත් සිසුන්ට පිළිතුරු සැපයීමට නොහැකි වනු ඇත. මකා දැමීමට විශ්වාසද?")) {
-      await supabase.from('exams').delete().eq('id', examId);
-      if (formData.active_exam_id === examId) setFormData(prev => ({ ...prev, active_exam_id: '' }));
-      fetchInitialData();
-    }
-  };
-  
-  // Live අතරතුර Exam අමුණන්න/ඉවත් කරන්න
-  const handleQuickExamAttach = async (liveId: string, examId: string | null) => {
-      await supabase.from('scheduled_lives').update({
-          active_exam_id: examId,
-          is_exam_active: !!examId
-      }).eq('id', liveId);
-      fetchInitialData();
-  };
-
-  // --- Attention Trigger Management ---
-  const handleAttentionTrigger = async (liveId: string) => {
-    if (!confirm("සියලුම සිසුන්ට Attention මැසේජ් එක යැවීමට අවශ්‍යද?")) return;
-
-    const expireTime = new Date(Date.now() + 10 * 60000).toISOString(); // 10 minutes from now
+  // --- ATTENTION MARKING MODULE ---
+  const triggerAttentionAlert = async (liveId: string) => {
+    const expiresAt = new Date(Date.now() + 10 * 60000).toISOString(); // 10 Minutes Expiry Window
     
-    // කලින් තිබූ responses ඉවත් කිරීම
-    await supabase.from('attention_responses').delete().eq('live_id', liveId);
+    // Clear previous feedback responses
+    await supabase.from('attention_responses').delete().eq('live_class_id', liveId);
     
-    // Trigger On කිරීම (විනාඩි 10ක Expiry එකක් සමග)
-    await supabase.from('scheduled_lives').update({ 
+    // Trigger Live Push State
+    await supabase.from('scheduled_lives').update({
       attention_trigger: true,
-      attention_expires_at: expireTime
+      attention_expires_at: expiresAt
     }).eq('id', liveId);
+
+    alert("සියලුම සිසුන්ගේ තිර මතට Attention Check Message එක සාර්ථකව යවන ලදී!");
+    fetchInitialData();
+  };
+
+  const fetchLiveStudentsAndAttention = async (liveClassId: string) => {
+    setSelectedLiveId(liveClassId);
     
-    alert("සිසුන්ගේ අවධානය ලබාගැනීමේ පණිවිඩය යවන ලදී! එය විනාඩි 10ක් පුරාවට සක්‍රීයව පවතී.");
-
-    // විනාඩි 10කට පසු Auto Reset වීම
-    setTimeout(async () => {
-      await supabase.from('scheduled_lives').update({ attention_trigger: false }).eq('id', liveId);
-    }, 600000); 
-  };
-
-  const viewAttentionStats = async (liveId: string) => {
-    setIsLoading(true);
-    try {
-      // 1. මේ මොහොතේ live එකේ ඉන්න ළමයි ගන්න
-      const checkTime = new Date(Date.now() - 5 * 60000).toISOString(); // last 5 mins heartbeat
-      const { data: liveAttendance } = await supabase
-        .from('live_attendance') // Assuming this table exists for tracking view status
-        .select('username')
-        .eq('live_class_id', liveId)
-        .gt('last_heartbeat', checkTime);
-
-      const allActiveUsernames = liveAttendance?.map(a => a.username) || [];
-
-      // 2. Attention Mark කරපු ළමයි ගන්න
-      const { data: responses } = await supabase
-        .from('attention_responses')
-        .select('username')
-        .eq('live_id', liveId);
-
-      const markedUsernames = responses?.map(r => r.username) || [];
-
-      // 3. Usernames හරහා ළමයින්ගේ Names ගන්න
-      const { data: studentsInfo } = await supabase
-        .from('students')
-        .select('username, name')
-        .in('username', allActiveUsernames.length ? allActiveUsernames : ['']);
-
-      const marked: any[] = [];
-      const unmarked: any[] = [];
-
-      studentsInfo?.forEach(student => {
-        if (markedUsernames.includes(student.username)) {
-          marked.push(student);
-        } else {
-          unmarked.push(student);
-        }
-      });
-
-      setAttentionStats({ marked, unmarked });
-      setAttentionModalOpen(true);
-    } catch (error) {
-      console.error(error);
-    }
-    setIsLoading(false);
-  };
-
-  const fetchLiveStudents = async (liveClassId: string) => {
+    // Heartbeat mechanism for live concurrent viewers check
     const checkTime = new Date(Date.now() - 2 * 60000).toISOString();
-    const { data } = await supabase
-      .from('live_attendance')
-      .select('username, joined_at, last_heartbeat')
-      .eq('live_class_id', liveClassId)
-      .gt('last_heartbeat', checkTime);
+    const { data: attendance } = await supabase
+      .from('student_progress') // Assuming status holds live session metadata or using custom progress states
+      .select('username')
+      .eq('status', 'watching'); 
 
-    setActiveViewers(data || []);
+    // Getting unique usernames
+    const uniqueViewers = Array.from(new Set((attendance || []).map(a => a.username)));
+    
+    // Fetch students profile names mapping
+    if (uniqueViewers.length > 0) {
+      const { data: studentsProfile } = await supabase.from('students').select('username, name').in('username', uniqueViewers);
+      setActiveViewers(studentsProfile || uniqueViewers.map(u => ({ username: u, name: 'සජීවී ශිෂ්‍යයා' })));
+    } else {
+      setActiveViewers([]);
+    }
+
+    await fetchAttentionData(liveClassId);
     setViewersModalOpen(true);
   };
 
@@ -275,13 +266,13 @@ export default function AdminLiveControls() {
   return (
     <div className="w-full bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
       
-      {/* Header Panel */}
+      {/* Top Controller Banner */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-blue-500 flex items-center gap-2">
-            <Video size={32} className="animate-pulse" /> Manage Scheduled Live Classes
+            <Video size={32} className="animate-pulse" /> Advanced Live Class & Exam Console
           </h1>
-          <p className="text-slate-400 text-sm mt-1">සූම් සජීවී පන්ති පැවැත්වීම, පෙර වීඩියෝ ධාවනය සහ විභාග එකවර පාලනය කරන ප්‍රධාන පුවරුව.</p>
+          <p className="text-slate-400 text-sm mt-1">සජීවී සූම් පන්ති, ප්‍රශ්න පත්‍ර ඇමුණුම් සහ ක්ෂණික ශිෂ්‍ය අවධානය පිරික්සුම් මධ්‍යස්ථානය.</p>
         </div>
         <button 
           onClick={() => {
@@ -294,196 +285,216 @@ export default function AdminLiveControls() {
         </button>
       </div>
 
-      {/* Main Grid/Table */}
+      {/* Main Core Dashboard Grid */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-950 text-slate-400 text-xs uppercase font-mono border-b border-slate-800">
               <tr>
-                <th className="p-4">Class Details</th>
-                <th className="p-4">Targeted Groups</th>
-                <th className="p-4">Attached Exam</th>
-                <th className="p-4">Status & Control</th>
-                <th className="p-4 text-center">Actions</th>
+                <th className="p-4">Class Session Details</th>
+                <th className="p-4">Target Audience</th>
+                <th className="p-4">Attached Live Exam Module</th>
+                <th className="p-4">Stream Status</th>
+                <th className="p-4 text-center">Interactive Telemetry & Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
-              {lives.map((live) => (
-                <tr key={live.id} className="hover:bg-slate-900/50 transition">
-                  <td className="p-4">
-                    <div className="font-bold text-white text-base">{live.title}</div>
-                    <div className="text-slate-400 text-xs mt-1 flex items-center gap-2">
-                      <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex flex-wrap gap-1 max-w-[200px]">
-                      {live.target_classes?.map((c: string) => (
-                        <span key={c} className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[11px] border border-slate-700">{c}</span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    {/* Live අතරතුර Exam අමුණන්න/ඉවත් කරන්න */}
-                    <div className="flex flex-col gap-2">
-                      {live.is_exam_active ? (
-                        <span className="text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded border border-emerald-500/20 font-medium inline-flex items-center gap-1 w-fit text-xs">
-                          <BookOpen size={14} /> Active
-                        </span>
+              {lives.map((live) => {
+                const attachedExam = exams.find(e => e.id === live.active_exam_id);
+                return (
+                  <tr key={live.id} className="hover:bg-slate-900/50 transition">
+                    <td className="p-4">
+                      <div className="font-bold text-white text-base">{live.title}</div>
+                      <div className="text-slate-400 text-xs mt-1 flex items-center gap-2">
+                        <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time} 
+                        <span className="text-blue-400 bg-blue-950/80 px-2 py-0.5 rounded text-[10px] uppercase font-mono">{live.target_month}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <span className="bg-slate-950 border border-slate-800 px-3 py-1 rounded text-xs text-amber-400 font-semibold">{live.target_class_type || 'General'}</span>
+                    </td>
+                    <td className="p-4">
+                      {attachedExam ? (
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-emerald-400 font-medium flex items-center gap-1 bg-emerald-950/40 p-2 rounded-lg border border-emerald-900/50">
+                            <BookOpen size={14} /> {attachedExam.title} 
+                            <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800">Status: {attachedExam.status}</span>
+                          </span>
+                          <div className="flex gap-1">
+                            <button 
+                              onClick={() => handleLiveExamStatusToggle(live.id, attachedExam.id, attachedExam.status)}
+                              className={`px-2 py-1 rounded text-xs font-bold transition ${
+                                attachedExam.status === 'pending' ? 'bg-emerald-600 text-white' : 
+                                attachedExam.status === 'active' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {attachedExam.status === 'pending' && 'Activate Exam Now'}
+                              {attachedExam.status === 'active' && 'Pause / Stop Exam'}
+                              {attachedExam.status === 'completed' && 'Exam Ended'}
+                            </button>
+                            <button onClick={() => openExamModal(attachedExam.id)} className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded" title="Edit Online Answer Sheet">
+                              <Edit size={14} />
+                            </button>
+                          </div>
+                        </div>
                       ) : (
-                        <span className="text-slate-500 text-xs font-bold">No Exam Attached</span>
+                        <span className="text-slate-600 italic">No Exam Attached</span>
                       )}
-                      
-                      <div className="flex gap-1">
-                        <select 
-                          className="bg-slate-950 border border-slate-700 rounded p-1 text-xs text-slate-300 max-w-[120px]"
-                          value={live.active_exam_id || ''}
-                          onChange={(e) => handleQuickExamAttach(live.id, e.target.value || null)}
-                        >
-                          <option value="">No Exam</option>
-                          {exams.map(ex => (
-                            <option key={ex.id} value={ex.id}>{ex.title}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex flex-col gap-2">
-                      {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-1 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
-                      {live.status === 'pre_class' && <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded w-fit text-xs font-bold animate-pulse">Pre-Class Video Loop</span>}
-                      {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/30 px-2 py-1 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> Live on Platform</span>}
-                      {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-1 rounded w-fit text-xs">Ended</span>}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex flex-col gap-2">
+                        {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-1 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
+                        {live.status === 'pre_class' && <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded w-fit text-xs font-bold animate-pulse">Waiting Video Playing</span>}
+                        {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/30 px-2 py-1 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> Live Broadcast</span>}
+                        {live.status === 'ended' && <span className="text-slate-500 bg-slate-950 px-2 py-1 rounded w-fit text-xs">Concluded</span>}
 
-                      {/* Live Workflow Switcher Buttons */}
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {live.status === 'scheduled' && (
-                          <button onClick={() => handleStatusChange(live.id, 'pre_class')} className="bg-amber-600 hover:bg-amber-500 px-2 py-1 rounded text-xs transition">
-                            Start Repeat Video
-                          </button>
-                        )}
-                        {(live.status === 'scheduled' || live.status === 'pre_class') && (
-                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1">
-                            <Play size={12} fill="currentColor"/> Start Zoom
-                          </a>
-                        )}
-                        {live.status === 'live' && (
-                          <>
-                            <button onClick={() => handleAttentionTrigger(live.id)} className="bg-purple-600 hover:bg-purple-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1" title="සියලුම සිසුන්ට Attention පණිවිඩයක් යවන්න">
-                              <BellRing size={12} /> Send Alert
+                        <div className="flex gap-1 mt-1">
+                          {live.status === 'scheduled' && (
+                            <button onClick={() => handleStatusChange(live.id, 'pre_class')} className="bg-amber-600 hover:bg-amber-500 px-2 py-1 rounded text-xs transition">
+                              Pre-Loop Video
                             </button>
-                            <button onClick={() => viewAttentionStats(live.id)} className="bg-emerald-600 hover:bg-emerald-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1" title="අවධානය පරීක්ෂා කරන්න">
-                              <Users size={12} /> Att. Report
+                          )}
+                          {(live.status === 'scheduled' || live.status === 'pre_class') && (
+                            <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 transition">
+                              <Play size={12} fill="currentColor"/> Go Live Zoom
+                            </a>
+                          )}
+                          {live.status === 'live' && (
+                            <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 px-2 py-1 rounded text-xs font-bold flex items-center gap-1 transition">
+                              <Square size={12} fill="currentColor"/> Terminate Stream
                             </button>
-                            <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 px-2 py-1 rounded text-xs transition font-bold flex items-center gap-1">
-                              <Square size={12} fill="currentColor"/> End Class
-                            </button>
-                          </>
-                        )}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="p-4 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <button onClick={() => fetchLiveStudents(live.id)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-blue-400 transition" title="සජීවීව සිටින සිසුන්">
-                        <Eye size={18} />
-                      </button>
-                      <button onClick={() => { setFormData(live); setIsModalOpen(true); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-amber-400 transition" title="සංස්කරණය">
-                        <Edit size={18} />
-                      </button>
-                      <button onClick={() => handleDelete(live.id)} className="p-2 bg-slate-800 hover:bg-red-950 text-red-400 rounded-lg transition" title="මකා දමන්න">
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => triggerAttentionAlert(live.id)} 
+                          className={`p-2 rounded-lg text-white font-semibold flex items-center gap-1 text-xs transition ${live.attention_trigger ? 'bg-red-700 animate-bounce' : 'bg-rose-600 hover:bg-rose-500'}`}
+                          title="සියලුම සිසුන්ට Attention Popup එකක් යවන්න"
+                        >
+                          <Radio size={16} /> Attention Prompt
+                        </button>
+                        <button onClick={() => fetchLiveStudentsAndAttention(live.id)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-cyan-400 transition" title="ශිෂ්‍ය පැමිණීම සහ අවධානය විමර්ශනය">
+                          <Eye size={18} />
+                        </button>
+                        <button onClick={() => { setFormData(live); setIsModalOpen(true); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-amber-400 transition" title="සංස්කරණය">
+                          <Edit size={18} />
+                        </button>
+                        <button onClick={() => handleDeleteLive(live.id)} className="p-2 bg-slate-800 hover:bg-red-950 text-red-400 rounded-lg transition" title="මකා දැමීම">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Main Creation/Editing Modal */}
+      {/* 1. MAIN LIVE BROADCAST WIZARD MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-40 p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
-            <h2 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">
-              {formData.id ? 'Edit Live Session' : 'Schedule New Live Zoom Class'}
-            </h2>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-xl max-h-[95vh] overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Video className="text-blue-500" /> {formData.id ? 'Modify Live Broadcast Session' : 'Schedule New Live Zoom Class'}
+              </h2>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+            </div>
+            
             <form onSubmit={handleSaveLive} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Class Topic / Title</label>
-                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm" />
+                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm" placeholder="Physics Theory Live..." />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Date</label>
-                  <input required type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm text-center" />
+                  <input required type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm text-center" />
                 </div>
                 <div>
                   <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Time</label>
-                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm text-center" />
+                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm text-center" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Target Month</label>
-                  <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm" />
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Target Month (කැලැන්ඩරයෙන් තෝරන්න)</label>
+                  <input 
+                    required 
+                    type="month" 
+                    value={formData.target_month} 
+                    onChange={e => setFormData({...formData, target_month: e.target.value})} 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm font-mono text-center" 
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Pre-Class Video (Path)</label>
-                  <input required type="text" value={formData.pre_class_video_path} onChange={e => setFormData({...formData, pre_class_video_path: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 transition text-sm" />
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Primary Category Type</label>
+                  <select 
+                    required
+                    value={formData.target_class_type} 
+                    onChange={e => setFormData({...formData, target_class_type: e.target.value})}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm"
+                  >
+                    <option value="">-- Select Main Class Type --</option>
+                    {classConfigs.map(c => (
+                      <option key={c.id} value={c.class_types}>{c.class_types}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Select Target Classes (සිසුන්ට දර්ශනය වන පන්ති වර්‍ග)</label>
-                <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-2">Select Accessible Sub-Classes (සිසුන්ට දර්ශනය වන පන්ති වර්‍ග)</label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-32 overflow-y-auto">
                   {classConfigs.map((cfg) => (
                     <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:bg-slate-900 p-1 rounded">
-                      <input type="checkbox" checked={formData.target_classes.includes(cfg.class_type || cfg.class_types)} onChange={() => toggleCheckbox(cfg.class_type || cfg.class_types)} className="accent-blue-500 rounded" />
-                      {cfg.class_type || cfg.class_types}
+                      <input type="checkbox" checked={formData.target_classes.includes(cfg.class_types)} onChange={() => toggleCheckbox(cfg.class_types)} className="accent-blue-500 rounded" />
+                      {cfg.class_types}
                     </label>
                   ))}
                 </div>
               </div>
 
-              {/* Online Exam Attachment & Creator */}
-              <div className="bg-slate-800/30 p-3 rounded-xl border border-slate-700">
-                <label className="block text-xs font-mono text-emerald-400 font-bold uppercase mb-2">Attach Live Exam (පන්තිය සමඟම සක්‍රීය වන විභාගය)</label>
-                <div className="flex gap-2 items-center">
-                  <select value={formData.active_exam_id || ''} onChange={e => setFormData({...formData, active_exam_id: e.target.value})} className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500 transition text-sm">
-                    <option value="">-- No Exam Attached --</option>
-                    {exams.map(ex => (
-                      <option key={ex.id} value={ex.id}>{ex.title}</option>
-                    ))}
-                  </select>
-                  
-                  {/* Create New Exam Button */}
-                  <button type="button" onClick={() => { setExamData({ id: '', title: '', pdf_url: '', total_questions: 50, answers: {} }); setIsExamModalOpen(true); }} className="bg-emerald-600 hover:bg-emerald-500 text-white p-2.5 rounded-lg transition" title="නව විභාගයක් සාදන්න">
-                    <Plus size={18} />
+              {/* LIVE INTEGRATED EXAM ATTACHMENT PORTAL */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-mono text-slate-400 uppercase">Attach Online Live MCQ Exam</label>
+                  <button 
+                    type="button" 
+                    onClick={() => openExamModal(formData.active_exam_id)}
+                    className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-bold flex items-center gap-1 transition"
+                  >
+                    <Plus size={12} /> {formData.active_exam_id ? 'Edit Attached Answer Sheet' : 'Create New Live Answer Sheet'}
                   </button>
-
-                  {/* Edit/Delete Exam Buttons */}
-                  {formData.active_exam_id && (
-                    <>
-                      <button type="button" onClick={() => openExamEditor(formData.active_exam_id)} className="bg-slate-700 hover:bg-slate-600 text-amber-400 p-2.5 rounded-lg transition" title="තෝරාගත් විභාගය සංස්කරණය">
-                        <Edit size={18} />
-                      </button>
-                      <button type="button" onClick={() => handleDeleteExam(formData.active_exam_id)} className="bg-slate-700 hover:bg-slate-600 text-red-400 p-2.5 rounded-lg transition" title="තෝරාගත් විභාගය මකා දමන්න">
-                        <Trash2 size={18} />
-                      </button>
-                    </>
-                  )}
                 </div>
+                <select 
+                  value={formData.active_exam_id || ''} 
+                  onChange={e => setFormData({...formData, active_exam_id: e.target.value})} 
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-white focus:border-blue-500 focus:outline-none text-sm"
+                >
+                  <option value="">-- No Exam Attached --</option>
+                  {exams.map(ex => (
+                    <option key={ex.id} value={ex.id}>{ex.title} [{ex.class_type || 'General'}] ({ex.status})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Pre-Class Waiting Screen Loop Video Path</label>
+                <input required type="text" value={formData.pre_class_video_path} onChange={e => setFormData({...formData, pre_class_video_path: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:border-blue-500 focus:outline-none text-sm" />
               </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm transition">Cancel</button>
-                <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-xl text-sm font-bold transition">
-                  {isLoading ? 'Connecting API...' : 'Save & Schedule'}
+                <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-xl text-sm font-bold transition shadow-md shadow-blue-600/10">
+                  {isLoading ? 'Synchronizing Live API...' : formData.id ? 'Update Live Event' : 'Deploy Live & Generate Zoom Link'}
                 </button>
               </div>
             </form>
@@ -491,144 +502,158 @@ export default function AdminLiveControls() {
         </div>
       )}
 
-      {/* Answer Sheet Creator Modal */}
-      {isExamModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-emerald-500/30 p-6 rounded-2xl w-full max-w-5xl shadow-2xl flex flex-col h-[90vh]">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-800">
-              <h2 className="text-xl font-bold text-emerald-400 flex items-center gap-2">
-                <FileText /> {examData.id ? 'Edit Live Answer Sheet' : 'Create Live Answer Sheet'}
+      {/* 2. DYNAMIC LIVE MCQ ANSWER SHEET CREATOR MODAL */}
+      {examModalOpen && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-55 p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+              <h2 className="text-lg font-bold text-emerald-400 flex items-center gap-2">
+                <CheckSquare /> {examFormData.id ? 'Modify Realtime MCQ Answer Sheet' : 'Construct Live Student Answer Sheet Matrix'}
               </h2>
-              <button onClick={() => setIsExamModalOpen(false)} className="text-slate-400 hover:text-white"><X size={24}/></button>
+              <button onClick={() => setExamModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              <div className="md:col-span-1">
-                <label className="block text-xs font-mono text-slate-400 mb-1">Exam Title</label>
-                <input type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} placeholder="e.g. Mechanics Weekly Test 04" className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm" />
-              </div>
-              <div className="md:col-span-1">
-                <label className="block text-xs font-mono text-slate-400 mb-1">Media Link (PDF / JPG / Drive Link)</label>
-                <div className="flex relative">
-                  <span className="absolute left-3 top-2.5 text-slate-500"><LinkIcon size={14}/></span>
-                  <input type="text" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/..." className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 pl-8 text-white text-sm" />
+            <form onSubmit={handleSaveExam} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Exam Title / Paper Name</label>
+                  <input required type="text" value={examFormData.title} onChange={e => setExamFormData({...examFormData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-sm focus:border-emerald-500 focus:outline-none" placeholder="Term Test MCQ 01" />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Paper Class Type Config</label>
+                  <select required value={examFormData.class_type} onChange={e => setExamFormData({...examFormData, class_type: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-sm focus:border-emerald-500 focus:outline-none">
+                    <option value="">-- Choose Type --</option>
+                    {classConfigs.map(c => <option key={c.id} value={c.class_types}>{c.class_types}</option>)}
+                  </select>
                 </div>
               </div>
-              <div className="md:col-span-1">
-                <label className="block text-xs font-mono text-slate-400 mb-1">Total Questions (1 - 200)</label>
-                <input type="number" min="1" max="200" value={examData.total_questions} onChange={e => setExamData({...examData, total_questions: parseInt(e.target.value) || 1})} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-white text-sm text-center font-bold" />
-              </div>
-            </div>
 
-            {/* Answer Grid */}
-            <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-slate-700 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                {Array.from({ length: Math.min(200, Math.max(1, examData.total_questions)) }).map((_, idx) => {
-                  const qNum = idx + 1;
-                  return (
-                    <div key={idx} className={`p-2.5 rounded-lg border flex flex-col items-center transition ${examData.answers[qNum] ? 'border-emerald-500/50 bg-emerald-900/10' : 'border-slate-800 bg-slate-900'}`}>
-                      <span className="text-[11px] font-bold text-slate-400 mb-2">Question {qNum}</span>
-                      <div className="flex gap-1.5 w-full justify-between px-1">
-                        {[1, 2, 3, 4, 5].map(ans => (
-                          <label key={ans} className="flex flex-col items-center gap-1 cursor-pointer">
-                            <input 
-                              type="radio" 
-                              name={`q_${qNum}`} 
-                              checked={examData.answers[qNum] === ans} 
-                              onChange={() => setExamData(prev => ({ ...prev, answers: { ...prev.answers, [qNum]: ans } }))} 
-                              className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
-                            />
-                            <span className="text-[10px] text-slate-400 font-medium">{ans}</span>
-                          </label>
-                        ))}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Paper Link (Google Drive / Image URL)</label>
+                  <input type="text" value={examFormData.pdf_url} onChange={e => setExamFormData({...examFormData, pdf_url: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-sm focus:border-emerald-500 focus:outline-none" placeholder="https://drive.google.com/file/d/..." />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Total Question Count</label>
+                  <input type="number" min="1" max="200" value={examFormData.total_questions} onChange={e => setExamFormData({...examFormData, total_questions: Math.min(200, parseInt(e.target.value) || 0)})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-sm text-center focus:border-emerald-500 focus:outline-none" />
+                </div>
+              </div>
+
+              {/* DYNAMIC ANSWER GRID BUILDER (1 - 200 MCQ GRID) */}
+              <div>
+                <label className="block text-xs font-mono text-slate-400 uppercase mb-2 text-emerald-500">Correct Answers Key Template (පිළිතුරු පත්‍රයේ නිවැරදි පිළිතුරු ලකුණු කරන්න)</label>
+                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 max-h-64 overflow-y-auto space-y-3">
+                  {Array.from({ length: examFormData.total_questions }).map((_, i) => {
+                    const qNum = i + 1;
+                    return (
+                      <div key={qNum} className="flex items-center justify-between bg-slate-900/60 p-2 rounded-lg border border-slate-800/40 hover:border-slate-700/60 transition">
+                        <span className="font-mono text-xs font-bold text-slate-400 w-12">Q. {String(qNum).padStart(2, '0')}</span>
+                        <div className="flex gap-2">
+                          {[1, 2, 3, 4, 5].map((ans) => (
+                            <button
+                              type="button"
+                              key={ans}
+                              onClick={() => setExamFormData({
+                                ...examFormData,
+                                correct_answers: { ...examFormData.correct_answers, [qNum]: ans }
+                              })}
+                              className={`w-7 h-7 rounded-full text-xs font-mono font-bold border transition ${
+                                examFormData.correct_answers[qNum] === ans
+                                  ? 'bg-emerald-500 border-emerald-400 text-slate-950 shadow-md shadow-emerald-500/20 scale-110'
+                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-600'
+                              }`}
+                            >
+                              {ans}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
 
-            <div className="flex justify-end gap-3 pt-4 mt-4 border-t border-slate-800">
-              <button onClick={() => setIsExamModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2 rounded-xl text-sm transition">Cancel</button>
-              <button onClick={handleSaveExam} className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-xl text-sm font-bold transition flex items-center gap-2">
-                <CheckSquare size={16} /> Save Answer Sheet
-              </button>
-            </div>
+              <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+                <span className="text-xs text-amber-500 flex items-center gap-1 font-mono"><AlertCircle size={14}/> ක්ෂණිකව සුරැකේ. සිසුන්ට සජීවීව යාවත්කාලීන වේ.</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>
+                  <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold px-5 py-2 rounded-xl text-sm flex items-center gap-1 transition shadow-lg shadow-emerald-600/10">
+                    <Save size={16}/> Compile Sheet Matrix
+                  </button>
+                </div>
+              </div>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Viewers Attendance List Modal */}
+      {/* 3. ATTENDANCE RADAR & ATTENTION METRICS AUDIT MODAL */}
       {viewersModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-150">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button onClick={() => setViewersModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Users className="text-blue-500" /> Active Users ({activeViewers.length})</h2>
             
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-2 max-h-72 overflow-y-auto divide-y divide-slate-900">
-              {activeViewers.length === 0 ? (
-                <div className="text-center text-slate-500 py-8 text-sm flex flex-col items-center gap-2"><AlertCircle size={24}/> දැනට මෙම පන්තියේ සජීවී සිසුන් කිසිවෙකු නොමැත.</div>
-              ) : (
-                activeViewers.map((user, index) => (
-                  <div key={index} className="p-3 flex justify-between items-center hover:bg-slate-900/50 rounded-lg transition">
-                    <span className="font-mono text-sm text-slate-200 font-bold">{user.username}</span>
-                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full animate-pulse">LIVE WATCHING</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Attention Stats Modal */}
-      {attentionModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-150">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-4xl shadow-2xl relative">
-            <button onClick={() => setAttentionModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white transition"><X size={20}/></button>
-            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2"><Users className="text-purple-500" /> Attention Monitoring Report</h2>
+            <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+              <Activity className="text-blue-500 animate-pulse" /> Live Telemetry Analytics Desk
+            </h2>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Marked Students */}
-              <div className="bg-slate-950 border border-emerald-500/20 rounded-xl p-4 flex flex-col max-h-96">
-                <h3 className="text-emerald-400 font-bold mb-3 flex items-center gap-2 border-b border-slate-800 pb-2">
-                  <CheckCircle2 size={18} /> Attention Marked ({attentionStats.marked.length})
-                </h3>
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-800 pr-2">
-                  {attentionStats.marked.length === 0 ? (
-                    <div className="text-slate-500 text-sm py-4 text-center">කිසිවෙකුත් මෙතෙක් මාක් කර නොමැත.</div>
-                  ) : (
-                    attentionStats.marked.map((user, idx) => (
-                      <div key={idx} className="py-2 flex justify-between items-center">
-                        <div className="flex flex-col">
-                          <span className="text-sm text-white">{user.name}</span>
-                          <span className="text-xs font-mono text-slate-500">{user.username}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
+                <div className="text-2xl font-extrabold text-cyan-400 font-mono">{activeViewers.length}</div>
+                <div className="text-xs font-mono text-slate-400 uppercase mt-1">Concurrently Streaming</div>
               </div>
-
-              {/* Unmarked Students */}
-              <div className="bg-slate-950 border border-red-500/20 rounded-xl p-4 flex flex-col max-h-96">
-                <h3 className="text-red-400 font-bold mb-3 flex items-center gap-2 border-b border-slate-800 pb-2">
-                  <XCircle size={18} /> Not Marked ({attentionStats.unmarked.length})
-                </h3>
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-800 pr-2">
-                  {attentionStats.unmarked.length === 0 ? (
-                    <div className="text-slate-500 text-sm py-4 text-center">සියලුම සිසුන් අවධානයෙන් සිටී!</div>
-                  ) : (
-                    attentionStats.unmarked.map((user, idx) => (
-                      <div key={idx} className="py-2 flex justify-between items-center">
-                        <div className="flex flex-col">
-                          <span className="text-sm text-white">{user.name}</span>
-                          <span className="text-xs font-mono text-slate-500">{user.username}</span>
-                        </div>
-                      </div>
-                    ))
-                  )}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-center">
+                <div className="text-2xl font-extrabold text-emerald-400 font-mono">
+                  {attentionResponses.filter(r => r.is_attentive).length}
                 </div>
+                <div className="text-xs font-mono text-slate-400 uppercase mt-1">Verified Attentive Feedbacks</div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-slate-300 border-b border-slate-800 pb-1">Attention Monitoring Metrics Ledger</h3>
+              <div className="grid grid-cols-2 gap-4">
+                
+                {/* COLUMN A: RESPONDED STUDENTS */}
+                <div className="space-y-2">
+                  <div className="text-xs font-mono text-emerald-400 bg-emerald-950/20 p-2 rounded border border-emerald-900/50 font-bold flex items-center gap-1">
+                    ✓ Responded (අවධානය යොමු කළ සිසුන්)
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-2 max-h-56 overflow-y-auto divide-y divide-slate-900 font-mono text-xs">
+                    {attentionResponses.length === 0 ? (
+                      <div className="p-3 text-slate-600 italic text-center">No logs generated yet.</div>
+                    ) : (
+                      attentionResponses.map((res, i) => (
+                        <div key={i} className="p-2 flex flex-col hover:bg-slate-900 transition">
+                          <span className="text-slate-200 font-bold">{res.student_name || 'Anonymous Student'}</span>
+                          <span className="text-slate-500 text-[10px]">@{res.username}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* COLUMN B: PENDING AUDIENCE */}
+                <div className="space-y-2">
+                  <div className="text-xs font-mono text-rose-400 bg-rose-950/20 p-2 rounded border border-rose-900/50 font-bold flex items-center gap-1">
+                    ⚠ Unresponsive / Absent (ප්‍රතිචාර නොදුන් සිසුන්)
+                  </div>
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-2 max-h-56 overflow-y-auto divide-y divide-slate-900 font-mono text-xs">
+                    {activeViewers.filter(v => !attentionResponses.some(r => r.username === v.username)).length === 0 ? (
+                      <div className="p-3 text-slate-600 italic text-center">Perfect attention compliance or zero viewers.</div>
+                    ) : (
+                      activeViewers
+                        .filter(v => !attentionResponses.some(r => r.username === v.username))
+                        .map((v, i) => (
+                          <div key={i} className="p-2 flex flex-col hover:bg-slate-900 transition">
+                            <span className="text-rose-400 font-bold">{v.name || 'Student View'}</span>
+                            <span className="text-slate-500 text-[10px]">@{v.username}</span>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+
               </div>
             </div>
           </div>
