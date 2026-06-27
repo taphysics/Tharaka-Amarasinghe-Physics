@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 
 interface LiveClassPlayerProps {
-  classId: string;    // scheduled_lives table id
+  classId?: string;   // දැන් මෙය Optional වේ (පන්තියක් නොමැති විට undefined පැමිණීමට ඉඩ ඇත)
   username: string;   // Current student's username
   studentId: string;  // Current student's ID
 }
@@ -15,7 +15,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
   const [selectedDateEvents, setSelectedDateEvents] = useState<any[] | null>(null);
   
   // Realtime Active Media States
-  const [timeToStart, setTimeToStart] = useState<number>(0); // Seconds to start
+  const [timeToStart, setTimeToStart] = useState<number>(0); 
   const [showWaitingVideo, setShowWaitingVideo] = useState(false);
   const [isWithin24Hours, setIsWithin24Hours] = useState(false);
   
@@ -41,55 +41,78 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
   // Calendar Utility Navigation
   const [currentCalendarDate, setCurrentCalendarDate] = useState<Date>(new Date());
 
-  // 1. Fetch Live Session Data & Realtime Synchronization Setup
+  // 1. Fetch Initial Data (Independent Calendar & Safe Live Session Loading)
   useEffect(() => {
-    const fetchLiveSession = async () => {
-      const { data, error } = await supabase
-        .from('scheduled_lives')
-        .select('*')
-        .eq('id', classId)
-        .single();
-      if (data) {
-        setLiveSession(data);
-        checkPaymentEligibility(data.class_type, data.target_month);
+    const initStudentDashboard = async () => {
+      // (A) සජීවී පන්තියක් තිබුණත් නැතත්, සිසුවාගේ පන්ති වර්ගයට අදාළ කැලැන්ඩරය ලබා ගැනීම
+      if (username) {
+        try {
+          const { data: studentData } = await supabase
+            .from('students')
+            .select('class_types')
+            .eq('username', username)
+            .single();
+
+          if (studentData?.class_types && studentData.class_types.length > 0) {
+            const { data: events } = await supabase
+              .from('calender_events') // ඔබගේ Database Schema එකෙහි ඇති නිවැරදි නම
+              .select('*')
+              .in('class_type', studentData.class_types);
+            
+            if (events) setCalendarEvents(events);
+          }
+        } catch (e) {
+          console.error("Error fetching calendar data:", e);
+        }
+      }
+
+      // (B) සජීවී පන්තියක් (classId) ඇත්නම් පමණක් එය Fetch කිරීම (400 Error එක මගහැරීම)
+      if (classId && classId !== 'undefined' && classId !== 'null') {
+        try {
+          const { data, error } = await supabase
+            .from('scheduled_lives')
+            .select('*')
+            .eq('id', classId)
+            .single();
+            
+          if (data) {
+            setLiveSession(data);
+            checkPaymentEligibility(data.class_type, data.target_month);
+          }
+        } catch (e) {
+          console.error("Error fetching live session:", e);
+        }
+      } else {
+        setLiveSession(null);
       }
     };
 
-    fetchLiveSession();
+    initStudentDashboard();
 
-    const sessionSubscription = supabase
-      .channel(`live-session-${classId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'scheduled_lives', filter: `id=eq.${classId}` },
-        (payload) => {
-          setLiveSession(payload.new);
-          if (payload.new) {
-            checkPaymentEligibility(payload.new.class_type, payload.new.target_month);
+    // සජීවී පන්තියක් ඇත්නම් පමණක් Realtime Channel එක සක්‍රීය කිරීම
+    let sessionSubscription: any;
+    if (classId && classId !== 'undefined' && classId !== 'null') {
+      sessionSubscription = supabase
+        .channel(`live-session-${classId}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'scheduled_lives', filter: `id=eq.${classId}` },
+          (payload) => {
+            setLiveSession(payload.new);
+            if (payload.new) {
+              checkPaymentEligibility(payload.new.class_type, payload.new.target_month);
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    }
 
     return () => {
-      supabase.removeChannel(sessionSubscription);
+      if (sessionSubscription) supabase.removeChannel(sessionSubscription);
     };
-  }, [classId]);
+  }, [classId, username]);
 
-  // 2. Fetch Global Calendar Events for History Visualizer
-  useEffect(() => {
-    if (!liveSession) return;
-    const fetchCalendarEvents = async () => {
-      const { data, error } = await supabase
-        .from('calender_events')
-        .select('*')
-        .eq('class_type', liveSession.class_type);
-      if (data) setCalendarEvents(data);
-    };
-    fetchCalendarEvents();
-  }, [liveSession]);
-
-  // 3. Dynamic Gateway Validation Engine
+  // 2. Dynamic Gateway Validation Engine (ගෙවීම් පරීක්ෂාව)
   const checkPaymentEligibility = async (classType: string, targetMonth: string) => {
     const { data, error } = await supabase
       .from('payments')
@@ -108,7 +131,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
     }
   };
 
-  // Realtime Gateway Verification Listener
+  // 3. Realtime Gateway Verification Listener
   useEffect(() => {
     if (!liveSession) return;
     const paymentSubscription = supabase
@@ -127,7 +150,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
     };
   }, [liveSession, username]);
 
-  // 4. Live Clock & Dynamic Pre-Class Timeline Watcher
+  // 4. Live Clock & Dynamic Pre-Class Timeline Watcher (Waiting Video / Countdown)
   useEffect(() => {
     if (!liveSession || liveSession.status === 'completed') return;
 
@@ -145,14 +168,13 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
         setIsWithin24Hours(false);
       }
 
-      // Exactly within the final hour before starting class
+      // හරියටම අවසාන පැයේදී Waiting Video එක පෙන්වීම
       if (diffSec <= 3600 && diffSec > 0 && liveSession.status === 'scheduled') {
         setShowWaitingVideo(true);
       } else {
         setShowWaitingVideo(false);
       }
 
-      // Auto start transition fallback structural logic
       if (diffSec <= 0 && liveSession.status === 'scheduled') {
         setShowWaitingVideo(false);
         setIsWithin24Hours(false);
@@ -181,7 +203,6 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
       };
       fetchActiveExam();
     } else if (!liveSession?.is_exam_active) {
-      // Admin closed or terminated the exam view natively
       setExamDetails(null);
       setExamTimeLeft(null);
     }
@@ -195,7 +216,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
       setExamTimeLeft((prev) => {
         if (prev !== null && prev <= 1) {
           clearInterval(examTimer);
-          executeExamScoringSubmission(true); // Forced safe fallback submission
+          executeExamScoringSubmission(true); // කාලය අවසන් වූ විට ස්වයංක්‍රීයව Submit වීම
           return 0;
         }
         return prev ? prev - 1 : 0;
@@ -246,7 +267,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
     let rawScore = 0;
     const modelAnswers = examDetails.correct_answer || {};
 
-    // Immediate Scoring Comparison Engine
+    // ලකුණු ගණනය කිරීම (Scoring System)
     for (let i = 1; i <= examDetails.total_questions; i++) {
       const qKey = i.toString();
       if (answers[qKey] !== undefined && Number(answers[qKey]) === Number(modelAnswers[qKey])) {
@@ -254,7 +275,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
       }
     }
 
-    // Persist Analytical Data Points into Supabase Ecosystem
+    // Database එකට ලකුණු යාවත්කාලීන කිරීම
     try {
       await supabase.from('exam_results').insert({
         username: username,
@@ -268,7 +289,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
       console.error("Failed persisting metrics to database layers:", err);
     }
 
-    // Launch High Intensity Visual Announcement Popup Modal Overlay
+    // ලකුණු පොපප් එක පෙන්වීම
     setScorePopup({
       show: true,
       score: rawScore,
@@ -317,7 +338,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
         <div className="flex items-center space-x-3">
           <div className="h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
           <h1 className="text-lg font-bold tracking-tight text-slate-200">
-            {liveSession ? liveSession.title : 'සජීවී පන්ති කළමනාකරණ පැනලය'}
+            {liveSession ? liveSession.title : 'සජීවී පන්ති පැනලය (Live Classes)'}
           </h1>
         </div>
         {liveSession && (
@@ -341,7 +362,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
       <main className="flex-grow p-4 md:p-6 flex flex-col gap-6 max-w-[1600px] w-full mx-auto">
         
         {/* VIEW ENGINE MATRIX: IF COMPLETED OR NOT ACTIVE OR ACCESS RESTRICTED -> RENDER SYSTEM CALENDAR */}
-        {(liveSession?.status === 'completed' || liveSession?.status === 'scheduled' || !activeHasAccess) && !showWaitingVideo ? (
+        {(liveSession?.status === 'completed' || liveSession?.status === 'scheduled' || !activeHasAccess || !liveSession) && !showWaitingVideo ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             
             {/* Interactive Grid Calendar Structure */}
@@ -402,7 +423,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
                       <span className="font-mono text-xs font-bold">{day.getDate()}</span>
                       
                       {hasLiveEvent && (
-                        <div className="w-full mt-2">
+                        <div className="w-full mt-2 space-y-1">
                           {dayEvents.map((ev, eIdx) => (
                             <div key={eIdx} className="w-full">
                               <span className={`block text-[10px] px-1.5 py-0.5 rounded-md font-medium truncate max-w-full ${
@@ -478,7 +499,7 @@ export default function LiveClassPlayer({ classId, username, studentId }: LiveCl
         ) : (
           
           /* ACTIVE INTERACTIVE LIVE VIEWPORT ENGINE MODAL STRATIFICATION */
-          activeHasAccess && (
+          activeHasAccess && liveSession && (
             <div className={`w-full flex flex-col ${examDetails && !examSubmitted ? 'lg:flex-row' : 'flex-col'} gap-6 items-stretch`}>
               
               {/* --- REALTIME EXAM SPLIT COMPONENT INTERVENTION INTERFACE PANEL --- */}
