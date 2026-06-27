@@ -64,7 +64,6 @@ export default function AdminLiveControls() {
       const { data: configsData } = await supabase.from('class_types_config').select('*');
       if (configsData) setClassConfigs(configsData);
 
-      // FIX: Removed .order('created_at') because exams table doesn't have created_at column
       const { data: examsData } = await supabase.from('exams').select('*');
       if (examsData) setExams(examsData);
     } catch (err) { 
@@ -176,7 +175,7 @@ export default function AdminLiveControls() {
       await fetchInitialData();
     } catch (err: any) {
       alert(err.message || "Error saving session.");
-    } bits: {
+    } finally {
       setIsLoading(false);
     }
   };
@@ -271,6 +270,14 @@ export default function AdminLiveControls() {
   const handleDelete = async (id: string) => {
     if (confirm("මෙම පන්තිය මකා දැමීමට අවශ්‍යද?")) {
       const liveToDelete = lives.find(l => l.id === id);
+      
+      // Delete Exam Associated with it safely
+      if (liveToDelete && liveToDelete.active_exam_id) {
+          try {
+             await supabase.from('exams').delete().eq('id', liveToDelete.active_exam_id);
+          } catch(e) { console.error("Could not delete exam", e); }
+      }
+      
       await supabase.from('scheduled_lives').delete().eq('id', id);
       
       if (liveToDelete) {
@@ -343,11 +350,17 @@ export default function AdminLiveControls() {
               {lives.map((live) => {
                 let attachedExam = exams.find(e => e.id === live.active_exam_id);
                 
+                // If it's a new class without an explicit exam, attempt to fetch the relevant matching class type's latest exam globally.
                 if (!attachedExam) {
                   const mainClassType = live.target_class_type || live.target_classes?.[0];
                   if (mainClassType) {
                     attachedExam = exams.find(e => e.class_type === mainClassType);
                   }
+                }
+
+                // But importantly, restrict older ended classes from displaying globally matching ones unless explicitly saved on their record
+                if (live.status === 'ended' && !live.active_exam_id) {
+                    attachedExam = undefined; 
                 }
 
                 const isExamPushedLive = live.is_exam_active;
