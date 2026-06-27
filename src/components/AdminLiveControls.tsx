@@ -143,8 +143,8 @@ export default function AdminLiveControls() {
         await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
         
         if (oldLive) {
-          // Sync changes to calender_events for student view
-          await supabase.from('calender_events')
+          // Sync changes to calendar_events for student view
+          await supabase.from('calendar_events')
             .update({
               date: formData.date,
               title: formData.title,
@@ -160,7 +160,7 @@ export default function AdminLiveControls() {
         await supabase.from('scheduled_lives').insert([payload]);
         
         // Add to calendar_events
-        await supabase.from('calender_events').insert([{
+        await supabase.from('calendar_events').insert([{
           date: formData.date,
           title: formData.title,
           description: `Zoom Live Class - ${mainClassType}`,
@@ -258,7 +258,7 @@ export default function AdminLiveControls() {
     // Also sync calendar status if needed
     const liveObj = lives.find(l => l.id === id);
     if (liveObj) {
-      await supabase.from('calender_events')
+      await supabase.from('calendar_events')
         .update({ status: newStatus })
         .eq('title', liveObj.title)
         .eq('date', liveObj.date);
@@ -281,7 +281,7 @@ export default function AdminLiveControls() {
       await supabase.from('scheduled_lives').delete().eq('id', id);
       
       if (liveToDelete) {
-        await supabase.from('calender_events')
+        await supabase.from('calendar_events')
           .delete()
           .eq('title', liveToDelete.title)
           .eq('date', liveToDelete.date);
