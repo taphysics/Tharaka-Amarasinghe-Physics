@@ -64,7 +64,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
       // 2. Fetch Calendar Events
       const { data: events } = await supabase
-        .from('calender_events')
+        .from('calendar_events')
         .select('*')
         .in('class_type', matchClasses);
 
@@ -85,9 +85,15 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
           description: live.description || 'සූම් ඔස්සේ පැවැත්වෙන සජීවී පන්තිය',
           start_time: live.time,
           class_type: live.class_type,
-          is_live_session: true
+          is_live_session: true,
+          status: live.status
         }));
-        combinedEvents.push(...mappedLives);
+        
+        // Remove duplicates based on date and title (if admin generated both)
+        mappedLives.forEach(ml => {
+           const exists = combinedEvents.some(ce => ce.date === ml.date && ce.title === ml.title);
+           if (!exists) combinedEvents.push(ml);
+        });
       }
       setCalendarEvents(combinedEvents);
 
@@ -121,7 +127,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     // Set up Realtime Triggers to auto-refresh everything when Admin updates DB
     const channels = supabase.channel('custom-all-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchCoreData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, fetchCoreData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, fetchCoreData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `username=eq.${username}` }, fetchCoreData)
       .subscribe();
 
@@ -373,7 +379,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                   
                   const isPast = dayEvents.some(e => {
                      const evDateTime = new Date(`${e.date}T${e.start_time || '23:59:00'}`);
-                     return evDateTime < new Date();
+                     return evDateTime < new Date() || e.status === 'ended';
                   });
 
                   return (
@@ -417,7 +423,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                   <div className="space-y-4">
                     {selectedDateEvents.map((evt, idx) => {
                       const evDateTime = new Date(`${evt.date}T${evt.start_time || '23:59:00'}`);
-                      const isPast = evDateTime < new Date();
+                      const isPast = evDateTime < new Date() || evt.status === 'ended';
                       return (
                         <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 shadow-inner">
                           <div className="flex items-center justify-between mb-3">
