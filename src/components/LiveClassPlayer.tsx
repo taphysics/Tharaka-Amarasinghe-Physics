@@ -60,14 +60,15 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         if (studentData.course) enrolledClasses.push(studentData.course);
       }
 
+      // If still empty, we use a wildcard fallback or stop to avoid query errors
       const matchClasses = enrolledClasses.length > 0 ? enrolledClasses : ['default'];
 
-      // 2. Fetch Calendar Events
+      // 2. Fetch Calendar Events safely
       const { data: events } = await supabase
-        .from('calendar_events')
+        .from('calender_events')
         .select('*')
         .in('class_type', matchClasses);
-
+      
       // 3. Fetch All Scheduled Live Classes to Merge into the Calendar View
       const { data: allLives } = await supabase
         .from('scheduled_lives')
@@ -85,19 +86,19 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
           description: live.description || 'සූම් ඔස්සේ පැවැත්වෙන සජීවී පන්තිය',
           start_time: live.time,
           class_type: live.class_type,
-          is_live_session: true,
-          status: live.status
+          is_live_session: true
         }));
         
-        // Remove duplicates based on date and title (if admin generated both)
-        mappedLives.forEach(ml => {
-           const exists = combinedEvents.some(ce => ce.date === ml.date && ce.title === ml.title);
-           if (!exists) combinedEvents.push(ml);
-        });
+        // Filter out duplicates (admin might have saved to both tables)
+        const uniqueLives = mappedLives.filter(mappedEvent => 
+           !combinedEvents.some(ce => ce.date === mappedEvent.date && ce.title === mappedEvent.title)
+        );
+        
+        combinedEvents.push(...uniqueLives);
       }
       setCalendarEvents(combinedEvents);
 
-      // 4. Fetch Next Active Live Class
+      // 4. Fetch Next Active Live Class (Broadened query to catch missing status)
       const { data: activeLive } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -127,20 +128,22 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     // Set up Realtime Triggers to auto-refresh everything when Admin updates DB
     const channels = supabase.channel('custom-all-channel')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchCoreData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, fetchCoreData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, fetchCoreData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `username=eq.${username}` }, fetchCoreData)
       .subscribe();
 
     return () => { supabase.removeChannel(channels); };
   }, [username]);
 
-  // --- 2. Payment Gateway Validation ---
+  // --- 2. Foolproof Payment Gateway Validation ---
   const validatePayment = async (classType: string, targetMonth: string, studentData: any) => {
+    // Check if student is explicitly free in the students table first
     if (studentData.plan_type === 'free' || studentData.is_paid === true) {
       setPaymentStatus('paid');
       return;
     }
 
+    // Otherwise check payments table
     const { data } = await supabase
       .from('payments')
       .select('status')
@@ -156,7 +159,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     }
   };
 
-  // --- 3. Robust Live Clock & Waiting Video Engine ---
+  // --- 3. Live Clock & Waiting Video Engine ---
   useEffect(() => {
     if (!liveSession || liveSession.status === 'completed' || liveSession.status === 'ended') {
       setShowWaitingVideo(false);
@@ -165,9 +168,10 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
     const calculateTime = () => {
       try {
+        // Fix Time Parsing: Ensure strict formatting
         const timeStr = liveSession.time.length === 5 ? `${liveSession.time}:00` : liveSession.time;
         
-        // Safe Cross-Browser Date Parsing (Prevents Safari/Mobile NaN bugs)
+        // Safe Cross-Browser Date Parsing
         const [year, month, day] = liveSession.date.split('-').map(Number);
         const [hour, minute, second] = timeStr.split(':').map(Number);
         const classDateTime = new Date(year, month - 1, day, hour, minute, second || 0);
@@ -176,11 +180,13 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         const diffSec = Math.floor((classDateTime.getTime() - now.getTime()) / 1000);
         
         setTimeToStart(diffSec);
+        
+        // 24hr warning boundary
         setIsWithin24Hours(diffSec <= 86400 && diffSec > -86400);
 
-        // Core Player Trigger Logic
+        // Core Logic: 15 mins (900s) before start OR if time passed but Admin hasn't clicked live yet
         if (liveSession.status === 'live') {
-          setShowWaitingVideo(false);
+           setShowWaitingVideo(false);
         } else if (diffSec <= 900 && diffSec > -28800) { 
           // Show waiting video inside last 15 mins OR if class time has arrived but admin hasn't clicked live yet
           setShowWaitingVideo(true);
@@ -192,7 +198,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
       }
     };
 
-    calculateTime(); // Execute immediately on load to prevent 1s component flash
+    calculateTime(); // Execute immediately
     const interval = setInterval(calculateTime, 1000);
 
     return () => clearInterval(interval);
@@ -379,7 +385,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                   
                   const isPast = dayEvents.some(e => {
                      const evDateTime = new Date(`${e.date}T${e.start_time || '23:59:00'}`);
-                     return evDateTime < new Date() || e.status === 'ended';
+                     return evDateTime < new Date();
                   });
 
                   return (
@@ -423,7 +429,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                   <div className="space-y-4">
                     {selectedDateEvents.map((evt, idx) => {
                       const evDateTime = new Date(`${evt.date}T${evt.start_time || '23:59:00'}`);
-                      const isPast = evDateTime < new Date() || evt.status === 'ended';
+                      const isPast = evDateTime < new Date();
                       return (
                         <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 shadow-inner">
                           <div className="flex items-center justify-between mb-3">
