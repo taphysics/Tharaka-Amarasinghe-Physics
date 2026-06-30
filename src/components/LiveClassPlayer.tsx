@@ -60,18 +60,38 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         if (studentData.course) enrolledClasses.push(studentData.course);
       }
 
-      // If still empty, we use a wildcard fallback or stop to avoid query errors
       const matchClasses = enrolledClasses.length > 0 ? enrolledClasses : ['default'];
 
-      // 2. Fetch Calendar Events safely
+      // 2. Fetch Calendar Events
       const { data: events } = await supabase
         .from('calender_events')
         .select('*')
         .in('class_type', matchClasses);
-      
-      if (events) setCalendarEvents(events);
 
-      // 3. Fetch Next Active Live Class (Broadened query to catch missing status)
+      // 3. Fetch All Scheduled Live Classes to Merge into the Calendar View
+      const { data: allLives } = await supabase
+        .from('scheduled_lives')
+        .select('*')
+        .in('class_type', matchClasses);
+      
+      // Combine calendar items so newly created admin classes show up dynamically
+      let combinedEvents: any[] = [];
+      if (events) combinedEvents.push(...events);
+      if (allLives) {
+        const mappedLives = allLives.map(live => ({
+          id: live.id,
+          date: live.date,
+          title: live.title || `${live.class_type} - සජීවී පන්තිය`,
+          description: live.description || 'සූම් ඔස්සේ පැවැත්වෙන සජීවී පන්තිය',
+          start_time: live.time,
+          class_type: live.class_type,
+          is_live_session: true
+        }));
+        combinedEvents.push(...mappedLives);
+      }
+      setCalendarEvents(combinedEvents);
+
+      // 4. Fetch Next Active Live Class
       const { data: activeLive } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -108,15 +128,13 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     return () => { supabase.removeChannel(channels); };
   }, [username]);
 
-  // --- 2. Foolproof Payment Gateway Validation ---
+  // --- 2. Payment Gateway Validation ---
   const validatePayment = async (classType: string, targetMonth: string, studentData: any) => {
-    // Check if student is explicitly free in the students table first
     if (studentData.plan_type === 'free' || studentData.is_paid === true) {
       setPaymentStatus('paid');
       return;
     }
 
-    // Otherwise check payments table
     const { data } = await supabase
       .from('payments')
       .select('status')
@@ -132,28 +150,33 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     }
   };
 
-  // --- 3. Live Clock & Waiting Video Engine ---
+  // --- 3. Robust Live Clock & Waiting Video Engine ---
   useEffect(() => {
     if (!liveSession || liveSession.status === 'completed' || liveSession.status === 'ended') {
       setShowWaitingVideo(false);
       return;
     }
 
-    const interval = setInterval(() => {
+    const calculateTime = () => {
       try {
-        // Fix Time Parsing: Ensure strict YYYY-MM-DD T HH:MM:SS format
         const timeStr = liveSession.time.length === 5 ? `${liveSession.time}:00` : liveSession.time;
-        const classDateTime = new Date(`${liveSession.date}T${timeStr}`);
+        
+        // Safe Cross-Browser Date Parsing (Prevents Safari/Mobile NaN bugs)
+        const [year, month, day] = liveSession.date.split('-').map(Number);
+        const [hour, minute, second] = timeStr.split(':').map(Number);
+        const classDateTime = new Date(year, month - 1, day, hour, minute, second || 0);
+        
         const now = new Date();
-        
         const diffSec = Math.floor((classDateTime.getTime() - now.getTime()) / 1000);
-        setTimeToStart(diffSec);
         
-        // 24hr warning boundary
+        setTimeToStart(diffSec);
         setIsWithin24Hours(diffSec <= 86400 && diffSec > -86400);
 
-        // Core Logic: 15 mins (900s) before start OR if time passed but Admin hasn't clicked live yet
-        if (diffSec <= 900 && liveSession.status !== 'live') {
+        // Core Player Trigger Logic
+        if (liveSession.status === 'live') {
+          setShowWaitingVideo(false);
+        } else if (diffSec <= 900 && diffSec > -28800) { 
+          // Show waiting video inside last 15 mins OR if class time has arrived but admin hasn't clicked live yet
           setShowWaitingVideo(true);
         } else {
           setShowWaitingVideo(false);
@@ -161,7 +184,10 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
       } catch (e) {
         console.error("Time calculation error:", e);
       }
-    }, 1000);
+    };
+
+    calculateTime(); // Execute immediately on load to prevent 1s component flash
+    const interval = setInterval(calculateTime, 1000);
 
     return () => clearInterval(interval);
   }, [liveSession]);
@@ -239,7 +265,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Fix: Generate Local YYYY-MM-DD Date Strings to avoid Timezone bugs
   const formatLocalYYYYMMDD = (date: Date) => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -255,14 +280,31 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
   const getEmbedUrl = (url: string) => url ? url.replace(/\/view.*$/, '/preview') : '';
 
+  // Converts standard Zoom link into an iframe-embeddable Zoom Webclient format
   const formatZoomUrl = (url: string) => {
-    if(!url) return "";
+    if (!url) return "";
     try {
-        const urlObj = new URL(url);
-        urlObj.searchParams.set('pwd', urlObj.searchParams.get('pwd') || ''); 
-        urlObj.searchParams.set('webclient', '1'); 
-        return urlObj.toString();
-    } catch(e) { return url; }
+      if (url.includes('/wc/join/') || url.includes('/wc/')) return url;
+      
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/');
+      const jIndex = pathParts.indexOf('j');
+      
+      let meetingId = '';
+      if (jIndex !== -1 && pathParts[jIndex + 1]) {
+        meetingId = pathParts[jIndex + 1];
+      } else {
+        meetingId = pathParts[pathParts.length - 1];
+      }
+      
+      const pwd = urlObj.searchParams.get('pwd') || '';
+      if (meetingId) {
+        return `https://zoom.us/wc/join/${meetingId}?pwd=${pwd}&prefer=1`;
+      }
+      return url;
+    } catch (e) { 
+      return url; 
+    }
   };
 
   // --- Display Rules Matrix ---
@@ -270,6 +312,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
   const isWithin1Hour = timeToStart > 0 && timeToStart <= 3600;
   
   const showPaymentWarning = !activeHasAccess && liveSession && liveSession.status !== 'ended' && isWithin24Hours;
+  // Panel opens if student has access AND (class is live, within 1hr countdown, or waiting video is active)
   const showActivePlayerPanel = activeHasAccess && liveSession && (isWithin1Hour || liveSession.status === 'live' || showWaitingVideo);
   const showCalendarView = !showActivePlayerPanel;
 
@@ -324,7 +367,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
               <div className="grid grid-cols-7 gap-2">
                 {monthDays.map((day, idx) => {
-                  // Fixed Timezone Date matching bug
                   const dayString = formatLocalYYYYMMDD(day);
                   const dayEvents = calendarEvents.filter(e => e.date === dayString);
                   const hasEvent = dayEvents.length > 0;
@@ -482,6 +524,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
             <div className={`${examDetails && !examSubmitted ? 'w-full lg:w-2/5 h-[40vh] lg:h-auto min-h-[400px]' : 'w-full h-[75vh] min-h-[600px]'} bg-black border border-slate-800 rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)] order-1 lg:order-2 flex flex-col items-center justify-center`}>
               
+              {/* 1 Hour Countdown Screen */}
               {!showWaitingVideo && liveSession?.status !== 'live' && timeToStart > 900 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
                   <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-8 rounded-3xl text-center shadow-2xl animate-fade-in scale-100">
@@ -495,16 +538,20 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 </div>
               )}
 
+              {/* 15 Minute Waiting Video Screen */}
               {showWaitingVideo && (
                 <div className="absolute inset-0 w-full h-full z-10 bg-black">
                   <video src="/videos/waiting-video.mp4" autoPlay loop muted playsInline className="w-full h-full object-cover" />
                   <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 flex items-center gap-3">
                     <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                    <span className="font-mono font-bold text-white tracking-widest">{formatCountdown(timeToStart)}</span>
+                    <span className="font-mono font-bold text-white tracking-widest">
+                      {timeToStart > 0 ? formatCountdown(timeToStart) : "ඇඩ්මින් පන්තිය ආරම්භ කරන තෙක් රැඳී සිටින්න..."}
+                    </span>
                   </div>
                 </div>
               )}
 
+              {/* Embedded Iframe Live Zoom Web Client Screen */}
               {!showWaitingVideo && liveSession?.status === 'live' && liveSession.zoom_join_url && (
                 <iframe
                   src={formatZoomUrl(liveSession.zoom_join_url)}
