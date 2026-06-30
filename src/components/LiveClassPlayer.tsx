@@ -27,77 +27,96 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [scorePopup, setScorePopup] = useState<{ show: boolean; score: number; total: number }>({ show: false, score: 0, total: 0 });
 
-  // PDF Interaction Viewport States
+  // PDF Interaction States
   const [pdfZoom, setPdfZoom] = useState<number>(1);
   const [pdfPan, setPdfPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const pdfContainerRef = useRef<HTMLDivElement>(null);
 
   // Calendar
   const [currentCalendarDate, setCurrentCalendarDate] = useState<Date>(new Date());
 
-  // --- 1. Initial Data Fetch & Realtime Synchronization Setup ---
-  useEffect(() => {
-    const initDataFetch = async () => {
-      if (!username) return;
+  // --- 1. Robust Data Fetching & Sync ---
+  const fetchCoreData = async () => {
+    if (!username) return;
 
-      // Fetch Student's Enrolled Class Types
-      const { data: studentData } = await supabase.from('students').select('class_types').eq('username', username).single();
-      const enrolledClasses = studentData?.class_types || [];
+    try {
+      // 1. Fetch Student Data Safely
+      const { data: studentData, error: studentError } = await supabase
+        .from('students')
+        .select('*')
+        .eq('username', username)
+        .single();
 
-      if (enrolledClasses.length > 0) {
-        // Fetch Calendar Events
-        const { data: events } = await supabase.from('calender_events').select('*').in('class_type', enrolledClasses);
-        if (events) setCalendarEvents(events);
-
-        // Fetch Next or Active Live Class
-        const { data: activeLive } = await supabase.from('scheduled_lives')
-          .select('*')
-          .in('class_type', enrolledClasses)
-          .neq('status', 'ended')
-          .order('date', { ascending: true })
-          .order('time', { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-        if (activeLive) {
-          setLiveSession(activeLive);
-          checkPaymentEligibility(activeLive.class_type, activeLive.target_month);
-        } else {
-          setLiveSession(null);
-        }
+      if (studentError || !studentData) {
+        console.error("Student fetch failed:", studentError);
+        return;
       }
-    };
 
-    initDataFetch();
+      // Collect all possible class identifiers to prevent mismatch bypass
+      let enrolledClasses: string[] = studentData.class_types || [];
+      if (enrolledClasses.length === 0) {
+        if (studentData.class) enrolledClasses.push(studentData.class);
+        if (studentData.course) enrolledClasses.push(studentData.course);
+      }
 
-    // Setup Realtime Channels
-    const sessionSubscription = supabase.channel('student-live-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, (payload) => {
-        // When admin updates or starts the class, refresh data instantly
-        initDataFetch();
-      }).subscribe();
+      // If still empty, we use a wildcard fallback or stop to avoid query errors
+      const matchClasses = enrolledClasses.length > 0 ? enrolledClasses : ['default'];
 
-    const paymentSubscription = supabase.channel('student-payment-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `username=eq.${username}` }, () => {
-        if (liveSession) checkPaymentEligibility(liveSession.class_type, liveSession.target_month);
-      }).subscribe();
+      // 2. Fetch Calendar Events safely
+      const { data: events } = await supabase
+        .from('calender_events')
+        .select('*')
+        .in('class_type', matchClasses);
+      
+      if (events) setCalendarEvents(events);
 
-    const calendarSubscription = supabase.channel('student-calendar-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, () => {
-        initDataFetch();
-      }).subscribe();
+      // 3. Fetch Next Active Live Class (Broadened query to catch missing status)
+      const { data: activeLive } = await supabase
+        .from('scheduled_lives')
+        .select('*')
+        .in('class_type', matchClasses)
+        .neq('status', 'ended')
+        .order('date', { ascending: true })
+        .order('time', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-    return () => {
-      supabase.removeChannel(sessionSubscription);
-      supabase.removeChannel(paymentSubscription);
-      supabase.removeChannel(calendarSubscription);
-    };
-  }, [username, liveSession?.id]);
+      if (activeLive) {
+        setLiveSession(activeLive);
+        await validatePayment(activeLive.class_type, activeLive.target_month, studentData);
+      } else {
+        setLiveSession(null);
+        setPaymentStatus('loading');
+      }
 
-  // --- 2. Payment Gateway Validation ---
-  const checkPaymentEligibility = async (classType: string, targetMonth: string) => {
+    } catch (err) {
+      console.error("Critical error in data fetch:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCoreData();
+
+    // Set up Realtime Triggers to auto-refresh everything when Admin updates DB
+    const channels = supabase.channel('custom-all-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, fetchCoreData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, fetchCoreData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments', filter: `username=eq.${username}` }, fetchCoreData)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channels); };
+  }, [username]);
+
+  // --- 2. Foolproof Payment Gateway Validation ---
+  const validatePayment = async (classType: string, targetMonth: string, studentData: any) => {
+    // Check if student is explicitly free in the students table first
+    if (studentData.plan_type === 'free' || studentData.is_paid === true) {
+      setPaymentStatus('paid');
+      return;
+    }
+
+    // Otherwise check payments table
     const { data } = await supabase
       .from('payments')
       .select('status')
@@ -113,26 +132,34 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     }
   };
 
-  // --- 3. Live Clock, Pre-Class Watcher & Waiting Video Logic ---
+  // --- 3. Live Clock & Waiting Video Engine ---
   useEffect(() => {
-    if (!liveSession || liveSession.status === 'completed' || liveSession.status === 'ended') return;
+    if (!liveSession || liveSession.status === 'completed' || liveSession.status === 'ended') {
+      setShowWaitingVideo(false);
+      return;
+    }
 
     const interval = setInterval(() => {
-      const classDateTime = new Date(`${liveSession.date}T${liveSession.time}`);
-      const now = new Date();
-      const diffSec = Math.floor((classDateTime.getTime() - now.getTime()) / 1000);
+      try {
+        // Fix Time Parsing: Ensure strict YYYY-MM-DD T HH:MM:SS format
+        const timeStr = liveSession.time.length === 5 ? `${liveSession.time}:00` : liveSession.time;
+        const classDateTime = new Date(`${liveSession.date}T${timeStr}`);
+        const now = new Date();
+        
+        const diffSec = Math.floor((classDateTime.getTime() - now.getTime()) / 1000);
+        setTimeToStart(diffSec);
+        
+        // 24hr warning boundary
+        setIsWithin24Hours(diffSec <= 86400 && diffSec > -86400);
 
-      setTimeToStart(diffSec);
-
-      // Check if within 24 hours for payment warning
-      setIsWithin24Hours(diffSec <= 86400 && diffSec > -86400);
-
-      // Exact Logic as requested:
-      // 15 mins (900s) before -> Play video until admin clicks "Start" (status='live')
-      if (diffSec <= 900 && liveSession.status === 'scheduled') {
-        setShowWaitingVideo(true);
-      } else {
-        setShowWaitingVideo(false);
+        // Core Logic: 15 mins (900s) before start OR if time passed but Admin hasn't clicked live yet
+        if (diffSec <= 900 && liveSession.status !== 'live') {
+          setShowWaitingVideo(true);
+        } else {
+          setShowWaitingVideo(false);
+        }
+      } catch (e) {
+        console.error("Time calculation error:", e);
       }
     }, 1000);
 
@@ -155,30 +182,24 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     }
   }, [liveSession?.is_exam_active, liveSession?.active_exam_id, examSubmitted]);
 
-  // Exam Timer & Auto Submit
   useEffect(() => {
     if (examTimeLeft === null || examTimeLeft <= 0 || examSubmitted) return;
-
     const examTimer = setInterval(() => {
       setExamTimeLeft((prev) => {
         if (prev !== null && prev <= 1) {
           clearInterval(examTimer);
-          executeExamScoringSubmission(true); // Auto-submit when time reaches 0
+          executeExamScoringSubmission(true);
           return 0;
         }
         return prev ? prev - 1 : 0;
       });
     }, 1000);
-
     return () => clearInterval(examTimer);
   }, [examTimeLeft, examSubmitted]);
 
-  // Exam Marking & Submitting Logic
   const selectOMRAnswer = (qNo: number, optionIdx: number) => {
     setAnswers((prev) => ({ ...prev, [qNo.toString()]: optionIdx }));
   };
-
-  const handleManualSubmitTrigger = () => setShowConfirmModal(true);
 
   const executeExamScoringSubmission = async (isForcedAutoSubmit = false) => {
     if (!examDetails || examSubmitted) return;
@@ -188,7 +209,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     let rawScore = 0;
     const modelAnswers = examDetails.correct_answer || {};
 
-    // Auto-Grade against exact model answers
     for (let i = 1; i <= examDetails.total_questions; i++) {
       const qKey = i.toString();
       if (answers[qKey] !== undefined && Number(answers[qKey]) === Number(modelAnswers[qKey])) {
@@ -207,7 +227,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
       });
     } catch (err) { console.error("Database save failed:", err); }
 
-    // Show final score popup
     setScorePopup({ show: true, score: rawScore, total: examDetails.total_questions });
   };
 
@@ -220,6 +239,14 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Fix: Generate Local YYYY-MM-DD Date Strings to avoid Timezone bugs
+  const formatLocalYYYYMMDD = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
   const getDaysInMonth = (date: Date) => {
     const y = date.getFullYear(); const m = date.getMonth();
     return new Array(new Date(y, m + 1, 0).getDate()).fill(null).map((_, i) => new Date(y, m, i + 1));
@@ -228,16 +255,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
 
   const getEmbedUrl = (url: string) => url ? url.replace(/\/view.*$/, '/preview') : '';
 
-  // PDF Interaction Handlers
-  const applyPdfZoomIn = () => setPdfZoom((z) => Math.min(z + 0.25, 3));
-  const applyPdfZoomOut = () => setPdfZoom((z) => Math.max(z - 0.25, 0.75));
-  const resetPdfViewSettings = () => { setPdfZoom(1); setPdfPan({ x: 0, y: 0 }); };
-  const handlePdfWheelZoomEvent = (e: React.WheelEvent) => { e.preventDefault(); e.deltaY < 0 ? applyPdfZoomIn() : applyPdfZoomOut(); };
-  const handlePdfDragStart = (e: React.MouseEvent) => { setIsDragging(true); dragStart.current = { x: e.clientX - pdfPan.x, y: e.clientY - pdfPan.y }; };
-  const handlePdfDragMove = (e: React.MouseEvent) => { if (isDragging) setPdfPan({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y }); };
-  const handlePdfDragEnd = () => setIsDragging(false);
-
-  // Logic to append Web Client Params to Zoom URL (Hiding standard UI)
   const formatZoomUrl = (url: string) => {
     if(!url) return "";
     try {
@@ -252,19 +269,13 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
   const activeHasAccess = paymentStatus === 'paid' || paymentStatus === 'free';
   const isWithin1Hour = timeToStart > 0 && timeToStart <= 3600;
   
-  // Show Payment Warning Overlay if: Unpaid AND class is upcoming/live AND within 24hrs
   const showPaymentWarning = !activeHasAccess && liveSession && liveSession.status !== 'ended' && isWithin24Hours;
-  
-  // Show active Zoom/Video player only if Paid AND within 1 hour OR class is Live
   const showActivePlayerPanel = activeHasAccess && liveSession && (isWithin1Hour || liveSession.status === 'live' || showWaitingVideo);
-  
-  // Show Calendar if not showing the Active Player Panel
   const showCalendarView = !showActivePlayerPanel;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased overflow-x-hidden">
       
-      {/* Top Application Header Bar */}
       <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-lg sticky top-0 z-40">
         <div className="flex items-center space-x-3">
           {liveSession?.status === 'live' ? (
@@ -278,7 +289,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         </div>
       </header>
 
-      {/* Gateway Restricted Paywall Warning Top Notification Bar */}
       {showPaymentWarning && (
         <div className="bg-gradient-to-r from-red-600 to-amber-600 px-6 py-4 text-center text-sm font-bold tracking-wide shadow-2xl flex flex-col sm:flex-row items-center justify-center space-y-2 sm:space-y-0 sm:space-x-3 text-white border-b-4 border-red-800 animate-in slide-in-from-top">
           <AlertCircle className="w-6 h-6 animate-bounce" />
@@ -289,15 +299,13 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
       <main className="flex-grow p-4 md:p-6 flex flex-col gap-6 max-w-[1600px] w-full mx-auto relative">
         
         {/* ========================================================================================= */}
-        {/* VIEW 1: CALENDAR VIEW (Default, Ended, > 1hr away, or Unpaid background) */}
+        {/* CALENDAR VIEW */}
         {/* ========================================================================================= */}
         {showCalendarView && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start animate-fade-in relative">
             
-            {/* If unpaid, we overlay a slight blur to emphasize the warning but keep calendar clickable */}
             {showPaymentWarning && <div className="absolute inset-0 bg-slate-950/20 backdrop-blur-[1px] z-10 pointer-events-none rounded-2xl" />}
 
-            {/* Calendar Widget */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl lg:col-span-2 relative z-0">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
                 <h2 className="text-xl font-bold text-slate-200 tracking-tight flex items-center gap-2">
@@ -314,16 +322,15 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 <div>සඳුදා</div><div>අඟහ</div><div>බදා</div><div>බ්‍රහස්</div><div>සිකු</div><div>සෙන</div><div>ඉරිදා</div>
               </div>
 
-              {/* Day Grid */}
               <div className="grid grid-cols-7 gap-2">
                 {monthDays.map((day, idx) => {
-                  const dayString = day.toISOString().split('T')[0];
+                  // Fixed Timezone Date matching bug
+                  const dayString = formatLocalYYYYMMDD(day);
                   const dayEvents = calendarEvents.filter(e => e.date === dayString);
                   const hasEvent = dayEvents.length > 0;
                   
-                  // Past event check based on the exact start time + assuming ~3 hrs duration
                   const isPast = dayEvents.some(e => {
-                     const evDateTime = new Date(`${e.date}T${e.start_time || '23:59'}`);
+                     const evDateTime = new Date(`${e.date}T${e.start_time || '23:59:00'}`);
                      return evDateTime < new Date();
                   });
 
@@ -335,8 +342,8 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                       className={`min-h-[90px] p-2 rounded-xl flex flex-col justify-between items-start transition-all border text-left group relative ${
                         hasEvent 
                           ? isPast 
-                            ? 'bg-slate-900/60 border-slate-800/50 text-slate-500 opacity-60 hover:opacity-100' // ASH COLOR FOR EXPIRED
-                            : 'bg-indigo-950/40 border-indigo-500/50 hover:bg-indigo-900 shadow-[0_0_15px_rgba(99,102,241,0.1)] text-slate-100 hover:scale-[1.02] z-10' // HIGHLIGHT FOR UPCOMING
+                            ? 'bg-slate-900/60 border-slate-800/50 text-slate-500 opacity-60 hover:opacity-100'
+                            : 'bg-indigo-950/40 border-indigo-500/50 hover:bg-indigo-900 shadow-[0_0_15px_rgba(99,102,241,0.1)] text-slate-100 hover:scale-[1.02] z-10'
                           : 'bg-slate-900/10 border-transparent text-slate-600 cursor-not-allowed'
                       }`}
                     >
@@ -358,7 +365,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
               </div>
             </div>
 
-            {/* Sidebar Details Panel */}
             <div className="space-y-6 relative z-0">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl min-h-[300px]">
                 <h3 className="text-md font-bold text-slate-300 mb-4 border-b border-slate-800 pb-3 flex items-center gap-2">
@@ -368,7 +374,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 {selectedDateEvents ? (
                   <div className="space-y-4">
                     {selectedDateEvents.map((evt, idx) => {
-                      const evDateTime = new Date(`${evt.date}T${evt.start_time || '23:59'}`);
+                      const evDateTime = new Date(`${evt.date}T${evt.start_time || '23:59:00'}`);
                       const isPast = evDateTime < new Date();
                       return (
                         <div key={idx} className="bg-slate-950 p-5 rounded-xl border border-slate-800 shadow-inner">
@@ -402,16 +408,13 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         )}
 
         {/* ========================================================================================= */}
-        {/* VIEW 2: ACTIVE PLAYER ENGINE (Within 1Hr Countdown, Waiting Video, Zoom & Exam Split) */}
+        {/* ACTIVE PLAYER ENGINE */}
         {/* ========================================================================================= */}
         {showActivePlayerPanel && (
           <div className={`w-full flex flex-col ${examDetails && !examSubmitted ? 'lg:flex-row' : 'flex-col'} gap-6 items-stretch animate-in zoom-in-95 duration-500`}>
             
-            {/* --- EXAM SPLIT-SCREEN PANEL --- */}
             {examDetails && !examSubmitted && (
               <div className="w-full lg:w-3/5 flex flex-col gap-4 bg-slate-900 border border-slate-800 p-4 md:p-5 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] order-2 lg:order-1">
-                
-                {/* Header */}
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <span className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded font-bold uppercase tracking-wider animate-pulse mb-1 inline-block shadow-[0_0_10px_rgba(239,68,68,0.5)]">
@@ -426,44 +429,32 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                         {examTimeLeft !== null ? formatCountdown(examTimeLeft) : '00:00:00'}
                       </span>
                     </div>
-                    <button
-                      onClick={handleManualSubmitTrigger}
-                      className="bg-red-600 hover:bg-red-700 px-5 py-2.5 rounded-lg font-bold text-xs shadow-lg text-white transition active:scale-95"
-                    >
+                    <button onClick={() => setShowConfirmModal(true)} className="bg-red-600 hover:bg-red-700 px-5 py-2.5 rounded-lg font-bold text-xs shadow-lg text-white transition active:scale-95">
                       සබ්මිට් කරන්න
                     </button>
                   </div>
                 </div>
 
-                {/* PDF Viewer */}
                 <div className="flex-grow flex flex-col bg-slate-950 border border-slate-800 rounded-xl overflow-hidden min-h-[400px] relative">
                   <div className="absolute top-3 right-3 z-30 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-1.5 rounded-xl flex space-x-1 shadow-xl">
-                    <button onClick={applyPdfZoomIn} className="p-2 hover:bg-slate-800 text-white rounded text-xs font-bold">+</button>
-                    <button onClick={applyPdfZoomOut} className="p-2 hover:bg-slate-800 text-white rounded text-xs font-bold">-</button>
-                    <button onClick={resetPdfViewSettings} className="p-2 hover:bg-slate-800 text-slate-300 rounded text-[10px] font-bold">Reset</button>
+                    <button onClick={() => setPdfZoom((z) => Math.min(z + 0.25, 3))} className="p-2 hover:bg-slate-800 text-white rounded text-xs font-bold">+</button>
+                    <button onClick={() => setPdfZoom((z) => Math.max(z - 0.25, 0.75))} className="p-2 hover:bg-slate-800 text-white rounded text-xs font-bold">-</button>
+                    <button onClick={() => { setPdfZoom(1); setPdfPan({ x: 0, y: 0 }); }} className="p-2 hover:bg-slate-800 text-slate-300 rounded text-[10px] font-bold">Reset</button>
                   </div>
                   <div 
-                    ref={pdfContainerRef}
                     className="w-full h-full overflow-hidden relative cursor-grab active:cursor-grabbing bg-slate-800/50 flex items-center justify-center"
-                    onWheel={handlePdfWheelZoomEvent}
-                    onMouseDown={handlePdfDragStart}
-                    onMouseMove={handlePdfDragMove}
-                    onMouseUp={handlePdfDragEnd}
-                    onMouseLeave={handlePdfDragEnd}
+                    onWheel={(e) => { e.preventDefault(); e.deltaY < 0 ? setPdfZoom((z) => Math.min(z + 0.25, 3)) : setPdfZoom((z) => Math.max(z - 0.25, 0.75)); }}
+                    onMouseDown={(e) => { setIsDragging(true); dragStart.current = { x: e.clientX - pdfPan.x, y: e.clientY - pdfPan.y }; }}
+                    onMouseMove={(e) => { if (isDragging) setPdfPan({ x: e.clientX - dragStart.current.x, y: e.clientY - dragStart.current.y }); }}
+                    onMouseUp={() => setIsDragging(false)}
+                    onMouseLeave={() => setIsDragging(false)}
                   >
-                    <div
-                      className="w-full h-full transition-transform duration-75 origin-center"
-                      style={{
-                        transform: `scale(${pdfZoom}) translate(${pdfPan.x / pdfZoom}px, ${pdfPan.y / pdfZoom}px)`,
-                        pointerEvents: isDragging ? 'none' : 'auto'
-                      }}
-                    >
+                    <div className="w-full h-full transition-transform duration-75 origin-center" style={{ transform: `scale(${pdfZoom}) translate(${pdfPan.x / pdfZoom}px, ${pdfPan.y / pdfZoom}px)`, pointerEvents: isDragging ? 'none' : 'auto' }}>
                       <iframe src={getEmbedUrl(examDetails.pdf_url)} className="w-full h-full border-0 rounded-xl" title="PDF Exam Paper" />
                     </div>
                   </div>
                 </div>
 
-                {/* OMR Grid */}
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 max-h-[220px] overflow-y-auto">
                   <h3 className="text-xs font-bold text-slate-400 mb-3 border-b border-slate-800 pb-2">
                     පිළිතුරු පත්‍රය <span className="text-indigo-400 ml-2">({Object.keys(answers).length} / {examDetails.total_questions})</span>
@@ -476,15 +467,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                           <span className="font-mono text-xs font-bold text-slate-400 w-8 text-center">{qNum}.</span>
                           <div className="flex space-x-1">
                             {[1, 2, 3, 4, 5].map((optIdx) => (
-                              <button
-                                key={optIdx}
-                                onClick={() => selectOMRAnswer(qNum, optIdx)}
-                                className={`w-8 h-8 rounded-lg text-xs font-bold transition-all border flex items-center justify-center ${
-                                  answers[qKey] === optIdx
-                                    ? 'bg-indigo-600 border-indigo-500 text-white shadow-md scale-110'
-                                    : 'bg-slate-950 border-slate-700 text-slate-400 hover:border-slate-500'
-                                }`}
-                              >
+                              <button key={optIdx} onClick={() => selectOMRAnswer(qNum, optIdx)} className={`w-8 h-8 rounded-lg text-xs font-bold transition-all border flex items-center justify-center ${answers[qKey] === optIdx ? 'bg-indigo-600 border-indigo-500 text-white shadow-md scale-110' : 'bg-slate-950 border-slate-700 text-slate-400 hover:border-slate-500'}`}>
                                 {optIdx}
                               </button>
                             ))}
@@ -497,11 +480,9 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
               </div>
             )}
 
-            {/* --- ZOOM NATIVE PLAYER / WAITING MEDIA FRAMEWORK --- */}
             <div className={`${examDetails && !examSubmitted ? 'w-full lg:w-2/5 h-[40vh] lg:h-auto min-h-[400px]' : 'w-full h-[75vh] min-h-[600px]'} bg-black border border-slate-800 rounded-2xl overflow-hidden relative shadow-[0_0_50px_rgba(0,0,0,0.8)] order-1 lg:order-2 flex flex-col items-center justify-center`}>
               
-              {/* State A: 1 Hour Countdown before 15 mins */}
-              {!showWaitingVideo && liveSession?.status === 'scheduled' && timeToStart > 900 && (
+              {!showWaitingVideo && liveSession?.status !== 'live' && timeToStart > 900 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
                   <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-8 rounded-3xl text-center shadow-2xl animate-fade-in scale-100">
                     <Video size={48} className="text-indigo-500 mx-auto mb-4 animate-bounce" />
@@ -514,11 +495,9 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 </div>
               )}
 
-              {/* State B: Last 15 Mins Waiting Video (Loops until Admin starts) */}
               {showWaitingVideo && (
                 <div className="absolute inset-0 w-full h-full z-10 bg-black">
                   <video src="/videos/waiting-video.mp4" autoPlay loop muted playsInline className="w-full h-full object-cover" />
-                  {/* Overlay Countdown strictly for visual cue */}
                   <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black/60 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 flex items-center gap-3">
                     <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                     <span className="font-mono font-bold text-white tracking-widest">{formatCountdown(timeToStart)}</span>
@@ -526,7 +505,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 </div>
               )}
 
-              {/* State C: Zoom Live Stream - Admin Started */}
               {!showWaitingVideo && liveSession?.status === 'live' && liveSession.zoom_join_url && (
                 <iframe
                   src={formatZoomUrl(liveSession.zoom_join_url)}
@@ -535,13 +513,12 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                   title="Zoom Live Video Web App"
                 />
               )}
-
             </div>
           </div>
         )}
       </main>
 
-      {/* --- FORM SUBMISSION CONFIRMATION MODAL --- */}
+      {/* MODALS */}
       {showConfirmModal && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
@@ -549,7 +526,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
                 <CheckCircle size={24} />
              </div>
              <h3 className="text-lg font-bold text-slate-200 mb-2">පිළිතුරු සබ්මිට් කරන්නද?</h3>
-             <p className="text-xs text-slate-400 mb-6 leading-relaxed">ඔබ ලබාදී ඇති පිළිතුරු සබ්මිට් කළ පසු නැවත වෙනස් කළ නොහැක. තහවුරු කරන්න.</p>
+             <p className="text-xs text-slate-400 mb-6 leading-relaxed">ඔබ ලබාදී ඇති පිළිතුරු සබ්මිට් කළ පසු නැවත වෙනස් කළ නොහැක.</p>
              <div className="flex gap-3">
                <button onClick={() => setShowConfirmModal(false)} className="flex-1 bg-slate-800 text-white font-bold py-3 rounded-xl text-xs transition">නැත, ආපසු යන්න</button>
                <button onClick={() => executeExamScoringSubmission(false)} className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl text-xs transition shadow-lg shadow-red-900/50">ඔව්, සබ්මිට් කරන්න</button>
@@ -558,7 +535,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
         </div>
       )}
 
-      {/* --- INSTANT SCORING POPUP --- */}
       {scorePopup.show && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-in zoom-in duration-300">
           <div className="bg-slate-900 border border-emerald-500/30 rounded-3xl max-w-sm w-full p-8 text-center shadow-[0_0_50px_rgba(16,185,129,0.2)] relative overflow-hidden">
@@ -567,8 +543,7 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
               <CheckCircle size={32} />
             </div>
             <h2 className="text-xl font-black text-slate-100 mb-1">විභාගය සාර්ථකයි!</h2>
-            <p className="text-xs text-slate-400 mb-6">ඔබගේ පිළිතුරු පත්‍රයේ සම්පූර්ණ ලකුණු ප්‍රමාණය:</p>
-            <div className="inline-block bg-slate-950 border border-slate-800 rounded-2xl px-8 py-4 shadow-inner mb-8">
+            <div className="inline-block bg-slate-950 border border-slate-800 rounded-2xl px-8 py-4 shadow-inner mb-8 mt-4">
               <div className="text-5xl font-black text-emerald-400 font-mono tracking-tight">
                 {scorePopup.score} <span className="text-xl text-slate-500 font-normal">/ {scorePopup.total}</span>
               </div>
@@ -580,7 +555,6 @@ export default function LiveClassPlayer({ username, studentId }: LiveClassPlayer
           </div>
         </div>
       )}
-
     </div>
   );
 }
