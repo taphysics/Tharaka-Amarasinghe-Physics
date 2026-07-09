@@ -15,6 +15,7 @@ interface ScheduledLive {
   time: string;
   class_type: string;
   target_class_type?: string;
+  target_classes?: string[];
   target_month: string;
   status: string; // 'scheduled', 'live', 'ended'
   zoom_join_url: string;
@@ -60,9 +61,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
-      
-      // ඩේටාබේස් එකේ target_month එක "2026-07" ආකෘතියෙන් පවතින බැවින්:
-      const currentTargetMonthFormat = format(today, 'yyyy-MM'); 
 
       // අද දිනට නියමිත හෝ දැනට සජීවීව පවතින පන්තිය ලබා ගැනීම
       const { data: liveData, error: liveError } = await supabase
@@ -76,7 +74,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
       if (liveData) {
         setCurrentLive(liveData);
-        await checkStudentAccess(liveData, currentTargetMonthFormat);
+        await checkStudentAccess(liveData);
       } else {
         await fetchNextClass();
       }
@@ -101,49 +99,57 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     if (data) setNextLive(data);
   };
 
-  const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
-    // 1. Free Access තිබේදැයි බැලීම (student ගේ free_months වල "2026-07" හෝ "july" තිබේදැයි පරීක්ෂාව)
+  const checkStudentAccess = async (liveClass: ScheduledLive) => {
+    // 1. Free Access පරීක්ෂාව
     const isFreeMonth = currentUser.free_months?.some(
-      m => m.toLowerCase() === currentTargetMonth || m.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
+      (m) => m.toLowerCase() === liveClass.target_month.toLowerCase()
     );
-    
+
     if (isFreeMonth) {
       setHasAccess(true);
       return;
     }
 
-    // 2. Payments Table එකෙන් Paid ද කියා පරීක්ෂා කිරීම
-    // class_type හෝ target_class_type යන දෙකෙන් එකක් සිසුවාගේ පන්තියට සමාන විය හැක
-    const classIdentifiers = [
-      liveClass.class_type,
-      liveClass.target_class_type,
-      '2026 REVISION',
-      '2026 Revision'
-    ].filter(Boolean);
-
-    const { data: payment, error } = await supabase
+    // 2. අදාල මාසය සඳහා සිසුවාගේ සියලුම Paid ගෙවීම් ලබා ගැනීම 
+    // (මෙමගින් Capital/Simple අකුරු ප්‍රශ්නය මගහරවා ගත හැක)
+    const { data: payments } = await supabase
       .from('payments')
-      .select('status')
+      .select('class_type')
       .eq('username', currentUser.username)
-      .eq('status', 'paid')
-      .or(`target_month.eq.${liveClass.target_month},target_month.eq.${currentTargetMonth}`)
-      .in('class_type', classIdentifiers)
-      .limit(1)
-      .maybeSingle();
+      .eq('month', liveClass.target_month) // month කොළම පරීක්ෂා කිරීම
+      .eq('status', 'paid'); // status කොළම පරීක්ෂා කිරීම
 
-    if (payment) {
-      setHasAccess(true);
-    } else {
-      setHasAccess(false);
+    if (payments && payments.length > 0) {
+      // Live පන්තියට අදාළ සියලුම Class Types lowercase කර ලබා ගැනීම
+      const liveClassIdentifiers = [
+        liveClass.class_type,
+        liveClass.target_class_type,
+        ...(liveClass.target_classes || [])
+      ]
+        .filter(Boolean)
+        .map((c) => c!.toLowerCase().trim());
+
+      // සිසුවා මුදල් ගෙවා ඇති පන්ති වර්ග (class_type), Live පන්තියේ වර්ගයට ගැලපේදැයි බැලීම (Case Insensitive)
+      const hasMatchingPayment = payments.some((p) => {
+        if (!p.class_type) return false;
+        return liveClassIdentifiers.includes(p.class_type.toLowerCase().trim());
+      });
+
+      if (hasMatchingPayment) {
+        setHasAccess(true);
+        return;
+      }
     }
+
+    setHasAccess(false);
   };
 
-  // Countdown මැනීමේ කොටස
+  // Countdown මැනීමේ කොටස (පැයකට පෙර)
   useEffect(() => {
     if (!currentLive || currentLive.status !== 'scheduled') return;
 
     const interval = setInterval(() => {
-      // 24-hour формат එකට ගැලපෙන සේ parse කිරීම (HH:mm)
+      // 24-hour format (HH:mm)
       const classDateTime = parse(`${currentLive.date} ${currentLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
       const now = new Date();
       const diffSeconds = differenceInSeconds(classDateTime, now);
@@ -181,7 +187,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             Access Denied (ප්‍රවේශය තහනම්)
           </h2>
           <p className="text-lg text-gray-300 leading-relaxed">
-            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
+            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month})</span> අදාළ පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
           </p>
         </div>
       </div>
@@ -232,7 +238,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               {/* Countdown Overlay */}
               <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-2xl backdrop-blur-md border border-white/5 max-w-md w-full mx-4">
                 <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full mb-3">
-                  {currentLive.class_type}
+                  {currentLive.target_class_type || currentLive.class_type}
                 </span>
                 <h2 className="text-lg md:text-xl text-gray-300 text-center mb-6 font-medium">
                   පන්තිය ආරම්භ වීමට තව...
@@ -254,7 +260,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           ) : (
             <div className="z-10 text-center p-6">
               <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-3 py-1 rounded-full mb-3 inline-block">
-                {currentLive.class_type}
+                {currentLive.target_class_type || currentLive.class_type}
               </span>
               <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{currentLive.title}</h1>
               <p className="text-gray-400">මෙම පන්තිය අද දින <span className="text-yellow-400 font-medium">{currentLive.time}</span> ට ආරම්භ වීමට නියමිතයි.</p>
@@ -271,7 +277,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
             </span>
-            සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
+            සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.target_class_type || currentLive.class_type} - {currentLive.title}
           </div>
           
           {/* Zoom Player Area */}
