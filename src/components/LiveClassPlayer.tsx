@@ -38,7 +38,6 @@ const getEmbeddableZoomUrl = (joinUrl: string, username: string) => {
       url.searchParams.set('un', encodedName);
     }
     
-    // Original URL එකේ 'pwd' (passcode) තිබේ නම් එය ස්වයංක්‍රීයවම මෙහි රඳා පවතිනු ඇත.
     return url.toString();
   } catch (error) {
     console.error('Invalid Zoom URL', error);
@@ -82,7 +81,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     };
   }, [currentUser, currentLive?.id]);
 
-  // Fullscreen event listener 
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -97,7 +95,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
-      const currentTargetMonthFormat = format(today, 'yyyy-MM'); 
+      const currentTargetMonthFormat = format(today, 'yyyy-MM'); // උදා: 2026-07
 
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
@@ -110,7 +108,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
       if (liveData) {
         setCurrentLive(liveData);
-        // මුදල් ගෙවා ඇත්දැයි නැවත පරීක්ෂා කිරීමේ ෆන්ක්ෂන් එක ඇමතීම
         await checkStudentAccess(liveData, currentTargetMonthFormat);
       } else {
         await fetchNextClass();
@@ -137,9 +134,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   };
 
   const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
+    // අවශ්‍ය මාසය (live_class එකේ target_month එක තිබේ නම් එය, නැතිනම් වත්මන් මාසය)
+    const requiredMonth = liveClass.target_month || currentTargetMonth;
+
     // 1. Free Access පරීක්ෂාව
     const isFreeMonth = currentUser.free_months?.some(
-      m => m.toLowerCase() === currentTargetMonth || m.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
+      m => m.toLowerCase() === requiredMonth.toLowerCase() || m.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
     );
     
     if (isFreeMonth) {
@@ -151,17 +151,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     const classIdentifiers = [
       liveClass.class_type,
       liveClass.target_class_type,
-      '2026 REVISION',
-      '2026 Revision'
-    ].filter(Boolean);
+    ].filter(Boolean); // හිස් අගයන් ඉවත් කිරීම
 
+    // අලුත් දත්ත ගබඩා ආකෘතියට අනුව payments ටේබල් එක පරීක්ෂා කිරීම (month column එක ප්‍රධාන වේ)
     const { data: payment } = await supabase
       .from('payments')
-      .select('status')
+      .select('id, status')
       .eq('username', currentUser.username)
       .eq('status', 'paid')
-      .or(`target_month.eq.${liveClass.target_month},target_month.eq.${currentTargetMonth}`)
-      .in('class_type', classIdentifiers)
+      .in('class_type', classIdentifiers as string[])
+      .or(`month.eq.${requiredMonth},target_month.eq.${requiredMonth}`)
       .limit(1)
       .maybeSingle();
 
@@ -196,7 +195,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return () => clearInterval(interval);
   }, [currentLive]);
 
-  // Fullscreen Toggle Function
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       playerContainerRef.current?.requestFullscreen().catch(err => {
@@ -224,7 +222,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             Access Denied (ප්‍රවේශය තහනම්)
           </h2>
           <p className="text-lg text-gray-300 leading-relaxed">
-            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
+            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month || format(new Date(), 'yyyy-MM')})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
           </p>
         </div>
       </div>
@@ -255,61 +253,71 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
-      {/* පන්තිය පටන් ගැනීමට පෙර පෙන්වන Waiting Screen එක */}
       {currentLive.status === 'scheduled' && (
         <div className="flex flex-col items-center justify-center flex-1 relative rounded-2xl overflow-hidden bg-gray-900 min-h-[65vh] border border-gray-800 shadow-2xl">
           {isWithinOneHour ? (
             <>
+              {/* Waiting Video Background */}
               <video 
                 autoPlay 
                 loop 
                 muted 
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none"
+                className="absolute inset-0 w-full h-full object-cover"
               >
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
+              
+              {/* Dark overlay to ensure text is always readable over the video */}
+              <div className="absolute inset-0 bg-black/40"></div>
 
-              <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-2xl backdrop-blur-md border border-white/5 max-w-md w-full mx-4">
-                <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full mb-3">
+              {/* Glassmorphism Countdown Box */}
+              <div className="relative z-10 flex flex-col items-center p-8 bg-white/10 rounded-3xl backdrop-blur-md border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4)] max-w-lg w-full mx-4">
+                
+                <span className="text-xs font-bold uppercase tracking-widest bg-blue-600/40 text-blue-100 px-4 py-1.5 rounded-full mb-4 border border-blue-400/30 shadow-sm">
                   {currentLive.class_type}
                 </span>
-                <h2 className="text-lg md:text-xl text-gray-300 text-center mb-6 font-medium">
+                
+                <h1 className="text-2xl md:text-3xl font-extrabold text-white text-center mb-6 drop-shadow-lg leading-tight">
+                  {currentLive.title}
+                </h1>
+                
+                <h2 className="text-sm md:text-base text-gray-200 text-center mb-3 font-medium uppercase tracking-widest">
                   පන්තිය ආරම්භ වීමට තව...
                 </h2>
-                <div className="text-6xl md:text-7xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+                
+                <div className="text-6xl md:text-7xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_20px_rgba(255,255,255,0.7)] my-2">
                   {countdown ? (
                     `${String(countdown.m).padStart(2, '0')}:${String(countdown.s).padStart(2, '0')}`
                   ) : (
                     "00:00"
                   )}
                 </div>
+
                 {countdown?.m === 0 && countdown?.s === 0 && (
-                  <p className="mt-6 text-green-400 animate-pulse text-sm font-medium bg-green-500/10 px-4 py-2 rounded-lg border border-green-500/20">
+                  <p className="mt-6 text-green-300 animate-pulse text-sm md:text-base font-semibold bg-green-900/40 px-5 py-2.5 rounded-xl border border-green-400/30">
                     ගුරුතුමා විසින් පන්තිය සක්‍රීය කරන තුරු මඳක් රැඳී සිටින්න...
                   </p>
                 )}
               </div>
             </>
           ) : (
-            <div className="z-10 text-center p-6">
-              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-3 py-1 rounded-full mb-3 inline-block">
+            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700">
+              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block">
                 {currentLive.class_type}
               </span>
-              <h1 className="text-2xl md:text-3xl font-bold text-white mb-2">{currentLive.title}</h1>
-              <p className="text-gray-400">මෙම පන්තිය අද දින <span className="text-yellow-400 font-medium">{currentLive.time}</span> ට ආරම්භ වීමට නියමිතයි.</p>
+              <h1 className="text-2xl md:text-4xl font-bold text-white mb-3">{currentLive.title}</h1>
+              <p className="text-gray-400 text-lg">මෙම පන්තිය අද දින <span className="text-yellow-400 font-bold">{currentLive.time}</span> ට ආරම්භ වීමට නියමිතයි.</p>
             </div>
           )}
         </div>
       )}
 
-      {/* පන්තිය ආරම්භ වූ පසු පෙන්වන සජීවී විකාශය */}
       {currentLive.status === 'live' && (
         <div 
           ref={playerContainerRef}
           className={`flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/20 shadow-2xl relative ${isFullscreen ? 'h-screen w-screen rounded-none border-none' : ''}`}
         >
-          {/* Top Bar - Hide in fullscreen mode for better viewing */}
           {!isFullscreen && (
             <div className="bg-green-950/40 text-green-400 px-4 py-3 flex justify-between items-center font-semibold border-b border-green-500/10 text-sm md:text-base">
               <div className="flex items-center gap-3">
@@ -317,20 +325,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
                 </span>
-                සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type}
+                සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
               </div>
               
-              {/* Desktop View Fullscreen Button */}
               <button 
                 onClick={toggleFullscreen}
-                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs"
+                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
               >
                 Full Screen
               </button>
             </div>
           )}
 
-          {/* Zoom Player Area */}
           <div className="w-full flex-1 min-h-[75vh] bg-black relative">
             <iframe 
               src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser.username)} 
@@ -340,21 +346,20 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               title="Zoom Web Client"
             />
             
-            {/* Overlay Button for Fullscreen (Useful for Mobile and returning back) */}
             <button
               onClick={toggleFullscreen}
               className="absolute bottom-6 right-6 z-50 bg-black/70 hover:bg-black text-white px-4 py-2 rounded-full border border-gray-600 shadow-xl transition-all flex items-center gap-2 backdrop-blur-md"
             >
               {isFullscreen ? (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 010 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clipRule="evenodd" />
                   </svg>
                   Exit Full Screen
                 </>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 md:hidden" viewBox="0 0 20 20" fill="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-400 md:hidden" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 01-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 112 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 110 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 111 1v4a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 111-1z" clipRule="evenodd" />
                   </svg>
                   <span className="md:hidden">Full Screen</span>
