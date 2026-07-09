@@ -21,6 +21,22 @@ interface ScheduledLive {
   zoom_meeting_id: string;
 }
 
+// සූම් ඇප් එක ඕපන් නොවී වෙබ් පිටුව තුළම පෙන්වීම සඳහා URL එක වෙනස් කරන ෆන්ක්ෂන් එක
+const getEmbeddableZoomUrl = (joinUrl: string) => {
+  if (!joinUrl) return '';
+  try {
+    const url = new URL(joinUrl);
+    // සාමාන්‍ය '/j/' ලින්ක් එක වෙබ් ක්ලයන්ට් ('/wc/') ලින්ක් එකක් බවට පත් කිරීම
+    if (url.pathname.includes('/j/')) {
+      url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
+    }
+    return url.toString();
+  } catch (error) {
+    console.error('Invalid Zoom URL', error);
+    return joinUrl;
+  }
+};
+
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
@@ -71,7 +87,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         .maybeSingle();
 
       if (liveData) {
-        // මුදල් ගෙවීම් පරීක්ෂාව ඉවත් කර ඇත. කෙලින්ම පන්තිය පෙන්වයි.
         setCurrentLive(liveData);
       } else {
         await fetchNextClass();
@@ -102,7 +117,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     if (!currentLive || currentLive.status !== 'scheduled') return;
 
     const interval = setInterval(() => {
-      // 24-hour формат එකට ගැලපෙන සේ parse කිරීම (HH:mm)
+      // 24-hour ආකෘතියට ගැලපෙන සේ parse කිරීම (HH:mm)
       const classDateTime = parse(`${currentLive.date} ${currentLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
       const now = new Date();
       const diffSeconds = differenceInSeconds(classDateTime, now);
@@ -217,13 +232,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
           </div>
           
-          {/* Zoom Player Area */}
-          <div className="w-full flex-1 min-h-[65vh] bg-black relative">
+          {/* Zoom Embed Area */}
+          <div className="w-full flex-1 min-h-[75vh] bg-black relative">
             <iframe 
-              src={currentLive.zoom_join_url} 
+              src={getEmbeddableZoomUrl(currentLive.zoom_join_url)} 
               allow="camera; microphone; fullscreen; display-capture; autoplay"
-              className="absolute inset-0 w-full h-full border-0"
-              title="Zoom Live Stream"
+              sandbox="allow-forms allow-scripts allow-same-origin"
+              className="absolute inset-0 w-full h-full border-0 rounded-b-2xl bg-white"
+              title="Zoom Web Client"
             />
           </div>
         </div>
