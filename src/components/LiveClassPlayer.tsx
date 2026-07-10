@@ -56,11 +56,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // currentUser load වූ පසු පමණක් දත්ත ලබා ගැනීම ආරම්භ කිරීම
+  // currentUser ගේ username එක ලැබුණු පසු පමණක් දත්ත ලබා ගැනීම ආරම්භ කිරීම
   useEffect(() => {
-    if (currentUser?.username) {
-      fetchClassData();
-    }
+    if (!currentUser?.username) return; // දත්ත එනතුරු රැඳී සිටීම
+    
+    fetchClassData();
     
     const subscription = supabase
       .channel('live-class-updates')
@@ -82,7 +82,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentUser?.username, currentLive?.id]);
+    // අනන්ත ලූප වළක්වා ගැනීමට currentLive?.id මෙතැනින් ඉවත් කර ඇත
+  }, [currentUser?.username]); 
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -98,7 +99,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
-      const currentTargetMonthFormat = format(today, 'yyyy-MM'); // උදා: 2026-07
+      const currentTargetMonthFormat = format(today, 'yyyy-MM');
 
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
@@ -137,7 +138,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   };
 
   const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
-    // Error එක වළක්වා ගැනීමට currentUser නොමැති නම් ඉවත් වීම
     if (!currentUser) {
       setHasAccess(false);
       return;
@@ -145,7 +145,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
     const requiredMonth = liveClass.target_month || currentTargetMonth;
 
-    // 1. Free Access පරීක්ෂාව (Optional chaining මගින් undefined error එක වළක්වා ඇත)
+    // 1. Free Access පරීක්ෂාව (Optional chaining මගින් error එක එන එක 100%ක් නවතා ඇත)
     const freeMonths = currentUser.free_months || [];
     const isFreeMonth = freeMonths.some(
       m => m?.toLowerCase() === requiredMonth.toLowerCase() || m?.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
@@ -163,34 +163,30 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     ].filter(Boolean); // හිස් අගයන් ඉවත් කිරීම
 
     try {
-      // සිසුවාගේ සියලුම ගෙවීම් ලබාගෙන JavaScript මගින් 100% ක් නිවැරදිව පරීක්ෂා කිරීම 
-      // (Supabase OR errors මඟ හැරීමට මෙය වඩාත් ආරක්ෂිතයි)
-      const { data: payments, error } = await supabase
+      // හරියටම class_type කොළම් එක පරීක්ෂා කිරීම 
+      const { data: payment, error } = await supabase
         .from('payments')
-        .select('month, target_month, class_type, class_type, status')
+        .select('id, status')
         .eq('username', currentUser.username)
-        .eq('status', 'paid');
+        .eq('status', 'paid')
+        .in('class_type', classIdentifiers as string[])
+        .or(`month.eq.${requiredMonth},target_month.eq.${requiredMonth}`)
+        .limit(1)
+        .maybeSingle();
 
       if (error) {
-        console.error("Error fetching payments:", error);
+        console.error("Payment access check error:", error);
         setHasAccess(false);
         return;
       }
 
-      // අදාල පන්තියට සහ අදාල මාසයට ගෙවීමක් කර ඇත්දැයි පරීක්ෂා කිරීම
-      const hasPaid = payments?.some(p => {
-        const matchesMonth = p.month === requiredMonth || p.target_month === requiredMonth;
-        const matchesClass = classIdentifiers.includes(p.class_type) || classIdentifiers.includes(p.class_type);
-        return matchesMonth && matchesClass;
-      });
-
-      if (hasPaid) {
+      if (payment) {
         setHasAccess(true);
       } else {
         setHasAccess(false);
       }
-    } catch (err) {
-      console.error("Payment check error:", err);
+    } catch (error) {
+      console.error("Unexpected error checking access:", error);
       setHasAccess(false);
     }
   };
@@ -229,6 +225,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
+  // User දත්ත පැමිණෙන තෙක් හෝ fetchData අවසන් වන තෙක් loading පෙන්වීම
   if (isLoading || !currentUser) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
@@ -292,7 +289,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
               
-              {/* Dark overlay to ensure text is always readable over the video */}
+              {/* Dark overlay */}
               <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
 
               {/* Glassmorphism Countdown Box */}
@@ -363,7 +360,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
           <div className="w-full flex-1 min-h-[75vh] bg-black relative">
             <iframe 
-              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser.username)} 
+              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser?.username || 'Student')} 
               allow="camera; microphone; fullscreen; display-capture; autoplay"
               sandbox="allow-forms allow-scripts allow-same-origin"
               className={`absolute inset-0 w-full h-full border-0 ${isFullscreen ? '' : 'rounded-b-2xl'} bg-white`}
