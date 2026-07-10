@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase } from '../supabaseClient'; // ඔබගේ supabase client path එකට වෙනස් කරගන්න
 import { format, differenceInSeconds, parse } from 'date-fns';
 
 interface Student {
   username: string;
-  class_types?: string[];
-  free_months?: string[];
-  active_months?: string[];
+  class_types: string[];
+  free_months: string[];
 }
 
 interface ScheduledLive {
@@ -15,50 +14,25 @@ interface ScheduledLive {
   date: string;
   time: string;
   class_type: string;
-  target_class_type?: string;
   target_month: string;
   status: string; // 'scheduled', 'live', 'ended'
   zoom_join_url: string;
   zoom_meeting_id: string;
 }
 
-const getEmbeddableZoomUrl = (joinUrl: string, username: string) => {
-  if (!joinUrl) return '';
-  try {
-    const url = new URL(joinUrl);
-    
-    if (url.pathname.includes('/j/')) {
-      url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
-    }
-
-    if (username) {
-      const encodedName = btoa(unescape(encodeURIComponent(username || 'Student')));
-      url.searchParams.set('un', encodedName);
-    }
-    
-    return url.toString();
-  } catch (error) {
-    console.error('Invalid Zoom URL', error);
-    return joinUrl;
-  }
-};
-
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [countdown, setCountdown] = useState<{ m: number; s: number } | null>(null);
   const [isWithinOneHour, setIsWithinOneHour] = useState<boolean>(false);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  
-  const playerContainerRef = useRef<HTMLDivElement>(null);
 
+  // දත්ත ලබා ගැනීම සහ ප්‍රවේශය පරීක්ෂා කිරීම
   useEffect(() => {
-    if (!currentUser?.username) return; 
-    
     fetchClassData();
     
+    // Supabase Realtime Subscription (ඇඩ්මින් පන්තිය start/end කරන විට ක්ෂණිකව වෙනස් වීමට)
     const subscription = supabase
       .channel('live-class-updates')
       .on(
@@ -66,9 +40,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         { event: 'UPDATE', schema: 'public', table: 'scheduled_lives' },
         (payload) => {
           if (currentLive && payload.new.id === currentLive.id) {
-            const updatedClass = payload.new as ScheduledLive;
-            setCurrentLive(updatedClass);
-            if (updatedClass.status === 'ended') {
+            setCurrentLive(payload.new as ScheduledLive);
+            if (payload.new.status === 'ended') {
               fetchNextClass();
             }
           }
@@ -79,45 +52,30 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentUser?.username]); 
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  }, []);
+  }, [currentUser, currentLive?.id]);
 
   const fetchClassData = async () => {
-    if (!currentUser) return;
     setIsLoading(true);
-    
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
-      const currentTargetMonthFormat = format(today, 'yyyy-MM');
+      const currentMonth = format(today, 'MMMM').toLowerCase();
 
-      // ?. භාවිතා කර ආරක්ෂිතව දත්ත ගැනීම (class_types නොමැති නම් error ඒම වැළැක්වීමට)
-      const studentClasses = (currentUser?.class_types && currentUser.class_types.length > 0) 
-        ? currentUser.class_types 
-        : ['NOT_ENROLLED'];
-
+      // අද දිනට නියමිත හෝ දැනට live පවතින පන්තිය ලබා ගැනීම
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
         .select('*')
         .eq('date', currentDateString)
         .in('status', ['scheduled', 'live'])
-        .in('class_type', studentClasses)
         .order('time', { ascending: true })
         .limit(1)
-        .maybeSingle();
+        .single();
 
       if (liveData) {
         setCurrentLive(liveData);
-        checkStudentAccess(liveData, currentTargetMonthFormat);
+        await checkStudentAccess(liveData, currentMonth);
       } else {
+        // අද දින පන්ති නොමැති නම් ඊළඟ පන්තිය පෙන්වන්න
         await fetchNextClass();
       }
     } catch (error) {
@@ -128,61 +86,50 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   };
 
   const fetchNextClass = async () => {
-    if (!currentUser) return;
     const today = format(new Date(), 'yyyy-MM-dd');
-    
-    const studentClasses = (currentUser?.class_types && currentUser.class_types.length > 0) 
-      ? currentUser.class_types 
-      : ['NOT_ENROLLED'];
-
     const { data } = await supabase
       .from('scheduled_lives')
       .select('*')
       .gt('date', today)
       .eq('status', 'scheduled')
-      .in('class_type', studentClasses)
       .order('date', { ascending: true })
       .limit(1)
-      .maybeSingle();
+      .single();
     
     if (data) setNextLive(data);
   };
 
-  const checkStudentAccess = (liveClass: ScheduledLive, currentTargetMonth: string) => {
-    if (!currentUser) {
-      setHasAccess(false);
-      return;
-    }
+  const checkStudentAccess = async (liveClass: ScheduledLive, currentMonth: string) => {
+    // 1. Free/Active මාස පරීක්ෂා කිරීම
+    const hasFreeAccess = currentUser.free_months?.includes(currentMonth) && currentUser.class_types?.includes(liveClass.class_type);
 
-    const requiredMonth = liveClass.target_month || currentTargetMonth;
-    const requiredMonthLower = requiredMonth.toLowerCase();
-    const currentMonthNameLower = format(new Date(), 'MMMM').toLowerCase();
+    // 2. ගෙවීම් පරීක්ෂා කිරීම (payments table)
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('status')
+      .eq('username', currentUser.username)
+      .eq('class_type', liveClass.class_type)
+      .eq('target_month', currentMonth)
+      .eq('status', 'paid')
+      .single();
 
-    // ?. (Optional Chaining) සහ m && මගින් දත්ත null වුවහොත් එන error එක නැවැත්වීම
-    const isFreeMonth = currentUser?.free_months?.some(
-      m => m && (m.toLowerCase() === requiredMonthLower || m.toLowerCase() === currentMonthNameLower)
-    ) ?? false;
-    
-    const isPaidMonth = currentUser?.active_months?.some(
-      m => m && (m.toLowerCase() === requiredMonthLower || m.toLowerCase() === currentMonthNameLower)
-    ) ?? false;
-
-    if (isFreeMonth || isPaidMonth) {
+    if (hasFreeAccess || payment) {
       setHasAccess(true);
     } else {
       setHasAccess(false);
     }
   };
 
+  // Countdown Logic (පැයකට පෙර)
   useEffect(() => {
     if (!currentLive || currentLive.status !== 'scheduled') return;
 
     const interval = setInterval(() => {
-      const classDateTime = parse(`${currentLive.date} ${currentLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
+      const classDateTime = parse(`${currentLive.date} ${currentLive.time}`, 'yyyy-MM-dd HH:mm:ss', new Date());
       const now = new Date();
       const diffSeconds = differenceInSeconds(classDateTime, now);
 
-      if (diffSeconds > 0 && diffSeconds <= 3600) { 
+      if (diffSeconds > 0 && diffSeconds <= 3600) { // පැයකට (තත්පර 3600) අඩු නම්
         setIsWithinOneHour(true);
         setCountdown({
           m: Math.floor(diffSeconds / 60),
@@ -190,6 +137,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         });
       } else if (diffSeconds <= 0) {
         setCountdown({ m: 0, s: 0 });
+        // මෙහිදී real-time update එක හරහා ඇඩ්මින් start කරන තුරු රැඳී සිටියි
       } else {
         setIsWithinOneHour(false);
       }
@@ -198,172 +146,111 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => clearInterval(interval);
   }, [currentLive]);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      playerContainerRef.current?.requestFullscreen().catch(err => {
-        console.error(`Error attempting to enable fullscreen: ${err.message}`);
-      });
-    } else {
-      document.exitFullscreen();
-    }
-  };
 
-  if (isLoading || !currentUser) {
-    return (
-      <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
-        දත්ත පූරණය වෙමින් පවතී...
-      </div>
-    );
+  // UI Render Components
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-screen text-white">Loading...</div>;
   }
 
+  // ගෙවීම් කර නොමැති විට හෝ අදාළ පන්තියට ලියාපදිංචි වී නොමැති විට
   if (currentLive && !hasAccess) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[80vh] bg-black text-white p-6 text-center">
-        <div className="max-w-xl p-8 bg-gray-900/50 border border-red-500/30 rounded-2xl backdrop-blur-md shadow-2xl">
-          <h2 className="text-3xl font-extrabold text-red-500 mb-4 animate-pulse">
-            Access Denied (ප්‍රවේශය තහනම්)
-          </h2>
-          <p className="text-lg text-gray-300 leading-relaxed">
-            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month || format(new Date(), 'yyyy-MM')})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
-          </p>
-        </div>
+      <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-red-500 p-6 text-center rounded-lg">
+        <h2 className="text-2xl font-bold mb-2">Access Denied (ප්‍රවේශය තහනම්)</h2>
+        <p>ඔබ මෙම මාසය සඳහා ({currentLive.target_month}) අදාළ {currentLive.class_type} පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.</p>
       </div>
     );
   }
 
+  // පන්තිය අවසන් වී ඇති විට හෝ අද දින පන්ති නොමැති විට
   if (!currentLive || currentLive.status === 'ended') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
-        <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center shadow-xl">
-          <h2 className="text-2xl font-bold text-gray-400 mb-6">ඔබට අදාළ අද දිනට නියමිත සජීවී පන්ති නොමැත</h2>
-          {nextLive ? (
-            <div className="bg-gray-950 p-6 rounded-xl border border-blue-500/20">
-              <span className="text-xs font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 px-3 py-1 rounded-full">
-                මීළඟ පන්තිය
-              </span>
-              <h3 className="text-xl text-white font-bold mt-4 mb-2">{nextLive.class_type}</h3>
-              <p className="text-gray-400 text-sm">දිනය: <span className="text-gray-200 font-medium">{nextLive.date}</span></p>
-              <p className="text-gray-400 text-sm mt-1">ආරම්භ වන වේලාව: <span className="text-gray-200 font-medium">{nextLive.time}</span></p>
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">ඉදිරි පන්ති කාලසටහන ළඟදීම යාවත්කාලීන කරනු ඇත.</p>
-          )}
-        </div>
+      <div className="flex flex-col items-center justify-center h-[70vh] bg-gray-900 text-white rounded-xl p-8 border border-gray-800 shadow-lg">
+        <h2 className="text-2xl font-bold text-gray-300 mb-6">අද දිනට නියමිත සජීවී පන්ති නොමැත</h2>
+        {nextLive && (
+          <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md text-center border border-gray-700">
+            <h3 className="text-xl text-blue-400 font-semibold mb-4">මීළඟ පන්තිය</h3>
+            <p className="text-lg font-bold mb-2">{nextLive.class_type}</p>
+            <p className="text-gray-400">දිනය: {nextLive.date}</p>
+            <p className="text-gray-400">වේලාව: {nextLive.time}</p>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
+      {/* පන්තිය Scheduled අවස්ථාවේ (පටන් ගෙන නොමැති විට) */}
       {currentLive.status === 'scheduled' && (
-        <div className="flex flex-col items-center justify-center flex-1 relative rounded-2xl overflow-hidden bg-gray-900 min-h-[65vh] border border-gray-800 shadow-2xl">
+        <div className="flex flex-col items-center justify-center flex-1 relative rounded-2xl overflow-hidden bg-gray-900 shadow-2xl border border-gray-800">
+          
           {isWithinOneHour ? (
             <>
+              {/* Waiting Video - ස්වයංක්‍රීයව Play වේ */}
               <video 
                 autoPlay 
                 loop 
                 muted 
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover"
+                className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none"
               >
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
-              
-              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
 
-              <div className="relative z-10 flex flex-col items-center p-8 bg-white/10 rounded-3xl backdrop-blur-md border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4)] max-w-lg w-full mx-4">
-                <span className="text-xs font-bold uppercase tracking-widest bg-blue-600/40 text-blue-100 px-4 py-1.5 rounded-full mb-4 border border-blue-400/30 shadow-sm">
+              {/* Countdown Overlay */}
+              <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-2xl backdrop-blur-sm border border-white/10">
+                <h1 className="text-3xl md:text-5xl font-extrabold text-blue-500 mb-2">
                   {currentLive.class_type}
-                </span>
-                
-                <h1 className="text-2xl md:text-3xl font-extrabold text-white text-center mb-6 drop-shadow-lg leading-tight">
-                  {currentLive.title}
                 </h1>
-                
-                <h2 className="text-sm md:text-base text-gray-200 text-center mb-3 font-medium uppercase tracking-widest">
+                <h2 className="text-xl md:text-2xl text-gray-200 mb-8">
                   පන්තිය ආරම්භ වීමට තව...
                 </h2>
-                
-                <div className="text-6xl md:text-7xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_20px_rgba(255,255,255,0.7)] my-2">
+                <div className="text-6xl md:text-8xl font-mono font-bold text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]">
                   {countdown ? (
                     `${String(countdown.m).padStart(2, '0')}:${String(countdown.s).padStart(2, '0')}`
                   ) : (
                     "00:00"
                   )}
                 </div>
-
                 {countdown?.m === 0 && countdown?.s === 0 && (
-                  <p className="mt-6 text-green-300 animate-pulse text-sm md:text-base font-semibold bg-green-900/40 px-5 py-2.5 rounded-xl border border-green-400/30">
-                    ගුරුතුමා විසින් පන්තිය සක්‍රීය කරන තුරු මඳක් රැඳී සිටින්න...
+                  <p className="mt-6 text-green-400 animate-pulse text-lg font-semibold">
+                    ඇඩ්මින් විසින් පන්තිය ආරම්භ කරන තුරු රැඳී සිටින්න...
                   </p>
                 )}
               </div>
             </>
           ) : (
-            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700 shadow-xl backdrop-blur-md">
-              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block border border-gray-600">
-                {currentLive.class_type}
-              </span>
-              <h1 className="text-2xl md:text-4xl font-bold text-white mb-3">{currentLive.title}</h1>
-              <p className="text-gray-400 text-lg">මෙම පන්තිය අද දින <span className="text-yellow-400 font-bold">{currentLive.time}</span> ට ආරම්භ වීමට නියමිතයි.</p>
+            <div className="z-10 text-center">
+              <h1 className="text-3xl font-bold text-gray-300 mb-4">{currentLive.class_type}</h1>
+              <p className="text-xl text-gray-400">පන්තිය අද දින {currentLive.time} ට ආරම්භ වේ.</p>
             </div>
           )}
         </div>
       )}
 
+      {/* පන්තිය Live අවස්ථාවේ (ඇඩ්මින් Start කළ පසු) */}
       {currentLive.status === 'live' && (
-        <div 
-          ref={playerContainerRef}
-          className={`flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/20 shadow-2xl relative ${isFullscreen ? 'h-screen w-screen rounded-none border-none' : ''}`}
-        >
-          {!isFullscreen && (
-            <div className="bg-green-950/40 text-green-400 px-4 py-3 flex justify-between items-center font-semibold border-b border-green-500/10 text-sm md:text-base">
-              <div className="flex items-center gap-3">
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
-                </span>
-                සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
-              </div>
-              
-              <button 
-                onClick={toggleFullscreen}
-                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-md"
-              >
-                Full Screen
-              </button>
-            </div>
-          )}
-
-          <div className="w-full flex-1 min-h-[75vh] bg-black relative">
+        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/30">
+          <div className="bg-green-600/20 text-green-400 px-4 py-2 flex items-center gap-3 font-semibold border-b border-green-500/20">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            </span>
+            LIVE NOW: {currentLive.class_type} - {currentLive.title}
+          </div>
+          
+          {/* Zoom Integration Area */}
+          <div className="w-full h-full flex-1 min-h-[60vh] bg-black relative">
+            {/* මෙතනට ඔබේ Zoom Web SDK component එක හෝ iframe එක භාවිතා කරන්න.
+              උදාහරණයක් ලෙස iframe එකක් භාවිතා කරන්නේ නම්:
+            */}
             <iframe 
-              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser?.username || 'Student')} 
-              allow="camera; microphone; fullscreen; display-capture; autoplay"
-              sandbox="allow-forms allow-scripts allow-same-origin"
-              className={`absolute inset-0 w-full h-full border-0 ${isFullscreen ? '' : 'rounded-b-2xl'} bg-white`}
-              title="Zoom Web Client"
+              src={currentLive.zoom_join_url} 
+              allow="camera; microphone; fullscreen; display-capture"
+              className="absolute inset-0 w-full h-full border-0"
+              title="Zoom Live Class"
             />
-            
-            <button
-              onClick={toggleFullscreen}
-              className="absolute bottom-6 right-6 z-50 bg-black/70 hover:bg-black text-white px-4 py-2 rounded-full border border-gray-600 shadow-xl transition-all flex items-center gap-2 backdrop-blur-md"
-            >
-              {isFullscreen ? (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 11-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 010-2h4a1 1 0 011 1v4a1 1 0 01-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 012 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 010 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 010-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 011-1z" clipRule="evenodd" />
-                  </svg>
-                  Exit Full Screen
-                </>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-blue-400 md:hidden" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 01-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 7a1 1 0 112 0v1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 110 2H4a1 1 0 01-1-1v-4zm13-1a1 1 0 111 1v4a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 13.586V12a1 1 0 111-1z" clipRule="evenodd" />
-                  </svg>
-                  <span className="md:hidden">Full Screen</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
       )}
