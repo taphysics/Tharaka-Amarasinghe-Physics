@@ -2,10 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { format, differenceInSeconds, parse } from 'date-fns';
 
+// active_months ඇතුළත් කර Student interface එක යාවත්කාලීන කර ඇත
 interface Student {
   username: string;
   class_types: string[];
   free_months: string[];
+  active_months: string[]; 
 }
 
 interface ScheduledLive {
@@ -56,9 +58,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // currentUser ගේ username එක ලැබුණු පසු පමණක් දත්ත ලබා ගැනීම ආරම්භ කිරීම
   useEffect(() => {
-    if (!currentUser?.username) return; // දත්ත එනතුරු රැඳී සිටීම
+    if (!currentUser?.username) return; 
     
     fetchClassData();
     
@@ -82,7 +83,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-    // අනන්ත ලූප වළක්වා ගැනීමට currentLive?.id මෙතැනින් ඉවත් කර ඇත
   }, [currentUser?.username]); 
 
   useEffect(() => {
@@ -96,15 +96,24 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchClassData = async () => {
     setIsLoading(true);
+    
+    // සිසුවා කිසිදු පන්තියක ලියාපදිංචි වී නොමැති නම් දත්ත සෙවීම නවතාලයි
+    if (!currentUser?.class_types || currentUser.class_types.length === 0) {
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
       const currentTargetMonthFormat = format(today, 'yyyy-MM');
 
+      // සිසුවා සම්බන්ධ වී ඇති පන්ති වර්ග (class_types) පමණක් ෆිල්ටර් කර ගනී
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
         .select('*')
         .eq('date', currentDateString)
+        .in('class_type', currentUser.class_types) 
         .in('status', ['scheduled', 'live'])
         .order('time', { ascending: true })
         .limit(1)
@@ -112,7 +121,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
       if (liveData) {
         setCurrentLive(liveData);
-        await checkStudentAccess(liveData, currentTargetMonthFormat);
+        checkStudentAccess(liveData, currentTargetMonthFormat);
       } else {
         await fetchNextClass();
       }
@@ -124,11 +133,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   };
 
   const fetchNextClass = async () => {
+    if (!currentUser?.class_types || currentUser.class_types.length === 0) return;
+
     const today = format(new Date(), 'yyyy-MM-dd');
     const { data } = await supabase
       .from('scheduled_lives')
       .select('*')
       .gt('date', today)
+      .in('class_type', currentUser.class_types) // ඊළඟ පන්තිය සෙවීමේදීත් අදාළ පන්ති වර්ග පමණක් ලබා ගනී
       .eq('status', 'scheduled')
       .order('date', { ascending: true })
       .limit(1)
@@ -137,56 +149,33 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (data) setNextLive(data);
   };
 
-  const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
+  // Database requests නොමැතිව ප්‍රවේශය (Access) පරීක්ෂා කිරීම
+  const checkStudentAccess = (liveClass: ScheduledLive, currentTargetMonth: string) => {
     if (!currentUser) {
       setHasAccess(false);
       return;
     }
 
     const requiredMonth = liveClass.target_month || currentTargetMonth;
-
-    // 1. Free Access පරීක්ෂාව (Optional chaining මගින් error එක එන එක 100%ක් නවතා ඇත)
+    
+    // Arrays හිස් නම් Error නොඑන ලෙස සකසා ඇත
     const freeMonths = currentUser.free_months || [];
+    const activeMonths = currentUser.active_months || []; 
+
+    // 1. Free Access පරීක්ෂාව
     const isFreeMonth = freeMonths.some(
       m => m?.toLowerCase() === requiredMonth.toLowerCase() || m?.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
     );
     
-    if (isFreeMonth) {
-      setHasAccess(true);
-      return;
-    }
-
     // 2. Paid Access පරීක්ෂාව
-    const classIdentifiers = [
-      liveClass.class_type,
-      liveClass.target_class_type,
-    ].filter(Boolean); // හිස් අගයන් ඉවත් කිරීම
+    const isPaidMonth = activeMonths.some(
+      m => m?.toLowerCase() === requiredMonth.toLowerCase()
+    );
 
-    try {
-      // හරියටම class_type කොළම් එක පරීක්ෂා කිරීම 
-      const { data: payment, error } = await supabase
-        .from('payments')
-        .select('id, status')
-        .eq('username', currentUser.username)
-        .eq('status', 'paid')
-        .in('class_type', classIdentifiers as string[])
-        .or(`month.eq.${requiredMonth},target_month.eq.${requiredMonth}`)
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error("Payment access check error:", error);
-        setHasAccess(false);
-        return;
-      }
-
-      if (payment) {
-        setHasAccess(true);
-      } else {
-        setHasAccess(false);
-      }
-    } catch (error) {
-      console.error("Unexpected error checking access:", error);
+    // මුදල් ගෙවා හෝ Free ලබාගෙන ඇත්නම් පමණක් Access ලබා දෙයි
+    if (isFreeMonth || isPaidMonth) {
+      setHasAccess(true);
+    } else {
       setHasAccess(false);
     }
   };
@@ -225,7 +214,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
-  // User දත්ත පැමිණෙන තෙක් හෝ fetchData අවසන් වන තෙක් loading පෙන්වීම
   if (isLoading || !currentUser) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
@@ -243,7 +231,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             Access Denied (ප්‍රවේශය තහනම්)
           </h2>
           <p className="text-lg text-gray-300 leading-relaxed">
-            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month || format(new Date(), 'yyyy-MM')})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත හෝ ලියාපදිංචි වී නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
+            ඔබ මෙම මාසය සඳහා <span className="text-yellow-400 font-bold">({currentLive.target_month || format(new Date(), 'yyyy-MM')})</span> අදාළ <span className="text-blue-400 font-bold">{currentLive.class_type}</span> පන්තියට මුදල් ගෙවා නොමැත. කරුණාකර ගෙවීම් සම්පූර්ණ කරන්න.
           </p>
         </div>
       </div>
