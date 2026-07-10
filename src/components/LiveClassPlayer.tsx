@@ -45,7 +45,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, username: string) => {
   }
 };
 
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
@@ -56,8 +56,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
+  // currentUser load වූ පසු පමණක් දත්ත ලබා ගැනීම ආරම්භ කිරීම
   useEffect(() => {
-    fetchClassData();
+    if (currentUser?.username) {
+      fetchClassData();
+    }
     
     const subscription = supabase
       .channel('live-class-updates')
@@ -79,7 +82,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentUser, currentLive?.id]);
+  }, [currentUser?.username, currentLive?.id]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -134,12 +137,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   };
 
   const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
-    // අවශ්‍ය මාසය (live_class එකේ target_month එක තිබේ නම් එය, නැතිනම් වත්මන් මාසය)
+    // Error එක වළක්වා ගැනීමට currentUser නොමැති නම් ඉවත් වීම
+    if (!currentUser) {
+      setHasAccess(false);
+      return;
+    }
+
     const requiredMonth = liveClass.target_month || currentTargetMonth;
 
-    // 1. Free Access පරීක්ෂාව
-    const isFreeMonth = currentUser.free_months?.some(
-      m => m.toLowerCase() === requiredMonth.toLowerCase() || m.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
+    // 1. Free Access පරීක්ෂාව (Optional chaining මගින් undefined error එක වළක්වා ඇත)
+    const freeMonths = currentUser.free_months || [];
+    const isFreeMonth = freeMonths.some(
+      m => m?.toLowerCase() === requiredMonth.toLowerCase() || m?.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
     );
     
     if (isFreeMonth) {
@@ -153,20 +162,35 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       liveClass.target_class_type,
     ].filter(Boolean); // හිස් අගයන් ඉවත් කිරීම
 
-    // අලුත් දත්ත ගබඩා ආකෘතියට අනුව payments ටේබල් එක පරීක්ෂා කිරීම (month column එක ප්‍රධාන වේ)
-    const { data: payment } = await supabase
-      .from('payments')
-      .select('id, status')
-      .eq('username', currentUser.username)
-      .eq('status', 'paid')
-      .in('class_type', classIdentifiers as string[])
-      .or(`month.eq.${requiredMonth},target_month.eq.${requiredMonth}`)
-      .limit(1)
-      .maybeSingle();
+    try {
+      // සිසුවාගේ සියලුම ගෙවීම් ලබාගෙන JavaScript මගින් 100% ක් නිවැරදිව පරීක්ෂා කිරීම 
+      // (Supabase OR errors මඟ හැරීමට මෙය වඩාත් ආරක්ෂිතයි)
+      const { data: payments, error } = await supabase
+        .from('payments')
+        .select('month, target_month, class_name, class_type, status')
+        .eq('username', currentUser.username)
+        .eq('status', 'paid');
 
-    if (payment) {
-      setHasAccess(true);
-    } else {
+      if (error) {
+        console.error("Error fetching payments:", error);
+        setHasAccess(false);
+        return;
+      }
+
+      // අදාල පන්තියට සහ අදාල මාසයට ගෙවීමක් කර ඇත්දැයි පරීක්ෂා කිරීම
+      const hasPaid = payments?.some(p => {
+        const matchesMonth = p.month === requiredMonth || p.target_month === requiredMonth;
+        const matchesClass = classIdentifiers.includes(p.class_name) || classIdentifiers.includes(p.class_type);
+        return matchesMonth && matchesClass;
+      });
+
+      if (hasPaid) {
+        setHasAccess(true);
+      } else {
+        setHasAccess(false);
+      }
+    } catch (err) {
+      console.error("Payment check error:", err);
       setHasAccess(false);
     }
   };
@@ -205,7 +229,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     }
   };
 
-  if (isLoading) {
+  if (isLoading || !currentUser) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
         දත්ත පූරණය වෙමින් පවතී...
@@ -217,7 +241,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   if (currentLive && !hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[80vh] bg-black text-white p-6 text-center">
-        <div className="max-w-xl p-8 bg-gray-900/50 border border-red-500/30 rounded-2xl backdrop-blur-md">
+        <div className="max-w-xl p-8 bg-gray-900/50 border border-red-500/30 rounded-2xl backdrop-blur-md shadow-2xl">
           <h2 className="text-3xl font-extrabold text-red-500 mb-4 animate-pulse">
             Access Denied (ප්‍රවේශය තහනම්)
           </h2>
@@ -269,7 +293,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               </video>
               
               {/* Dark overlay to ensure text is always readable over the video */}
-              <div className="absolute inset-0 bg-black/40"></div>
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
 
               {/* Glassmorphism Countdown Box */}
               <div className="relative z-10 flex flex-col items-center p-8 bg-white/10 rounded-3xl backdrop-blur-md border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4)] max-w-lg w-full mx-4">
@@ -302,8 +326,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               </div>
             </>
           ) : (
-            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700">
-              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block">
+            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700 shadow-xl backdrop-blur-md">
+              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block border border-gray-600">
                 {currentLive.class_type}
               </span>
               <h1 className="text-2xl md:text-4xl font-bold text-white mb-3">{currentLive.title}</h1>
@@ -330,7 +354,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               
               <button 
                 onClick={toggleFullscreen}
-                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
+                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-md"
               >
                 Full Screen
               </button>
