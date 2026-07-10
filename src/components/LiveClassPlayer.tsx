@@ -6,7 +6,6 @@ interface Student {
   username: string;
   class_types: string[];
   free_months: string[];
-  active_months: string[]; // මුදල් ගෙවූ මාස පරීක්ෂා කිරීමට මෙය එක් කර ඇත
 }
 
 interface ScheduledLive {
@@ -46,7 +45,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, username: string) => {
   }
 };
 
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
   const [hasAccess, setHasAccess] = useState<boolean>(false);
@@ -57,10 +56,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // currentUser ගේ username එක ලැබුණු පසු පමණක් දත්ත ලබා ගැනීම ආරම්භ කිරීම
   useEffect(() => {
-    if (!currentUser?.username) return; 
-    
     fetchClassData();
     
     const subscription = supabase
@@ -83,7 +79,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentUser?.username]); 
+  }, [currentUser, currentLive?.id]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -95,30 +91,24 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   }, []);
 
   const fetchClassData = async () => {
-    if (!currentUser) return;
     setIsLoading(true);
-    
     try {
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
-      const currentTargetMonthFormat = format(today, 'yyyy-MM');
-
-      // සිසුවා ලියාපදිංචි වී ඇති පන්ති වර්ග (හිස් නම් error ඒම වැළැක්වීමට ඩමී අගයක් යෙදීම)
-      const studentClasses = currentUser.class_types?.length > 0 ? currentUser.class_types : ['NOT_ENROLLED'];
+      const currentTargetMonthFormat = format(today, 'yyyy-MM'); // උදා: 2026-07
 
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
         .select('*')
         .eq('date', currentDateString)
         .in('status', ['scheduled', 'live'])
-        .in('class_type', studentClasses) // සිසුවාගේ පන්ති වලට පමණක් සීමා කිරීම
         .order('time', { ascending: true })
         .limit(1)
         .maybeSingle();
 
       if (liveData) {
         setCurrentLive(liveData);
-        checkStudentAccess(liveData, currentTargetMonthFormat);
+        await checkStudentAccess(liveData, currentTargetMonthFormat);
       } else {
         await fetchNextClass();
       }
@@ -130,16 +120,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   };
 
   const fetchNextClass = async () => {
-    if (!currentUser) return;
     const today = format(new Date(), 'yyyy-MM-dd');
-    const studentClasses = currentUser.class_types?.length > 0 ? currentUser.class_types : ['NOT_ENROLLED'];
-
     const { data } = await supabase
       .from('scheduled_lives')
       .select('*')
       .gt('date', today)
       .eq('status', 'scheduled')
-      .in('class_type', studentClasses) // සිසුවාගේ පන්ති වලට පමණක් සීමා කිරීම
       .order('date', { ascending: true })
       .limit(1)
       .maybeSingle();
@@ -147,28 +133,38 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (data) setNextLive(data);
   };
 
-  const checkStudentAccess = (liveClass: ScheduledLive, currentTargetMonth: string) => {
-    if (!currentUser) {
-      setHasAccess(false);
+  const checkStudentAccess = async (liveClass: ScheduledLive, currentTargetMonth: string) => {
+    // අවශ්‍ය මාසය (live_class එකේ target_month එක තිබේ නම් එය, නැතිනම් වත්මන් මාසය)
+    const requiredMonth = liveClass.target_month || currentTargetMonth;
+
+    // 1. Free Access පරීක්ෂාව
+    const isFreeMonth = currentUser.free_months?.some(
+      m => m.toLowerCase() === requiredMonth.toLowerCase() || m.toLowerCase() === format(new Date(), 'MMMM').toLowerCase()
+    );
+    
+    if (isFreeMonth) {
+      setHasAccess(true);
       return;
     }
 
-    const requiredMonth = liveClass.target_month || currentTargetMonth;
-    const requiredMonthLower = requiredMonth.toLowerCase();
-    const currentMonthNameLower = format(new Date(), 'MMMM').toLowerCase();
+    // 2. Paid Access පරීක්ෂාව
+    const classIdentifiers = [
+      liveClass.class_type,
+      liveClass.target_class_type,
+    ].filter(Boolean); // හිස් අගයන් ඉවත් කිරීම
 
-    // 1. Free Access පරීක්ෂාව (Dashboard දත්ත මගින්)
-    const isFreeMonth = currentUser.free_months?.some(
-      m => m.toLowerCase() === requiredMonthLower || m.toLowerCase() === currentMonthNameLower
-    );
-    
-    // 2. Paid Access පරීක්ෂාව (Dashboard දත්ත මගින් - Database යන්නේ නැත)
-    const isPaidMonth = currentUser.active_months?.some(
-      m => m.toLowerCase() === requiredMonthLower || m.toLowerCase() === currentMonthNameLower
-    );
+    // අලුත් දත්ත ගබඩා ආකෘතියට අනුව payments ටේබල් එක පරීක්ෂා කිරීම (month column එක ප්‍රධාන වේ)
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('id, status')
+      .eq('username', currentUser.username)
+      .eq('status', 'paid')
+      .in('class_type', classIdentifiers as string[])
+      .or(`month.eq.${requiredMonth},target_month.eq.${requiredMonth}`)
+      .limit(1)
+      .maybeSingle();
 
-    // Free හෝ Paid දෙකෙන් එකක් තිබේ නම් Access ලබා දීම
-    if (isFreeMonth || isPaidMonth) {
+    if (payment) {
       setHasAccess(true);
     } else {
       setHasAccess(false);
@@ -209,7 +205,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
-  if (isLoading || !currentUser) {
+  if (isLoading) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
         දත්ත පූරණය වෙමින් පවතී...
@@ -221,7 +217,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   if (currentLive && !hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[80vh] bg-black text-white p-6 text-center">
-        <div className="max-w-xl p-8 bg-gray-900/50 border border-red-500/30 rounded-2xl backdrop-blur-md shadow-2xl">
+        <div className="max-w-xl p-8 bg-gray-900/50 border border-red-500/30 rounded-2xl backdrop-blur-md">
           <h2 className="text-3xl font-extrabold text-red-500 mb-4 animate-pulse">
             Access Denied (ප්‍රවේශය තහනම්)
           </h2>
@@ -237,7 +233,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
         <div className="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl p-8 text-center shadow-xl">
-          <h2 className="text-2xl font-bold text-gray-400 mb-6">ඔබට අදාළ අද දිනට නියමිත සජීවී පන්ති නොමැත</h2>
+          <h2 className="text-2xl font-bold text-gray-400 mb-6">අද දිනට නියමිත සජීවී පන්ති නොමැත</h2>
           {nextLive ? (
             <div className="bg-gray-950 p-6 rounded-xl border border-blue-500/20">
               <span className="text-xs font-bold uppercase tracking-wider bg-blue-500/10 text-blue-400 px-3 py-1 rounded-full">
@@ -272,8 +268,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
               
-              {/* Dark overlay */}
-              <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+              {/* Dark overlay to ensure text is always readable over the video */}
+              <div className="absolute inset-0 bg-black/40"></div>
 
               {/* Glassmorphism Countdown Box */}
               <div className="relative z-10 flex flex-col items-center p-8 bg-white/10 rounded-3xl backdrop-blur-md border border-white/20 shadow-[0_8px_32px_0_rgba(0,0,0,0.4)] max-w-lg w-full mx-4">
@@ -306,8 +302,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
               </div>
             </>
           ) : (
-            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700 shadow-xl backdrop-blur-md">
-              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block border border-gray-600">
+            <div className="z-10 text-center p-8 bg-gray-900/80 rounded-2xl border border-gray-700">
+              <span className="text-xs font-bold uppercase tracking-widest bg-gray-800 text-gray-400 px-4 py-1.5 rounded-full mb-4 inline-block">
                 {currentLive.class_type}
               </span>
               <h1 className="text-2xl md:text-4xl font-bold text-white mb-3">{currentLive.title}</h1>
@@ -334,7 +330,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
               
               <button 
                 onClick={toggleFullscreen}
-                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-md"
+                className="hidden md:flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold"
               >
                 Full Screen
               </button>
@@ -343,7 +339,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
           <div className="w-full flex-1 min-h-[75vh] bg-black relative">
             <iframe 
-              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser?.username || 'Student')} 
+              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser.username)} 
               allow="camera; microphone; fullscreen; display-capture; autoplay"
               sandbox="allow-forms allow-scripts allow-same-origin"
               className={`absolute inset-0 w-full h-full border-0 ${isFullscreen ? '' : 'rounded-b-2xl'} bg-white`}
