@@ -167,7 +167,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       // (Supabase OR errors මඟ හැරීමට මෙය වඩාත් ආරක්ෂිතයි)
       const { data: payments, error } = await supabase
         .from('payments')
-        .select('month, target_month, class_name, class_type, status')
+        .select('month, target_month, class_type, class_type, status')
         .eq('username', currentUser.username)
         .eq('status', 'paid');
 
@@ -180,7 +180,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       // අදාල පන්තියට සහ අදාල මාසයට ගෙවීමක් කර ඇත්දැයි පරීක්ෂා කිරීම
       const hasPaid = payments?.some(p => {
         const matchesMonth = p.month === requiredMonth || p.target_month === requiredMonth;
-        const matchesClass = classIdentifiers.includes(p.class_name) || classIdentifiers.includes(p.class_type);
+        const matchesClass = classIdentifiers.includes(p.class_type) || classIdentifiers.includes(p.class_type);
         return matchesMonth && matchesClass;
       });
 
