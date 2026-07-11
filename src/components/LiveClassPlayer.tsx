@@ -37,7 +37,7 @@ const getEmbeddableZoomUrl = (joinUrl: string) => {
   }
 };
 
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefined }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -138,20 +138,22 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return () => clearInterval(interval);
   }, [currentLive]);
 
-  // ගෙවීම් සහ පන්ති වර්ගය පරීක්ෂා කිරීම (Access Validation)
-  const hasAccess = currentLive ? (
-    (currentUser.class_types.includes(currentLive.class_type) || 
-    (currentLive.target_class_type ? currentUser.class_types.includes(currentLive.target_class_type) : false)) &&
-    currentUser.free_months.includes(currentLive.target_month)
-  ) : false;
-
-  if (isLoading) {
+  // දත්ත පූරණය වන තෙක් හෝ currentUser දත්ත ලැබෙන තෙක් Loading පෙන්වීම
+  if (isLoading || !currentUser) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
         දත්ත පූරණය වෙමින් පවතී...
       </div>
     );
   }
+
+  // ගෙවීම් සහ පන්ති වර්ගය පරීක්ෂා කිරීම (Access Validation)
+  // මෙහිදී currentUser සහ එහි array අනිවාර්යයෙන් ඇති බව තහවුරු කරගනී
+  const hasAccess = currentLive ? (
+    (currentUser.class_types?.includes(currentLive.class_type) || 
+    (currentLive.target_class_type ? currentUser.class_types?.includes(currentLive.target_class_type) : false)) &&
+    currentUser.free_months?.includes(currentLive.target_month)
+  ) : false;
 
   // පන්ති අවසන් වූ පසු හෝ අද දිනට පන්ති නොමැති විට මීළඟ පන්තිය පෙන්වීම
   if (!currentLive || currentLive.status === 'ended') {
