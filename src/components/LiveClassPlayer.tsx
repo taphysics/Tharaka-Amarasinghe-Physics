@@ -3,9 +3,9 @@ import { supabase } from '../supabaseClient';
 import { format, differenceInSeconds, parse } from 'date-fns';
 
 interface Student {
-  username: string;
-  class_types: string[];
-  free_months: string[];
+  username?: string;
+  class_types?: string[];
+  free_months?: string[];
 }
 
 interface ScheduledLive {
@@ -21,12 +21,10 @@ interface ScheduledLive {
   zoom_meeting_id: string;
 }
 
-// සූම් ඇප් එක ඕපන් නොවී වෙබ් පිටුව තුළම පෙන්වීම සඳහා URL එක වෙනස් කරන ෆන්ක්ෂන් එක
 const getEmbeddableZoomUrl = (joinUrl: string) => {
   if (!joinUrl) return '';
   try {
     const url = new URL(joinUrl);
-    // සාමාන්‍ය '/j/' ලින්ක් එක වෙබ් ක්ලයන්ට් ('/wc/') ලින්ක් එකක් බවට පත් කිරීම
     if (url.pathname.includes('/j/')) {
       url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
     }
@@ -47,7 +45,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
   useEffect(() => {
     fetchClassData();
     
-    // Supabase Realtime Subscription - ඇඩ්මින් පන්තිය start/end කළ සැනින් update වීමට
     const subscription = supabase
       .channel('live-class-updates')
       .on(
@@ -68,7 +65,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentUser, currentLive?.id]);
+  }, [currentLive?.id]);
 
   const fetchClassData = async () => {
     setIsLoading(true);
@@ -76,7 +73,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
       const today = new Date();
       const currentDateString = format(today, 'yyyy-MM-dd');
 
-      // අද දිනට නියමිත හෝ දැනට සජීවීව පවතින පන්තිය ලබා ගැනීම
       const { data: liveData, error: liveError } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -112,12 +108,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
     if (data) setNextLive(data);
   };
 
-  // Countdown මැනීමේ කොටස
   useEffect(() => {
     if (!currentLive || currentLive.status !== 'scheduled') return;
 
     const interval = setInterval(() => {
-      // 24-hour ආකෘතියට ගැලපෙන සේ parse කිරීම (HH:mm)
       const classDateTime = parse(`${currentLive.date} ${currentLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
       const now = new Date();
       const diffSeconds = differenceInSeconds(classDateTime, now);
@@ -138,8 +132,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
     return () => clearInterval(interval);
   }, [currentLive]);
 
-  // දත්ත පූරණය වන තෙක් හෝ currentUser දත්ත ලැබෙන තෙක් Loading පෙන්වීම
-  if (isLoading || !currentUser) {
+  // 1. යූසර්ගේ දත්ත එනකන් හරියටම check කිරීම (හිස් Object ආවත් අල්ලගන්නවා)
+  const isUserLoading = !currentUser || Object.keys(currentUser).length === 0;
+
+  if (isLoading || isUserLoading) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
         දත්ත පූරණය වෙමින් පවතී...
@@ -147,15 +143,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
     );
   }
 
-  // ගෙවීම් සහ පන්ති වර්ගය පරීක්ෂා කිරීම (Access Validation)
-  // මෙහිදී currentUser සහ එහි array අනිවාර්යයෙන් ඇති බව තහවුරු කරගනී
+  // 2. දත්ත ආවට පස්සේ ඒවා array විදිහටම තියෙනවද කියල confirm කරගැනීම
+  const userClassTypes = currentUser?.class_types || [];
+  const userFreeMonths = currentUser?.free_months || [];
+
   const hasAccess = currentLive ? (
-    (currentUser.class_types?.includes(currentLive.class_type) || 
-    (currentLive.target_class_type ? currentUser.class_types?.includes(currentLive.target_class_type) : false)) &&
-    currentUser.free_months?.includes(currentLive.target_month)
+    (userClassTypes.includes(currentLive.class_type) || 
+    (currentLive.target_class_type ? userClassTypes.includes(currentLive.target_class_type) : false)) &&
+    userFreeMonths.includes(currentLive.target_month)
   ) : false;
 
-  // පන්ති අවසන් වූ පසු හෝ අද දිනට පන්ති නොමැති විට මීළඟ පන්තිය පෙන්වීම
   if (!currentLive || currentLive.status === 'ended') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
@@ -178,7 +175,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
     );
   }
 
-  // අවසර නොමැති විට (ගෙවීම් කර නොමැති නම් හෝ පන්තිය අදාළ නොවේ නම්)
   if (!hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
@@ -199,12 +195,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
 
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
-      {/* 1. Scheduled තත්ත්වයේ පවතින විට (පන්තිය පටන් ගැනීමට පෙර) */}
       {currentLive.status === 'scheduled' && (
         <div className="flex flex-col items-center justify-center flex-1 relative rounded-2xl overflow-hidden bg-gray-900 min-h-[65vh] border border-gray-800 shadow-2xl">
           {isWithinOneHour ? (
             <>
-              {/* Waiting Video එක ස්වයංක්‍රීයව Play වීම */}
               <video 
                 autoPlay 
                 loop 
@@ -215,7 +209,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
 
-              {/* Countdown Overlay */}
               <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-2xl backdrop-blur-md border border-white/5 max-w-md w-full mx-4">
                 <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full mb-3">
                   {currentLive.class_type}
@@ -249,7 +242,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
         </div>
       )}
 
-      {/* 2. Live තත්ත්වයට පත් වූ විට (ඇඩ්මින් Start Zoom ක්ලික් කළ පසු) */}
       {currentLive.status === 'live' && (
         <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/20 shadow-2xl">
           <div className="bg-green-950/40 text-green-400 px-4 py-3 flex items-center gap-3 font-semibold border-b border-green-500/10 text-sm md:text-base">
@@ -260,7 +252,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null | undefi
             සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
           </div>
           
-          {/* Zoom Embed Area */}
           <div className="w-full flex-1 min-h-[75vh] bg-black relative">
             <iframe 
               src={getEmbeddableZoomUrl(currentLive.zoom_join_url)} 
