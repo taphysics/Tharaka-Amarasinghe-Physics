@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Video, Play, Square, Edit, Plus, Clock, Trash2, FileText, Send, EyeOff, MessageCircle, Eye } from 'lucide-react';
+import { Video, Play, Square, Edit, Plus, Clock, Trash2, FileText, Send, EyeOff, MessageCircle, Eye, UserCheck } from 'lucide-react';
 
 export default function AdminLiveControls() {
   const [lives, setLives] = useState<any[]>([]);
@@ -12,7 +12,7 @@ export default function AdminLiveControls() {
   const [currentLiveId, setCurrentLiveId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Attendance Attendance State
+  // Attendance State
   const [attendanceList, setAttendanceList] = useState<any[]>([]);
   const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
   const [attendanceLiveTitle, setAttendanceLiveTitle] = useState('');
@@ -71,35 +71,44 @@ export default function AdminLiveControls() {
     }
   };
 
-  // WhatsApp Notification Logic
+  // 1. WhatsApp Group / Student Notification Logic
   const handleWhatsAppNotify = (live: any) => {
     if (live.status === 'ended') return;
 
     const mainClassType = live.target_class_type || live.target_classes?.[0] || 'Theory';
-    
-    // Robust finding across schema variations (class_types or class_type)
     const config = classConfigs.find(cfg => cfg.class_types === mainClassType || cfg.class_type === mainClassType);
     const whatsappGroupUrl = config?.whatsapp_link || config?.whatsapp_url;
 
     const message = `🚨 *සජීවී පන්ති දැනුම්දීම (Live Class Alert)* 🚨\n\n` +
                     `📚 *පන්ති වර්ගය:* ${mainClassType}\n` +
                     `📝 *මාතෘකාව:* ${live.title}\n` +
-                    `📅 *පටන් ගන්න දිනය:* ${live.date}\n` +
+                    `📅 *දිනය:* ${live.date}\n` +
                     `⏰ *වේලාව:* ${live.time}\n\n` +
                     `⚠️ පන්තිය ආරම්භ වීමට පෙර වෙබ් අඩවියට පිවිස සූදානම් වී සිටින්න.\n\n` +
-                    `🌐 *වෙබ්සයිට් ලින්ක් එක:* ${window.location.origin}\n` +
-                    (whatsappGroupUrl ? `👥 *WhatsApp සමූහය:* ${whatsappGroupUrl}` : '');
+                    `🌐 *වෙබ්සයිට් එක:* ${window.location.origin}\n`;
 
     navigator.clipboard.writeText(message).catch(err => console.error("Clipboard error", err));
 
     if (whatsappGroupUrl) {
-      const finalUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-      window.open(finalUrl, '_blank');
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`, '_blank');
     } else {
-      const generalUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
-      window.open(generalUrl, '_blank');
-      alert("මෙම පන්ති වර්ගය සඳහා WhatsApp URL එකක් class_types_config හි සොයාගත නොහැකි බැවින් පොදු ශෙයා කිරීමේ ලින්ක් එක විවෘත විය.");
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`, '_blank');
     }
+  };
+
+  // 2. WhatsApp TEACHER HOST LINK Notification Logic (New Feature)
+  const handleTeacherWhatsAppNotify = (live: any) => {
+    const teacherPhone = "94701244587"; // 0701244587 in international format
+    const mainClassType = live.target_class_type || live.target_classes?.[0] || 'Theory';
+    
+    const message = `👨‍🏫 *Teacher Zoom Host Link* 👨‍🏫\n\n` +
+                    `📚 *Class:* ${mainClassType} - ${live.title}\n` +
+                    `📅 *Date:* ${live.date} | ⏰ *Time:* ${live.time}\n\n` +
+                    `🔗 *Start / Host Link (Click to Start Zoom):*\n${live.zoom_start_url}\n\n` +
+                    `⚠️ කරුණාකර පන්තිය ආරම්භ කිරීමට ඉහත ලින්ක් එක භාවිතා කරන්න.`;
+
+    const finalUrl = `https://api.whatsapp.com/send?phone=${teacherPhone}&text=${encodeURIComponent(message)}`;
+    window.open(finalUrl, '_blank');
   };
 
   const handleSaveLive = async (e: React.FormEvent) => {
@@ -128,22 +137,20 @@ export default function AdminLiveControls() {
         is_exam_active: !!formData.active_exam_id,
         pre_class_video_path: formData.pre_class_video_path,
         platform: 'zoom',
+        status: formData.id ? undefined : 'scheduled', // ensure new lives are scheduled
         ...(zoomInfo && {
           zoom_meeting_id: String(zoomInfo.id),
-          zoom_start_url: zoomInfo.start_url,
-          zoom_join_url: zoomInfo.join_url,
+          zoom_start_url: zoomInfo.start_url, // HOST link for Admin/Teacher
+          zoom_join_url: zoomInfo.join_url,   // JOIN link for Students
           link: zoomInfo.join_url
         })
       };
 
       if (formData.id) {
-        // Fetch old live data to sync calendar
         const { data: oldLive } = await supabase.from('scheduled_lives').select('*').eq('id', formData.id).single();
-        
         await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
         
         if (oldLive) {
-          // Sync changes to calendar_events for student view
           await supabase.from('calendar_events')
             .update({
               date: formData.date,
@@ -158,8 +165,6 @@ export default function AdminLiveControls() {
         }
       } else {
         await supabase.from('scheduled_lives').insert([payload]);
-        
-        // Add to calendar_events
         await supabase.from('calendar_events').insert([{
           date: formData.date,
           title: formData.title,
@@ -252,10 +257,10 @@ export default function AdminLiveControls() {
     }
   };
 
+  // Status Change Logic - Pushes Zoom Join Link to Student Dashboard automatically
   const handleStatusChange = async (id: string, newStatus: string) => {
     await supabase.from('scheduled_lives').update({ status: newStatus }).eq('id', id);
     
-    // Also sync calendar status if needed
     const liveObj = lives.find(l => l.id === id);
     if (liveObj) {
       await supabase.from('calendar_events')
@@ -271,7 +276,6 @@ export default function AdminLiveControls() {
     if (confirm("මෙම පන්තිය මකා දැමීමට අවශ්‍යද?")) {
       const liveToDelete = lives.find(l => l.id === id);
       
-      // Delete Exam Associated with it safely
       if (liveToDelete && liveToDelete.active_exam_id) {
           try {
              await supabase.from('exams').delete().eq('id', liveToDelete.active_exam_id);
@@ -350,18 +354,12 @@ export default function AdminLiveControls() {
               {lives.map((live) => {
                 let attachedExam = exams.find(e => e.id === live.active_exam_id);
                 
-                // If it's a new class without an explicit exam, attempt to fetch the relevant matching class type's latest exam globally.
                 if (!attachedExam) {
                   const mainClassType = live.target_class_type || live.target_classes?.[0];
-                  if (mainClassType) {
-                    attachedExam = exams.find(e => e.class_type === mainClassType);
-                  }
+                  if (mainClassType) attachedExam = exams.find(e => e.class_type === mainClassType);
                 }
 
-                // But importantly, restrict older ended classes from displaying globally matching ones unless explicitly saved on their record
-                if (live.status === 'ended' && !live.active_exam_id) {
-                    attachedExam = undefined; 
-                }
+                if (live.status === 'ended' && !live.active_exam_id) attachedExam = undefined; 
 
                 const isExamPushedLive = live.is_exam_active;
                 const isClassEnded = live.status === 'ended';
@@ -462,9 +460,20 @@ export default function AdminLiveControls() {
                       {isClassEnded && <span className="text-slate-500 bg-slate-950 px-2 py-0.5 rounded w-fit text-xs border border-slate-900">Ended</span>}
 
                       <div className="flex flex-col gap-1 mt-0.5">
+                        
+                        {/* TEACHER HOST LINK BUTTON */}
+                        <button 
+                          disabled={isClassEnded}
+                          onClick={() => handleTeacherWhatsAppNotify(live)}
+                          className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
+                        >
+                          <UserCheck size={12}/> Send Host Link to Teacher
+                        </button>
+
+                        {/* START/END ZOOM BUTTON - Starts Zoom with Host Link and Pushes to Students */}
                         {live.status === 'scheduled' && (
                           <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white text-center transition">
-                            <Play size={12} className="mr-1"/> Start Zoom 
+                            <Play size={12} className="mr-1"/> Start Zoom & Push to Students
                           </a>
                         )}
                         {live.status === 'live' && (
@@ -473,13 +482,13 @@ export default function AdminLiveControls() {
                           </button>
                         )}
 
-                        {/* WhatsApp Notification Button - Disabled when Class Ends */}
+                        {/* STUDENT WHATSAPP ALERT BUTTON */}
                         <button 
                           disabled={isClassEnded}
                           onClick={() => handleWhatsAppNotify(live)}
                           className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
                         >
-                          <MessageCircle size={12}/> Send WhatsApp Alert
+                          <MessageCircle size={12}/> Send Students Alert
                         </button>
                       </div>
                     </div>
@@ -488,7 +497,6 @@ export default function AdminLiveControls() {
                   {/* ACTION CONTROLS */}
                   <td className="p-4 text-center">
                     <div className="flex justify-center gap-2">
-                      {/* Edit Class Button - Disabled when Class Ends */}
                       <button 
                         disabled={isClassEnded}
                         onClick={() => { setFormData(live); setCurrentLiveId(live.id); setIsModalOpen(true); }} 
@@ -498,12 +506,10 @@ export default function AdminLiveControls() {
                         <Edit size={16} />
                       </button>
                       
-                      {/* Delete Button - Always Enabled */}
                       <button onClick={() => handleDelete(live.id)} className="p-2 bg-slate-800 hover:bg-red-950 text-red-400 rounded border border-slate-700 transition" title="Delete Class">
                         <Trash2 size={16} />
                       </button>
 
-                      {/* Attendance Eye Button - Only Visible when Class Ends */}
                       {isClassEnded && (
                         <button 
                           onClick={() => handleFetchAttendance(live)} 
@@ -609,7 +615,6 @@ export default function AdminLiveControls() {
                 </div>
               </div>
 
-              {/* DURATION SELECTION */}
               <div className="bg-slate-950 p-4 border border-slate-800 rounded-xl">
                 <label className="block text-sm font-bold text-slate-300 mb-3">Exam Duration (කාලය තෝරන්න)</label>
                 <div className="flex gap-4">
@@ -630,45 +635,42 @@ export default function AdminLiveControls() {
 
               <div>
                 <label className="block text-sm font-bold text-slate-300 mb-2">Total Questions Count</label>
-                <input type="number" min="1" max="100" value={examData.total_questions} onChange={e => setExamData({...examData, total_questions: Number(e.target.value)})} className="w-32 bg-slate-950 border border-slate-800 rounded p-2 text-white text-center" />
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="100" 
+                  value={examData.total_questions} 
+                  onChange={e => setExamData({...examData, total_questions: Number(e.target.value)})} 
+                  className="w-32 bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" 
+                />
               </div>
 
-              {/* ANSWER KEY GRID (5 OPTIONS PER QUESTION) */}
               <div className="bg-slate-950 p-4 border border-slate-800 rounded-xl">
-                <label className="block text-sm font-bold text-slate-300 mb-3">Answer Key (පිළිතුරු පත්‍රය - එක් ප්‍රශ්නයකට පිළිතුරු 5 බැගින් ග්‍රිඩ් එක)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
-                  {Array.from({ length: examData.total_questions }).map((_, index) => {
-                    const qNum = index + 1;
-                    const selectedAns = examData.correct_answer[qNum] || examData.correct_answer[String(qNum)];
-                    return (
-                      <div key={qNum} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800">
-                        <span className="text-xs font-mono font-bold text-slate-400 w-10">Q{qNum.toString().padStart(2, '0')}</span>
-                        <div className="flex gap-1">
-                          {[1, 2, 3, 4, 5].map((ans) => (
-                            <button
-                              key={ans}
-                              type="button"
-                              onClick={() => handleAnswerChange(qNum, ans)}
-                              className={`w-7 h-7 rounded-full text-xs font-bold transition flex items-center justify-center ${
-                                selectedAns === ans
-                                  ? 'bg-amber-500 text-slate-950 shadow-md scale-105 font-black'
-                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                              }`}
-                            >
-                              {ans}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <label className="block text-sm font-bold text-slate-300 mb-3">Answer Key (නිවැරදි පිළිතුරු)</label>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 max-h-64 overflow-y-auto p-2">
+                  {Array.from({ length: examData.total_questions }, (_, i) => i + 1).map(qNum => (
+                    <div key={qNum} className="flex items-center gap-2 bg-slate-900 p-2 rounded border border-slate-700">
+                      <span className="text-slate-400 font-mono w-6 text-right">{qNum}.</span>
+                      <select
+                        value={examData.correct_answer[qNum] || ''}
+                        onChange={(e) => handleAnswerChange(qNum, Number(e.target.value))}
+                        className="bg-slate-950 border border-slate-800 text-white rounded p-1 w-full text-sm"
+                        required
+                      >
+                        <option value="" disabled>-</option>
+                        {[1, 2, 3, 4, 5].map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
-                <button type="button" onClick={() => { setExamModalOpen(false); setCurrentLiveId(''); }} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>
-                <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-lg">
-                  {examData.id ? 'Update Exam Paper' : 'Save & Attach Exam Paper'}
+              <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-slate-800">
+                <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm transition">Cancel</button>
+                <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-xl text-sm font-bold transition">
+                  {examData.id ? 'Update Exam' : 'Save & Attach Exam'}
                 </button>
               </div>
             </form>
@@ -679,35 +681,50 @@ export default function AdminLiveControls() {
       {/* --- ATTENDANCE MODAL --- */}
       {attendanceModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
-          <div className="bg-slate-900 border border-blue-500/20 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
-            <h2 className="text-xl font-bold text-white mb-2 border-b border-slate-800 pb-2 flex items-center gap-2">
-              <Eye size={20} className="text-blue-500" /> Attendance List (සහභාගී වූ සිසුන්)
-            </h2>
-            <p className="text-slate-400 text-xs mb-4 truncate">{attendanceLiveTitle}</p>
-            
-            <div className="max-h-64 overflow-y-auto space-y-2 pr-2">
-              {attendanceList.length === 0 ? (
-                <div className="text-center py-8 text-slate-500 text-sm italic">
-                  මෙම පන්තියේ විභාගය සඳහා මෙතෙක් කිසිදු සිසුවෙකු පිළිතුරු ලබාදී නැත.
-                </div>
-              ) : (
-                attendanceList.map((student, i) => (
-                  <div key={i} className="flex justify-between items-center bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-200">@{student.username}</div>
-                      <div className="text-[10px] text-slate-500">Submitted: {new Date(student.submitted_at).toLocaleString()}</div>
-                    </div>
-                    <div className="text-xs font-mono font-bold bg-blue-500/10 text-blue-400 px-2 py-1 rounded border border-blue-500/20">
-                      Score: {student.score}
-                    </div>
-                  </div>
-                ))
-              )}
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl relative">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <Eye className="text-blue-500" /> Exam Results & Attendance
+              </h2>
+              <button onClick={() => setAttendanceModalOpen(false)} className="text-slate-400 hover:text-white transition">
+                &times; Close
+              </button>
             </div>
             
-            <div className="flex justify-end mt-6">
-              <button type="button" onClick={() => setAttendanceModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2 rounded-xl text-sm font-medium">
-                Close
+            <p className="text-slate-300 text-sm mb-4">Class: <span className="font-bold text-emerald-400">{attendanceLiveTitle}</span></p>
+
+            <div className="overflow-y-auto flex-1 bg-slate-950 rounded-xl border border-slate-800">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-900 text-slate-400 text-xs uppercase font-mono sticky top-0 border-b border-slate-800">
+                  <tr>
+                    <th className="p-4">Student Name (Username)</th>
+                    <th className="p-4">Submitted Time</th>
+                    <th className="p-4">Score / Marks</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800 text-sm">
+                  {attendanceList.length > 0 ? (
+                    attendanceList.map((record, index) => (
+                      <tr key={index} className="hover:bg-slate-900/50 transition">
+                        <td className="p-4 font-medium text-slate-200">{record.username}</td>
+                        <td className="p-4 text-slate-400">{new Date(record.submitted_at).toLocaleString()}</td>
+                        <td className="p-4 font-bold text-emerald-400">{record.score}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="p-8 text-center text-slate-500">
+                        No students have submitted the exam for this session yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end pt-4 mt-4 border-t border-slate-800">
+              <button onClick={() => setAttendanceModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2 rounded-xl text-sm transition">
+                Close List
               </button>
             </div>
           </div>
