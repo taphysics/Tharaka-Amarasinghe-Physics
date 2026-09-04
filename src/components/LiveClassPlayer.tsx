@@ -18,7 +18,7 @@ import {
 interface Student {
   id: string;
   username: string;
-  class_types?: string[];
+  target_classes?: string[];
   active_months?: string[];
   free_months?: string[];
   is_paid?: boolean;
@@ -202,8 +202,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
       // Collect all enrolled class identifiers for filtering
       const studentClassesSet = new Set<string>();
-      if (Array.isArray(fullStudent.class_types)) {
-        fullStudent.class_types.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
+      if (Array.isArray(fullStudent.target_classes)) {
+        fullStudent.target_classes.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
       }
       if (fullStudent.class) studentClassesSet.add(String(fullStudent.class).trim().toLowerCase());
       if (fullStudent.course) studentClassesSet.add(String(fullStudent.course).trim().toLowerCase());
