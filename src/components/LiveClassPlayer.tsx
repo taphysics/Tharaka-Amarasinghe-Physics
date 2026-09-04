@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, addHours, isBefore } from 'date-fns';
+import { format } from 'date-fns';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -9,18 +9,19 @@ import {
   Lock, 
   AlertCircle, 
   FileText, 
-  Check, 
-  X,
   Maximize2
 } from 'lucide-react';
 
 interface Student {
   id: string;
   username: string;
-  class_types: string[];
-  active_months: string[];
-  free_months: string[];
+  class_types?: string[];
+  active_months?: string[];
+  free_months?: string[];
   is_paid?: boolean;
+  class?: string;
+  course?: string;
+  enrolled_coures?: string[];
 }
 
 interface ScheduledLive {
@@ -28,14 +29,14 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
-  class_type: string;
+  class_type?: string;
   target_class_type?: string;
   target_classes?: string[];
-  target_month: string;
-  status: string;
+  target_month?: string;
+  status?: string;
   zoom_join_url: string;
-  zoom_meeting_id: string;
-  is_exam_active: boolean;
+  zoom_meeting_id?: string;
+  is_exam_active?: boolean;
   active_exam_id?: string;
   pre_class_video_path?: string;
   is_active?: boolean;
@@ -56,10 +57,46 @@ interface CalendarEvent {
   title: string;
   description: string;
   start_time: string;
-  class_type: string;
-  target_class_type: string;
+  class_type?: string;
+  target_class_type?: string;
 }
 
+// Robust Date & Time Parser
+const parseClassDateTime = (dateStr: string, timeStr: string): Date => {
+  if (!dateStr) return new Date();
+  
+  let cleanDate = dateStr.trim().replace(/\//g, '-');
+  const dateParts = cleanDate.split('-');
+  if (dateParts.length === 3 && dateParts[0].length === 2) {
+    cleanDate = `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`;
+  }
+
+  let cleanTime = (timeStr || '00:00').trim();
+  const isPM = /pm/i.test(cleanTime);
+  const isAM = /am/i.test(cleanTime);
+  cleanTime = cleanTime.replace(/am|pm/gi, '').trim();
+
+  const timeParts = cleanTime.split(':');
+  let hours = parseInt(timeParts[0] || '0', 10);
+  let minutes = parseInt(timeParts[1] || '0', 10);
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  const hoursStr = String(hours).padStart(2, '0');
+  const minutesStr = String(minutes).padStart(2, '0');
+
+  const parsedDate = new Date(`${cleanDate}T${hoursStr}:${minutesStr}:00`);
+
+  if (isNaN(parsedDate.getTime())) {
+    const fallback = new Date(`${dateStr} ${timeStr}`);
+    return isNaN(fallback.getTime()) ? new Date() : fallback;
+  }
+
+  return parsedDate;
+};
+
+// Zoom Web Embed URL Converter
 const getEmbeddableZoomUrl = (joinUrl: string) => {
   if (!joinUrl) return '';
   try {
@@ -69,11 +106,11 @@ const getEmbeddableZoomUrl = (joinUrl: string) => {
     }
     return url.toString();
   } catch (error) {
-    console.error('Invalid Zoom URL', error);
     return joinUrl;
   }
 };
 
+// Google Drive PDF Embed URL Converter
 const getDrivePreviewUrl = (url: string) => {
   if (!url) return '';
   if (url.includes('/view')) return url.replace('/view', '/preview');
@@ -104,19 +141,26 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [examResult, setExamResult] = useState<{ score: number; total: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
 
+  // Tick timer every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Realtime Subscriptions & Initial Fetch
   useEffect(() => {
     fetchClassAndScheduleData();
 
     const channel = supabase
-      .channel('live-player-updates')
+      .channel('live-player-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'scheduled_lives' },
+        () => fetchClassAndScheduleData()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'exams' },
         () => fetchClassAndScheduleData()
       )
       .subscribe();
@@ -124,83 +168,122 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.username]);
 
   const fetchClassAndScheduleData = async () => {
     setIsLoading(true);
     try {
       const now = new Date();
-      const currentDateStr = format(now, 'yyyy-MM-dd');
 
-      // අකුරු (case sensitivity) ගැටළු මගහැරීමට සියලුම දත්ත ගෙන JS මගින් ෆිල්ටර් කිරීම
+      // 1. Fetch full student profile directly from DB
+      let fullStudent: Student = currentUser;
+      if (currentUser?.id || currentUser?.username) {
+        const query = supabase.from('students').select('*');
+        if (currentUser.id) query.eq('id', currentUser.id);
+        else if (currentUser.username) query.eq('username', currentUser.username);
+
+        const { data: dbStudent } = await query.maybeSingle();
+        if (dbStudent) {
+          fullStudent = { ...currentUser, ...dbStudent };
+        }
+      }
+
+      // Collect all possible student class identifiers
+      const studentClassesSet = new Set<string>();
+      if (Array.isArray(fullStudent.class_types)) {
+        fullStudent.class_types.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
+      }
+      if (fullStudent.class) studentClassesSet.add(String(fullStudent.class).trim().toLowerCase());
+      if (fullStudent.course) studentClassesSet.add(String(fullStudent.course).trim().toLowerCase());
+      if (Array.isArray(fullStudent.enrolled_coures)) {
+        fullStudent.enrolled_coures.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
+      }
+
+      const studentClassList = Array.from(studentClassesSet);
+
+      // 2. Fetch all scheduled_lives
       const { data: livesData, error: livesError } = await supabase
         .from('scheduled_lives')
         .select('*')
-        .order('date', { ascending: true })
-        .order('time', { ascending: true });
+        .order('created_at', { ascending: false });
 
       if (livesError) throw livesError;
 
-      const userClasses = (currentUser.class_types || []).map(c => c.trim().toLowerCase());
+      // Smart Class Matcher Logic
+      const matchesClass = (cls: ScheduledLive) => {
+        const targetType = (cls.target_class_type || cls.class_type || '').trim().toLowerCase();
+        const targetClasses = (cls.target_classes || []).map(c => String(c).trim().toLowerCase());
 
-      const studentLives = (livesData || []).filter((cls: ScheduledLive) => {
-        const clsType = (cls.target_class_type || cls.class_type || '').trim().toLowerCase();
-        const targetClasses = (cls.target_classes || []).map(c => c.trim().toLowerCase());
-        
-        const isClassMatch = userClasses.includes(clsType) || targetClasses.some(tc => userClasses.includes(tc));
-        
+        // If target_class_type is null, empty, or 'all', match ALL students!
+        if (!targetType || ['all', 'public', 'general', 'all classes', 'සෑම පන්තියකටම'].includes(targetType)) {
+          return true;
+        }
+
+        if (studentClassList.length === 0) return true;
+
+        const directMatch = studentClassList.some(sc => sc === targetType || sc.includes(targetType) || targetType.includes(sc));
+        const arrayMatch = targetClasses.some(tc => tc === 'all' || studentClassList.some(sc => sc === tc || sc.includes(tc) || tc.includes(sc)));
+
+        return directMatch || arrayMatch;
+      };
+
+      // Filter out ended classes
+      const eligibleLives = (livesData || []).filter((cls: ScheduledLive) => {
         const status = (cls.status || '').toLowerCase();
-        const isValidStatus = status === 'live' || status === 'scheduled' || cls.is_active === true;
-
-        return isClassMatch && isValidStatus;
+        if (['ended', 'completed', 'finished', 'archived'].includes(status)) {
+          return false;
+        }
+        return matchesClass(cls);
       });
 
-      const livesWithin24h: ScheduledLive[] = [];
+      const activeOrUpcomingLives: ScheduledLive[] = [];
 
-      studentLives.forEach(cls => {
-        // වේලාවන් නිවැරදිව Parse කිරීම
-        const classDateTime = new Date(`${cls.date} ${cls.time}`);
-        const isLive = (cls.status || '').toLowerCase() === 'live' || cls.is_active === true;
+      eligibleLives.forEach((cls: ScheduledLive) => {
+        const status = (cls.status || '').toLowerCase();
+        const isLive = status === 'live' || cls.is_active === true;
         
-        if (isNaN(classDateTime.getTime())) {
-           if (isLive) livesWithin24h.push(cls);
-        } else {
-           const diffHours = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-           // පන්තිය පටන් ගැනීමට පැය 4ක් ප්‍රමාද වුවද (diffHours >= -4) ස්ක්‍රීන් එක පෙන්වයි
-           if (isLive || (diffHours >= -4 && diffHours <= 24)) {
-              livesWithin24h.push(cls);
-           }
+        const classDateTime = parseClassDateTime(cls.date, cls.time);
+        const diffHours = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+
+        // Include if Live or scheduled within 24 hours (or up to 12 hours past scheduled start time)
+        if (isLive || (diffHours >= -12 && diffHours <= 24)) {
+          activeOrUpcomingLives.push(cls);
         }
       });
 
-      // Live වන පන්තිය පළමුව පෙන්වීමට Sort කිරීම
-      livesWithin24h.sort((a, b) => {
-         const aLive = (a.status || '').toLowerCase() === 'live' || a.is_active === true;
-         const bLive = (b.status || '').toLowerCase() === 'live' || b.is_active === true;
-         if (aLive && !bLive) return -1;
-         if (!aLive && bLive) return 1;
-         return new Date(`${a.date} ${a.time}`).getTime() - new Date(`${b.date} ${b.time}`).getTime();
+      // Sort: Live classes first, then by date/time
+      activeOrUpcomingLives.sort((a, b) => {
+        const aLive = (a.status || '').toLowerCase() === 'live' || a.is_active === true;
+        const bLive = (b.status || '').toLowerCase() === 'live' || b.is_active === true;
+        if (aLive && !bLive) return -1;
+        if (!aLive && bLive) return 1;
+
+        const dateA = parseClassDateTime(a.date, a.time).getTime();
+        const dateB = parseClassDateTime(b.date, b.time).getTime();
+        return dateA - dateB;
       });
 
-      setUpcomingClasses(livesWithin24h);
+      setUpcomingClasses(activeOrUpcomingLives);
 
-      if (livesWithin24h.length === 0) {
+      // If no lives found, fetch calendar events
+      if (activeOrUpcomingLives.length === 0) {
         const { data: calData } = await supabase
           .from('calender_events')
           .select('*')
-          .gte('date', currentDateStr)
           .order('date', { ascending: true });
 
         if (calData) {
-          const studentCalEvents = calData.filter((evt: CalendarEvent) => {
+          const matchingCalEvents = calData.filter((evt: CalendarEvent) => {
             const evtType = (evt.target_class_type || evt.class_type || '').trim().toLowerCase();
-            return userClasses.includes(evtType);
+            if (!evtType || evtType === 'all') return true;
+            return studentClassList.some(sc => sc === evtType || sc.includes(evtType) || evtType.includes(sc));
           });
-          setCalendarEvents(studentCalEvents);
+          setCalendarEvents(matchingCalEvents);
         }
       } else {
-        await checkStudentPaymentAccess(livesWithin24h[0]);
+        await checkStudentPaymentAccess(activeOrUpcomingLives[0], fullStudent);
       }
+
     } catch (err) {
       console.error('Error fetching live class data:', err);
     } finally {
@@ -208,18 +291,22 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     }
   };
 
-  const checkStudentPaymentAccess = async (targetClass: ScheduledLive) => {
+  const checkStudentPaymentAccess = async (targetClass: ScheduledLive, studentRecord: Student) => {
     if (!targetClass) return;
 
-    const classType = targetClass.target_class_type || targetClass.class_type || '';
+    const classType = targetClass.target_class_type || targetClass.class_type || 'General Class';
     const targetMonth = targetClass.target_month || format(new Date(), 'yyyy-MM');
     const [yearVal, monthVal] = targetMonth.includes('-') 
       ? targetMonth.split('-') 
       : [format(new Date(), 'yyyy'), targetMonth];
 
+    const activeMonths = studentRecord?.active_months || [];
+    const freeMonths = studentRecord?.free_months || [];
+
     const isFreeOrActive = 
-      (currentUser.active_months && currentUser.active_months.includes(targetMonth)) ||
-      (currentUser.free_months && currentUser.free_months.includes(targetMonth));
+      activeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
+      freeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
+      studentRecord?.is_paid === true;
 
     if (isFreeOrActive) {
       setHasPaymentAccess(true);
@@ -229,24 +316,29 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     const { data: paymentRecord } = await supabase
       .from('payments')
       .select('*')
-      .or(`student_id.eq.${currentUser.id},username.eq.${currentUser.username}`)
-      .in('status', ['approved', 'paid', 'success'])
-      .maybeSingle();
+      .or(`student_id.eq.${studentRecord.id},username.eq.${studentRecord.username}`);
 
-    const isPaidInTable = !!paymentRecord && (
-      paymentRecord.target_month === targetMonth || paymentRecord.month === targetMonth
-    );
+    const isPaidInTable = Array.isArray(paymentRecord) && paymentRecord.some(p => {
+      const pMonth = p.target_month || p.month || '';
+      const pStatus = (p.status || '').toLowerCase();
+      return (pMonth.includes(targetMonth) || targetMonth.includes(pMonth)) && ['approved', 'paid', 'success'].includes(pStatus);
+    });
 
-    if (isPaidInTable || currentUser.is_paid) {
+    if (isPaidInTable) {
       setHasPaymentAccess(true);
     } else {
       setHasPaymentAccess(false);
-      setAccessRestrictedDetails({ classType, month: monthVal, year: yearVal });
+      setAccessRestrictedDetails({
+        classType,
+        month: monthVal,
+        year: yearVal
+      });
     }
   };
 
   const activeClass = upcomingClasses[0];
 
+  // Exam Logic
   useEffect(() => {
     const loadExam = async (examId: string) => {
       const { data: previousResult } = await supabase
@@ -284,6 +376,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     }
   }, [activeClass?.is_exam_active, activeClass?.active_exam_id, currentUser, isExamSubmitted]);
 
+  // Exam Countdown Timer
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (activeExam && examTimeLeft > 0 && !isExamSubmitted && !showResultModal) {
@@ -357,6 +450,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
+  // Payment Restricted Screen
   if (!hasPaymentAccess && accessRestrictedDetails) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
@@ -387,6 +481,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
+  // No Classes Screen
   if (upcomingClasses.length === 0) {
     return (
       <div className="min-h-screen bg-black text-white p-6 md:p-10">
@@ -401,7 +496,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               {calendarEvents.map(evt => (
                 <div key={evt.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 hover:border-blue-500/40 transition">
                   <span className="bg-blue-500/10 text-blue-400 text-xs px-3 py-1 rounded-full font-bold uppercase">
-                    {evt.target_class_type || evt.class_type}
+                    {evt.target_class_type || evt.class_type || 'General'}
                   </span>
                   <h3 className="text-xl font-bold mt-4 mb-2 text-white">{evt.title}</h3>
                   <p className="text-gray-400 text-sm mb-4">{evt.description}</p>
@@ -424,17 +519,19 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  const isLive = (activeClass.status || '').toLowerCase() === 'live' || activeClass.is_active === true;
-  const classDateTime = new Date(`${activeClass.date} ${activeClass.time}`);
+  const statusStr = (activeClass.status || '').toLowerCase();
+  const isLive = statusStr === 'live' || activeClass.is_active === true;
+  const classDateTime = parseClassDateTime(activeClass.date, activeClass.time);
   
-  // පන්තියට ඉතිරිව ඇති කාලය තත්පර වලින් (සෘණ අගයක් නම් පන්තිය පටන් ගැනීමට නියමිත වේලාව පසුවී ඇත)
+  // Seconds remaining
   const diffSeconds = Math.floor((classDateTime.getTime() - currentTime.getTime()) / 1000);
   
-  // පන්තියට පැයක් ඇතුළත හෝ වේලාව පසුවී ඇත්නම් (diffSeconds <= 3600)
+  // Under 1 hour OR time passed but admin hasn't clicked 'live'
   const isWithinOneHour = diffSeconds <= 3600; 
-  // පන්තියට විනාඩි 10ක් ඇතුළත හෝ වේලාව පසුවී ඇත්නම් (diffSeconds <= 600)
+  // Under 10 minutes OR time passed
   const isWithinTenMins = diffSeconds <= 600;
 
+  // More than 1 hour away -> Show 24 Hour Schedule List
   if (!isLive && !isWithinOneHour) {
     return (
       <div className="min-h-screen bg-black text-white p-6 md:p-10">
@@ -445,7 +542,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {upcomingClasses.map((cls, idx) => {
-              const clsTime = new Date(`${cls.date} ${cls.time}`);
+              const clsTime = parseClassDateTime(cls.date, cls.time);
               const secDiff = Math.max(0, Math.floor((clsTime.getTime() - currentTime.getTime()) / 1000));
               const hrs = Math.floor(secDiff / 3600);
               const mins = Math.floor((secDiff % 3600) / 60);
@@ -454,7 +551,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                 <div key={cls.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
                   {idx === 0 && <div className="absolute top-0 left-0 w-full h-1 bg-amber-500"></div>}
                   <span className="bg-amber-500/10 text-amber-400 text-xs px-3 py-1 rounded-full font-bold uppercase">
-                    {cls.target_class_type || cls.class_type}
+                    {cls.target_class_type || cls.class_type || 'General'}
                   </span>
                   <h3 className="text-xl font-bold mt-4 mb-2 text-white">{cls.title}</h3>
                   <p className="text-gray-400 text-sm mb-4">දිනය: {cls.date} | වේලාව: {cls.time}</p>
@@ -471,8 +568,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
+  // Pre-Class Countdown & Waiting Video (1 Hour or Less)
   if (!isLive && isWithinOneHour) {
-    // සෘණ අගයන් වළක්වා 00:00 ලෙස තබා ගැනීම
     const displayDiff = Math.max(0, diffSeconds);
     const countdownM = Math.floor(displayDiff / 60);
     const countdownS = displayDiff % 60;
@@ -481,6 +578,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
         <div className="flex flex-col items-center justify-center flex-1 relative rounded-3xl overflow-hidden bg-gray-950 min-h-[75vh] border border-gray-800 shadow-2xl">
           
+          {/* Background Video (Last 10 minutes or past time) */}
           {isWithinTenMins && (
             <video 
               autoPlay 
@@ -494,7 +592,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-full mx-4 shadow-2xl">
             <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-4 py-1.5 rounded-full mb-4 border border-blue-500/30">
-              {activeClass.target_class_type || activeClass.class_type} - {activeClass.title}
+              {activeClass.target_class_type || activeClass.class_type || 'General Class'} - {activeClass.title}
             </span>
             <h2 className="text-lg md:text-xl text-gray-300 text-center mb-6 font-medium">
               පන්තිය ආරම්භ වීමට තව...
@@ -515,12 +613,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
+  // LIVE CLASS PLAYER (Zoom Player + Split-Screen Exam)
   if (isLive) {
     const isExamPushed = !!activeExam;
 
     return (
       <div className="w-full h-screen max-h-screen bg-black text-white flex flex-col overflow-hidden">
         
+        {/* Top Header */}
         <div className="bg-gray-950 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-3">
             <span className="relative flex h-3 w-3">
@@ -533,10 +633,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           </div>
         </div>
 
+        {/* Live Container Area */}
         <div className={`flex-1 w-full ${isExamPushed ? 'flex flex-col lg:flex-row' : 'flex'}`}>
           
+          {/* Left Side: Zoom Player + Answer Sheet */}
           <div className={`${isExamPushed ? 'h-[40vh] lg:h-full lg:w-[35%] flex flex-col border-b lg:border-b-0 lg:border-r border-gray-800 bg-gray-900' : 'w-full h-full'}`}>
             
+            {/* Zoom Frame */}
             <div className={isExamPushed ? 'h-1/2 w-full bg-black relative' : 'w-full h-full relative bg-black'}>
               <iframe 
                 src={getEmbeddableZoomUrl(activeClass.zoom_join_url)} 
@@ -547,6 +650,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               />
             </div>
 
+            {/* MCQ OMR Answer Sheet */}
             {isExamPushed && (
               <div className="h-1/2 flex flex-col bg-gray-950 overflow-hidden">
                 <div className="bg-gray-900 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
@@ -593,6 +697,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             )}
           </div>
 
+          {/* Right Side: Google Drive PDF Frame */}
           {isExamPushed && (
             <div className="h-[60vh] lg:h-full lg:w-[65%] bg-gray-900 relative">
               <iframe 
@@ -605,6 +710,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           )}
         </div>
 
+        {/* Results Modal */}
         {showResultModal && examResult && (
           <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
             <div className="bg-gray-900 border border-green-500/30 p-8 rounded-3xl max-w-md w-full text-center shadow-2xl relative">
