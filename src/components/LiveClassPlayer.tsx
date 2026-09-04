@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, differenceInSeconds, parse, addHours, isBefore } from 'date-fns';
+import { format, addHours, isBefore } from 'date-fns';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -32,12 +32,13 @@ interface ScheduledLive {
   target_class_type?: string;
   target_classes?: string[];
   target_month: string;
-  status: string; // 'scheduled', 'live', 'ended'
+  status: string;
   zoom_join_url: string;
   zoom_meeting_id: string;
   is_exam_active: boolean;
   active_exam_id?: string;
   pre_class_video_path?: string;
+  is_active?: boolean;
 }
 
 interface ExamData {
@@ -59,7 +60,6 @@ interface CalendarEvent {
   target_class_type: string;
 }
 
-// Convert Zoom URL to Web Client Join URL
 const getEmbeddableZoomUrl = (joinUrl: string) => {
   if (!joinUrl) return '';
   try {
@@ -74,7 +74,6 @@ const getEmbeddableZoomUrl = (joinUrl: string) => {
   }
 };
 
-// Convert Google Drive Links to Embeddable Preview Links
 const getDrivePreviewUrl = (url: string) => {
   if (!url) return '';
   if (url.includes('/view')) return url.replace('/view', '/preview');
@@ -91,7 +90,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
-  // Access State
   const [hasPaymentAccess, setHasPaymentAccess] = useState<boolean>(true);
   const [accessRestrictedDetails, setAccessRestrictedDetails] = useState<{
     classType: string;
@@ -99,7 +97,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     year: string;
   } | null>(null);
 
-  // Exam States
   const [activeExam, setActiveExam] = useState<ExamData | null>(null);
   const [examAnswers, setExamAnswers] = useState<Record<number, number>>({});
   const [examTimeLeft, setExamTimeLeft] = useState<number>(0);
@@ -107,13 +104,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [examResult, setExamResult] = useState<{ score: number; total: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
 
-  // Tick Timer (Every second)
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Primary Data Fetching & Realtime Listener
   useEffect(() => {
     fetchClassAndScheduleData();
 
@@ -137,37 +132,58 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       const now = new Date();
       const currentDateStr = format(now, 'yyyy-MM-dd');
 
-      // Fetch all scheduled and live classes
+      // අකුරු (case sensitivity) ගැටළු මගහැරීමට සියලුම දත්ත ගෙන JS මගින් ෆිල්ටර් කිරීම
       const { data: livesData, error: livesError } = await supabase
         .from('scheduled_lives')
         .select('*')
-        .in('status', ['scheduled', 'live'])
         .order('date', { ascending: true })
         .order('time', { ascending: true });
 
       if (livesError) throw livesError;
 
-      // Filter classes relevant to the student
-      const userClasses = currentUser.class_types || [];
+      const userClasses = (currentUser.class_types || []).map(c => c.trim().toLowerCase());
+
       const studentLives = (livesData || []).filter((cls: ScheduledLive) => {
-        const clsType = cls.target_class_type || cls.class_type || '';
-        const targetClasses = cls.target_classes || [];
-        return userClasses.includes(clsType) || targetClasses.some(tc => userClasses.includes(tc));
+        const clsType = (cls.target_class_type || cls.class_type || '').trim().toLowerCase();
+        const targetClasses = (cls.target_classes || []).map(c => c.trim().toLowerCase());
+        
+        const isClassMatch = userClasses.includes(clsType) || targetClasses.some(tc => userClasses.includes(tc));
+        
+        const status = (cls.status || '').toLowerCase();
+        const isValidStatus = status === 'live' || status === 'scheduled' || cls.is_active === true;
+
+        return isClassMatch && isValidStatus;
       });
 
-      const next24Hours = addHours(now, 24);
       const livesWithin24h: ScheduledLive[] = [];
 
       studentLives.forEach(cls => {
-        const clsDateTime = parse(`${cls.date} ${cls.time}`, 'yyyy-MM-dd HH:mm', new Date());
-        if (cls.status === 'live' || (isBefore(clsDateTime, next24Hours) && clsDateTime >= now)) {
-          livesWithin24h.push(cls);
+        // වේලාවන් නිවැරදිව Parse කිරීම
+        const classDateTime = new Date(`${cls.date} ${cls.time}`);
+        const isLive = (cls.status || '').toLowerCase() === 'live' || cls.is_active === true;
+        
+        if (isNaN(classDateTime.getTime())) {
+           if (isLive) livesWithin24h.push(cls);
+        } else {
+           const diffHours = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+           // පන්තිය පටන් ගැනීමට පැය 4ක් ප්‍රමාද වුවද (diffHours >= -4) ස්ක්‍රීන් එක පෙන්වයි
+           if (isLive || (diffHours >= -4 && diffHours <= 24)) {
+              livesWithin24h.push(cls);
+           }
         }
+      });
+
+      // Live වන පන්තිය පළමුව පෙන්වීමට Sort කිරීම
+      livesWithin24h.sort((a, b) => {
+         const aLive = (a.status || '').toLowerCase() === 'live' || a.is_active === true;
+         const bLive = (b.status || '').toLowerCase() === 'live' || b.is_active === true;
+         if (aLive && !bLive) return -1;
+         if (!aLive && bLive) return 1;
+         return new Date(`${a.date} ${a.time}`).getTime() - new Date(`${b.date} ${b.time}`).getTime();
       });
 
       setUpcomingClasses(livesWithin24h);
 
-      // If no class within 24 hours, fetch calendar events
       if (livesWithin24h.length === 0) {
         const { data: calData } = await supabase
           .from('calender_events')
@@ -177,13 +193,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
         if (calData) {
           const studentCalEvents = calData.filter((evt: CalendarEvent) => {
-            const evtType = evt.target_class_type || evt.class_type || '';
+            const evtType = (evt.target_class_type || evt.class_type || '').trim().toLowerCase();
             return userClasses.includes(evtType);
           });
           setCalendarEvents(studentCalEvents);
         }
       } else {
-        // Validate Payment Access for the upcoming active class
         await checkStudentPaymentAccess(livesWithin24h[0]);
       }
     } catch (err) {
@@ -193,7 +208,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     }
   };
 
-  // Payment Access Verification Logic
   const checkStudentPaymentAccess = async (targetClass: ScheduledLive) => {
     if (!targetClass) return;
 
@@ -203,7 +217,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       ? targetMonth.split('-') 
       : [format(new Date(), 'yyyy'), targetMonth];
 
-    // 1. Check Student active_months / free_months arrays
     const isFreeOrActive = 
       (currentUser.active_months && currentUser.active_months.includes(targetMonth)) ||
       (currentUser.free_months && currentUser.free_months.includes(targetMonth));
@@ -213,7 +226,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       return;
     }
 
-    // 2. Query Payments table
     const { data: paymentRecord } = await supabase
       .from('payments')
       .select('*')
@@ -229,20 +241,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       setHasPaymentAccess(true);
     } else {
       setHasPaymentAccess(false);
-      setAccessRestrictedDetails({
-        classType: classType,
-        month: monthVal,
-        year: yearVal
-      });
+      setAccessRestrictedDetails({ classType, month: monthVal, year: yearVal });
     }
   };
 
-  // Live Exam Detection & Countdown Logic
   const activeClass = upcomingClasses[0];
 
   useEffect(() => {
     const loadExam = async (examId: string) => {
-      // Check previous submissions
       const { data: previousResult } = await supabase
         .from('exam_results')
         .select('*')
@@ -276,9 +282,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     } else {
       setActiveExam(null);
     }
-  }, [activeClass?.is_exam_active, activeClass?.active_exam_id]);
+  }, [activeClass?.is_exam_active, activeClass?.active_exam_id, currentUser, isExamSubmitted]);
 
-  // Exam Countdown & Auto Submit
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (activeExam && examTimeLeft > 0 && !isExamSubmitted && !showResultModal) {
@@ -286,7 +291,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         setExamTimeLeft(prev => {
           if (prev <= 1) {
             clearInterval(timer);
-            submitExamAnswers(true); // Auto submit when time reaches 0
+            submitExamAnswers(true);
             return 0;
           }
           return prev - 1;
@@ -297,15 +302,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   }, [activeExam, examTimeLeft, isExamSubmitted, showResultModal]);
 
   const handleOptionSelect = (questionNumber: number, optionIndex: number) => {
-    setExamAnswers(prev => ({
-      ...prev,
-      [questionNumber]: optionIndex
-    }));
+    setExamAnswers(prev => ({ ...prev, [questionNumber]: optionIndex }));
   };
 
   const submitExamAnswers = async (autoSubmitted = false) => {
     if (!activeExam) return;
-
     if (!autoSubmitted) {
       const confirmSubmit = window.confirm('ඔබේ සියලුම පිළිතුරු සබ්මිට් කිරීමට තහවුරු කරන්න.');
       if (!confirmSubmit) return;
@@ -335,7 +336,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       setExamResult({ score: correctCount, total: activeExam.total_questions });
       setShowResultModal(true);
       setIsExamSubmitted(true);
-      setActiveExam(null); // Reverts layout back to fullscreen Zoom player
+      setActiveExam(null);
     } catch (err) {
       console.error('Error submitting exam:', err);
       alert('පිළිතුරු පත්‍රය සබ්මිට් කිරීමේදී දෝෂයක් සිදු විය.');
@@ -348,7 +349,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Loading Screen
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
@@ -357,7 +357,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // Restricted Access UI (If Monthly Fee is Pending)
   if (!hasPaymentAccess && accessRestrictedDetails) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
@@ -388,7 +387,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // SCENARIO 1: No Classes within 24 Hours -> Show Calendar / Future Schedule
   if (upcomingClasses.length === 0) {
     return (
       <div className="min-h-screen bg-black text-white p-6 md:p-10">
@@ -426,14 +424,17 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // SCENARIO 2 & 3: Pre-Class Logic (Countdowns / Waiting Video)
-  const classDateTime = parse(`${activeClass.date} ${activeClass.time}`, 'yyyy-MM-dd HH:mm', new Date());
-  const diffSeconds = differenceInSeconds(classDateTime, currentTime);
-  const isWithinOneHour = diffSeconds > 0 && diffSeconds <= 3600;
-  const isWithinTenMins = diffSeconds > 0 && diffSeconds <= 600;
-  const isLive = activeClass.status === 'live';
+  const isLive = (activeClass.status || '').toLowerCase() === 'live' || activeClass.is_active === true;
+  const classDateTime = new Date(`${activeClass.date} ${activeClass.time}`);
+  
+  // පන්තියට ඉතිරිව ඇති කාලය තත්පර වලින් (සෘණ අගයක් නම් පන්තිය පටන් ගැනීමට නියමිත වේලාව පසුවී ඇත)
+  const diffSeconds = Math.floor((classDateTime.getTime() - currentTime.getTime()) / 1000);
+  
+  // පන්තියට පැයක් ඇතුළත හෝ වේලාව පසුවී ඇත්නම් (diffSeconds <= 3600)
+  const isWithinOneHour = diffSeconds <= 3600; 
+  // පන්තියට විනාඩි 10ක් ඇතුළත හෝ වේලාව පසුවී ඇත්නම් (diffSeconds <= 600)
+  const isWithinTenMins = diffSeconds <= 600;
 
-  // SCENARIO 2: Pre-Class (> 1 Hour Away) -> List Classes within 24 Hours
   if (!isLive && !isWithinOneHour) {
     return (
       <div className="min-h-screen bg-black text-white p-6 md:p-10">
@@ -444,8 +445,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {upcomingClasses.map((cls, idx) => {
-              const clsTime = parse(`${cls.date} ${cls.time}`, 'yyyy-MM-dd HH:mm', new Date());
-              const secDiff = differenceInSeconds(clsTime, currentTime);
+              const clsTime = new Date(`${cls.date} ${cls.time}`);
+              const secDiff = Math.max(0, Math.floor((clsTime.getTime() - currentTime.getTime()) / 1000));
               const hrs = Math.floor(secDiff / 3600);
               const mins = Math.floor((secDiff % 3600) / 60);
 
@@ -470,16 +471,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // SCENARIO 3: Pre-Class (<= 1 Hour Away) -> Main Countdown & Waiting Video
   if (!isLive && isWithinOneHour) {
-    const countdownM = Math.floor(diffSeconds / 60);
-    const countdownS = diffSeconds % 60;
+    // සෘණ අගයන් වළක්වා 00:00 ලෙස තබා ගැනීම
+    const displayDiff = Math.max(0, diffSeconds);
+    const countdownM = Math.floor(displayDiff / 60);
+    const countdownS = displayDiff % 60;
 
     return (
       <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
         <div className="flex flex-col items-center justify-center flex-1 relative rounded-3xl overflow-hidden bg-gray-950 min-h-[75vh] border border-gray-800 shadow-2xl">
           
-          {/* Background Video (Plays in last 10 mins) */}
           {isWithinTenMins && (
             <video 
               autoPlay 
@@ -491,7 +492,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             />
           )}
 
-          {/* Countdown Display Box */}
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-full mx-4 shadow-2xl">
             <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-4 py-1.5 rounded-full mb-4 border border-blue-500/30">
               {activeClass.target_class_type || activeClass.class_type} - {activeClass.title}
@@ -515,14 +515,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // SCENARIO 4: LIVE CLASS STATE (Zoom Embedded Player + Split Screen Live Exam)
   if (isLive) {
     const isExamPushed = !!activeExam;
 
     return (
       <div className="w-full h-screen max-h-screen bg-black text-white flex flex-col overflow-hidden">
         
-        {/* Top Live Bar */}
         <div className="bg-gray-950 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-3">
             <span className="relative flex h-3 w-3">
@@ -535,13 +533,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           </div>
         </div>
 
-        {/* Live Container Area */}
         <div className={`flex-1 w-full ${isExamPushed ? 'flex flex-col lg:flex-row' : 'flex'}`}>
           
-          {/* Left Side Container (Zoom Player + Answer Sheet when Exam Active) */}
           <div className={`${isExamPushed ? 'h-[40vh] lg:h-full lg:w-[35%] flex flex-col border-b lg:border-b-0 lg:border-r border-gray-800 bg-gray-900' : 'w-full h-full'}`}>
             
-            {/* Embedded Zoom Web Player */}
             <div className={isExamPushed ? 'h-1/2 w-full bg-black relative' : 'w-full h-full relative bg-black'}>
               <iframe 
                 src={getEmbeddableZoomUrl(activeClass.zoom_join_url)} 
@@ -552,10 +547,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               />
             </div>
 
-            {/* Answer Sheet Container (Only active when Exam Pushed) */}
             {isExamPushed && (
               <div className="h-1/2 flex flex-col bg-gray-950 overflow-hidden">
-                {/* Header & Timer */}
                 <div className="bg-gray-900 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
                   <span className="text-xs font-bold text-gray-300 uppercase flex items-center gap-1.5">
                     <FileText size={14} className="text-amber-500" /> Answer Sheet
@@ -565,7 +558,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                   </span>
                 </div>
 
-                {/* MCQ Question List */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                   {Array.from({ length: activeExam.total_questions }, (_, i) => i + 1).map(qNum => (
                     <div key={qNum} className="flex items-center justify-between bg-gray-900 p-2 rounded-xl border border-gray-800">
@@ -589,7 +581,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                   ))}
                 </div>
 
-                {/* Submit Action Button */}
                 <div className="p-3 bg-gray-900 border-t border-gray-800 shrink-0">
                   <button
                     onClick={() => submitExamAnswers(false)}
@@ -602,7 +593,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             )}
           </div>
 
-          {/* Right Side Container (Google Drive PDF Preview for Exam) */}
           {isExamPushed && (
             <div className="h-[60vh] lg:h-full lg:w-[65%] bg-gray-900 relative">
               <iframe 
@@ -615,7 +605,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           )}
         </div>
 
-        {/* Results Modal */}
         {showResultModal && examResult && (
           <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
             <div className="bg-gray-900 border border-green-500/30 p-8 rounded-3xl max-w-md w-full text-center shadow-2xl relative">
