@@ -443,7 +443,9 @@ const getDrivePreviewUrl = (url: string): string => {
   return url;
 };
 
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser?: Student | null }) => {
+  const studentId = currentUser?.id ?? '';
+
   const zoomRootRef = useRef<HTMLDivElement | null>(null);
   const zoomClientRef = useRef<any>(null);
   const joiningLiveIdRef = useRef<string | null>(null);
@@ -484,7 +486,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       .select(
         'id,student_id,month,status,class_name,class_type,target_month,enrollment_id',
       )
-      .eq('student_id', currentUser.id);
+      .eq('student_id', studentId);
 
     if (error) {
       console.error('Payment lookup failed:', error);
@@ -493,7 +495,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     }
 
     setPaymentRows((data || []) as PaymentRow[]);
-  }, [currentUser.id]);
+  }, [studentId]);
 
   const calculateAccess = useCallback(
     (live: ScheduledLive): AccessResult => {
@@ -501,6 +503,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         String(live.target_month || currentMonth).trim() || currentMonth;
 
       const classType = getClassType(live);
+
+      if (!currentUser) {
+        return {
+          allowed: false,
+          reason: 'not-enrolled',
+          month,
+          classType,
+          message: 'ශිෂ්‍ය ගිණුම් තොරතුරු තවමත් load වෙමින් පවතී.',
+        };
+      }
 
       const studentClasses = (currentUser.class_types || []).map(normalize);
 
@@ -636,6 +648,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
       const currentMonthAliases = new Set(monthAliases(currentMonth));
 
+      if (!currentUser) {
+        setUpcomingClasses([]);
+        setFutureClasses([]);
+        setAccessByLiveId({});
+        return;
+      }
+
       const studentLives = ((allLives || []) as ScheduledLive[]).filter(
         (live) => {
           const liveMonth = normalize(live.target_month);
@@ -708,6 +727,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   }, [calculateAccess, currentMonth, currentUser]);
 
   useEffect(() => {
+    if (!studentId) {
+      setIsLoading(false);
+      setPaymentRows([]);
+      setUpcomingClasses([]);
+      setFutureClasses([]);
+      setAccessByLiveId({});
+      return;
+    }
+
     let mounted = true;
 
     const load = async () => {
@@ -723,7 +751,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     void load();
 
     const channel = supabase
-      .channel(`live-class-updates-${currentUser.id}`)
+      .channel(`live-class-updates-${studentId}`)
       .on(
         'postgres_changes',
         {
@@ -741,7 +769,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           event: '*',
           schema: 'public',
           table: 'payments',
-          filter: `student_id=eq.${currentUser.id}`,
+          filter: `student_id=eq.${studentId}`,
         },
         () => {
           void loadPaymentRows();
@@ -754,7 +782,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       mounted = false;
       void supabase.removeChannel(channel);
     };
-  }, [currentUser.id, fetchClassesData, loadPaymentRows]);
+  }, [studentId, fetchClassesData, loadPaymentRows]);
 
   /*
    * Recalculate access whenever payment data changes.
@@ -802,6 +830,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     async (live: ScheduledLive, access: AccessResult) => {
       try {
         if (!access.allowed) return;
+        if (!currentUser || !studentId) {
+          throw new Error('ශිෂ්‍ය ගිණුම් තොරතුරු තවමත් load වෙමින් පවතී.');
+        }
 
       if (!live.zoom_join_url && !live.link) {
         throw new Error(
@@ -984,6 +1015,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
    * Exam logic
    */
   useEffect(() => {
+    if (!studentId) {
+      setActiveExam(null);
+      setExamAnswers({});
+      setExamTimeLeft(0);
+      return;
+    }
+
     let cancelled = false;
 
     const fetchExamDetails = async (examId: string) => {
@@ -1050,7 +1088,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     activeAccess?.allowed,
     activeClass?.active_exam_id,
     activeClass?.is_exam_active,
-    currentUser.id,
+    studentId,
   ]);
 
   useEffect(() => {
@@ -1094,7 +1132,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   };
 
   const handleSubmitExam = async (isAutoSubmit = false) => {
-    if (!activeExam || isExamSubmitted) return;
+    if (!activeExam || isExamSubmitted || !currentUser || !studentId) return;
 
     if (
       !isAutoSubmit &&
