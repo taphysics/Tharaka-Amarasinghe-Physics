@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { format } from 'date-fns';
+import { 
+  format, 
+  startOfMonth, 
+  endOfMonth, 
+  eachDayOfInterval, 
+  isSameDay, 
+  getDay, 
+  parseISO 
+} from 'date-fns';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
-  Send, 
-  CheckCircle2, 
   Lock, 
-  AlertCircle, 
-  FileText, 
-  Maximize2
+  Video,
+  AlertCircle
 } from 'lucide-react';
 
 interface Student {
@@ -29,42 +34,25 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
-  class_type?: string;
   target_class_type?: string;
   target_classes?: string[];
-  target_month?: string;
   status?: string;
   zoom_join_url: string;
-  zoom_meeting_id?: string;
-  is_exam_active?: boolean;
-  active_exam_id?: string;
-  pre_class_video_path?: string;
   is_active?: boolean;
-}
-
-interface ExamData {
-  id: string;
-  title: string;
-  pdf_url: string;
-  duration_minutes: number;
-  total_questions: number;
-  correct_answer: Record<string, number>;
 }
 
 interface CalendarEvent {
   id: string;
   date: string;
   title: string;
-  description: string;
   start_time: string;
   class_type?: string;
   target_class_type?: string;
 }
 
-// Robust Date & Time Parser
+// දින සහ වේලාවන් නිවැරදිව හැසිරවීමේ (Parser) ශ්‍රිතය
 const parseClassDateTime = (dateStr: string, timeStr: string): Date => {
   if (!dateStr) return new Date();
-  
   let cleanDate = dateStr.trim().replace(/\//g, '-');
   const dateParts = cleanDate.split('-');
   if (dateParts.length === 3 && dateParts[0].length === 2) {
@@ -87,16 +75,10 @@ const parseClassDateTime = (dateStr: string, timeStr: string): Date => {
   const minutesStr = String(minutes).padStart(2, '0');
 
   const parsedDate = new Date(`${cleanDate}T${hoursStr}:${minutesStr}:00`);
-
-  if (isNaN(parsedDate.getTime())) {
-    const fallback = new Date(`${dateStr} ${timeStr}`);
-    return isNaN(fallback.getTime()) ? new Date() : fallback;
-  }
-
-  return parsedDate;
+  return isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
 };
 
-// Zoom Web Embed URL Converter
+// Zoom Link එක Embed කළ හැකි (Web Client) ආකාරයට සැකසීම
 const getEmbeddableZoomUrl = (joinUrl: string) => {
   if (!joinUrl) return '';
   try {
@@ -110,457 +92,247 @@ const getEmbeddableZoomUrl = (joinUrl: string) => {
   }
 };
 
-// Google Drive PDF Embed URL Converter
-const getDrivePreviewUrl = (url: string) => {
-  if (!url) return '';
-  if (url.includes('/view')) return url.replace('/view', '/preview');
-  if (url.includes('/edit')) return url.replace('/edit', '/preview');
-  if (url.includes('drive.google.com') && !url.includes('/preview')) {
-    return `${url}/preview`;
-  }
-  return url;
-};
-
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [upcomingClasses, setUpcomingClasses] = useState<ScheduledLive[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
+  
   const [hasPaymentAccess, setHasPaymentAccess] = useState<boolean>(true);
-  const [accessRestrictedDetails, setAccessRestrictedDetails] = useState<{
-    classType: string;
-    month: string;
-    year: string;
-  } | null>(null);
+  const [currentMonthStr, setCurrentMonthStr] = useState<string>('');
 
-  const [activeExam, setActiveExam] = useState<ExamData | null>(null);
-  const [examAnswers, setExamAnswers] = useState<Record<number, number>>({});
-  const [examTimeLeft, setExamTimeLeft] = useState<number>(0);
-  const [isExamSubmitted, setIsExamSubmitted] = useState<boolean>(false);
-  const [examResult, setExamResult] = useState<{ score: number; total: number } | null>(null);
-  const [showResultModal, setShowResultModal] = useState<boolean>(false);
-
-  // Tick timer every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Realtime Subscriptions & Initial Fetch
   useEffect(() => {
-    fetchClassAndScheduleData();
+    fetchData();
 
+    // සජීවීව දත්ත යාවත්කාලීන වීම (Realtime updates)
     const channel = supabase
-      .channel('live-player-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'scheduled_lives' },
-        () => fetchClassAndScheduleData()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'exams' },
-        () => fetchClassAndScheduleData()
-      )
+      .channel('class-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchData())
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUser?.id, currentUser?.username]);
+  }, [currentUser?.username]);
 
-  const fetchClassAndScheduleData = async () => {
+  const fetchData = async () => {
     setIsLoading(true);
     try {
       const now = new Date();
+      const monthStr = format(now, 'yyyy-MM'); // වත්මන් මාසය උදා: '2026-09'
+      setCurrentMonthStr(monthStr);
 
-      // 1. Fetch full student profile directly from DB
-      let fullStudent: Student = currentUser;
-      if (currentUser?.id || currentUser?.username) {
-        const query = supabase.from('students').select('*');
-        if (currentUser.id) query.eq('id', currentUser.id);
-        else if (currentUser.username) query.eq('username', currentUser.username);
+      // 1. සිසුවාගේ සම්පූර්ණ දත්ත ලබා ගැනීම
+      let fullStudent = currentUser;
+      const { data: dbStudent } = await supabase.from('students').select('*').eq('username', currentUser.username).maybeSingle();
+      if (dbStudent) fullStudent = { ...currentUser, ...dbStudent };
 
-        const { data: dbStudent } = await query.maybeSingle();
-        if (dbStudent) {
-          fullStudent = { ...currentUser, ...dbStudent };
+      const studentClasses = [
+        ...(fullStudent.class_types || []),
+        fullStudent.class,
+        fullStudent.course,
+        ...(fullStudent.enrolled_coures || [])
+      ].filter(Boolean).map(c => String(c).trim().toLowerCase());
+
+      // 2. ගෙවීම් පරීක්ෂා කිරීම (Payment Validation for Current Month)
+      let accessGranted = false;
+      const isFreeActive = 
+        fullStudent.active_months?.some(m => m.includes(monthStr)) || 
+        fullStudent.free_months?.some(m => m.includes(monthStr)) || 
+        fullStudent.is_paid === true;
+
+      if (isFreeActive) {
+        accessGranted = true;
+      } else {
+        const { data: payments } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('username', fullStudent.username)
+          .in('status', ['paid', 'approved', 'success', 'free'])
+          .or(`month.eq.${monthStr},target_month.eq.${monthStr}`);
+        
+        if (payments && payments.length > 0) {
+          accessGranted = true;
         }
       }
+      setHasPaymentAccess(accessGranted);
 
-      // Collect all possible student class identifiers
-      const studentClassesSet = new Set<string>();
-      if (Array.isArray(fullStudent.class_types)) {
-        fullStudent.class_types.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
-      }
-      if (fullStudent.class) studentClassesSet.add(String(fullStudent.class).trim().toLowerCase());
-      if (fullStudent.course) studentClassesSet.add(String(fullStudent.course).trim().toLowerCase());
-      if (Array.isArray(fullStudent.enrolled_coures)) {
-        fullStudent.enrolled_coures.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
-      }
+      // 3. පන්ති සහ Calendar Events ලබා ගැනීම
+      const { data: livesData } = await supabase.from('scheduled_lives').select('*');
+      const { data: calData } = await supabase.from('calender_events').select('*');
 
-      const studentClassList = Array.from(studentClassesSet);
-
-      // 2. Fetch all scheduled_lives
-      const { data: livesData, error: livesError } = await supabase
-        .from('scheduled_lives')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (livesError) throw livesError;
-
-      // Smart Class Matcher Logic
-      const matchesClass = (cls: ScheduledLive) => {
-        const targetType = (cls.target_class_type || cls.class_type || '').trim().toLowerCase();
-        const targetClasses = (cls.target_classes || []).map(c => String(c).trim().toLowerCase());
-
-        // If target_class_type is null, empty, or 'all', match ALL students!
-        if (!targetType || ['all', 'public', 'general', 'all classes', 'සෑම පන්තියකටම'].includes(targetType)) {
-          return true;
-        }
-
-        if (studentClassList.length === 0) return true;
-
-        const directMatch = studentClassList.some(sc => sc === targetType || sc.includes(targetType) || targetType.includes(sc));
-        const arrayMatch = targetClasses.some(tc => tc === 'all' || studentClassList.some(sc => sc === tc || sc.includes(tc) || tc.includes(sc)));
-
-        return directMatch || arrayMatch;
+      const matchesStudentClass = (target: string, targetsArray: string[]) => {
+        if (!target || target === 'all') return true;
+        const targetType = target.trim().toLowerCase();
+        const arrayTypes = (targetsArray || []).map(t => String(t).trim().toLowerCase());
+        
+        return studentClasses.length === 0 || 
+               studentClasses.some(sc => sc.includes(targetType) || targetType.includes(sc)) ||
+               arrayTypes.some(at => studentClasses.some(sc => sc.includes(at) || at.includes(sc)));
       };
 
-      // Filter out ended classes
-      const eligibleLives = (livesData || []).filter((cls: ScheduledLive) => {
+      // සිසුවාට අදාල Scheduled Lives පෙරා ගැනීම
+      const eligibleLives = (livesData || []).filter(cls => {
         const status = (cls.status || '').toLowerCase();
-        if (['ended', 'completed', 'finished', 'archived'].includes(status)) {
-          return false;
-        }
-        return matchesClass(cls);
+        if (['ended', 'completed'].includes(status)) return false;
+        return matchesStudentClass(cls.target_class_type || cls.class_type || '', cls.target_classes || []);
       });
 
-      const activeOrUpcomingLives: ScheduledLive[] = [];
+      // සිසුවාට අදාල Calendar Events පෙරා ගැනීම
+      if (calData) {
+        const matchingCalEvents = calData.filter(evt => matchesStudentClass(evt.target_class_type || evt.class_type || '', []));
+        setCalendarEvents(matchingCalEvents);
+      }
 
-      eligibleLives.forEach((cls: ScheduledLive) => {
-        const status = (cls.status || '').toLowerCase();
-        const isLive = status === 'live' || cls.is_active === true;
-        
-        const classDateTime = parseClassDateTime(cls.date, cls.time);
-        const diffHours = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-
-        // Include if Live or scheduled within 24 hours (or up to 12 hours past scheduled start time)
-        if (isLive || (diffHours >= -12 && diffHours <= 24)) {
-          activeOrUpcomingLives.push(cls);
-        }
-      });
-
-      // Sort: Live classes first, then by date/time
-      activeOrUpcomingLives.sort((a, b) => {
+      // Live වන හෝ ඉදිරියට ඇති පන්ති Sort කිරීම
+      eligibleLives.sort((a, b) => {
         const aLive = (a.status || '').toLowerCase() === 'live' || a.is_active === true;
         const bLive = (b.status || '').toLowerCase() === 'live' || b.is_active === true;
         if (aLive && !bLive) return -1;
         if (!aLive && bLive) return 1;
-
-        const dateA = parseClassDateTime(a.date, a.time).getTime();
-        const dateB = parseClassDateTime(b.date, b.time).getTime();
-        return dateA - dateB;
+        return parseClassDateTime(a.date, a.time).getTime() - parseClassDateTime(b.date, b.time).getTime();
       });
 
-      setUpcomingClasses(activeOrUpcomingLives);
+      setUpcomingClasses(eligibleLives);
 
-      // If no lives found, fetch calendar events
-      if (activeOrUpcomingLives.length === 0) {
-        const { data: calData } = await supabase
-          .from('calender_events')
-          .select('*')
-          .order('date', { ascending: true });
-
-        if (calData) {
-          const matchingCalEvents = calData.filter((evt: CalendarEvent) => {
-            const evtType = (evt.target_class_type || evt.class_type || '').trim().toLowerCase();
-            if (!evtType || evtType === 'all') return true;
-            return studentClassList.some(sc => sc === evtType || sc.includes(evtType) || evtType.includes(sc));
-          });
-          setCalendarEvents(matchingCalEvents);
-        }
-      } else {
-        await checkStudentPaymentAccess(activeOrUpcomingLives[0], fullStudent);
-      }
-
-    } catch (err) {
-      console.error('Error fetching live class data:', err);
+    } catch (error) {
+      console.error('Data fetching error:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const checkStudentPaymentAccess = async (targetClass: ScheduledLive, studentRecord: Student) => {
-    if (!targetClass) return;
-
-    const classType = targetClass.target_class_type || targetClass.class_type || 'General Class';
-    const targetMonth = targetClass.target_month || format(new Date(), 'yyyy-MM');
-    const [yearVal, monthVal] = targetMonth.includes('-') 
-      ? targetMonth.split('-') 
-      : [format(new Date(), 'yyyy'), targetMonth];
-
-    const activeMonths = studentRecord?.active_months || [];
-    const freeMonths = studentRecord?.free_months || [];
-
-    const isFreeOrActive = 
-      activeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
-      freeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
-      studentRecord?.is_paid === true;
-
-    if (isFreeOrActive) {
-      setHasPaymentAccess(true);
-      return;
-    }
-
-    const { data: paymentRecord } = await supabase
-      .from('payments')
-      .select('*')
-      .or(`student_id.eq.${studentRecord.id},username.eq.${studentRecord.username}`);
-
-    const isPaidInTable = Array.isArray(paymentRecord) && paymentRecord.some(p => {
-      const pMonth = p.target_month || p.month || '';
-      const pStatus = (p.status || '').toLowerCase();
-      return (pMonth.includes(targetMonth) || targetMonth.includes(pMonth)) && ['approved', 'paid', 'success'].includes(pStatus);
-    });
-
-    if (isPaidInTable) {
-      setHasPaymentAccess(true);
-    } else {
-      setHasPaymentAccess(false);
-      setAccessRestrictedDetails({
-        classType,
-        month: monthVal,
-        year: yearVal
-      });
-    }
-  };
-
-  const activeClass = upcomingClasses[0];
-
-  // Exam Logic
-  useEffect(() => {
-    const loadExam = async (examId: string) => {
-      const { data: previousResult } = await supabase
-        .from('exam_results')
-        .select('*')
-        .eq('exam_id', examId)
-        .or(`student_id.eq.${currentUser.id},username.eq.${currentUser.username}`)
-        .maybeSingle();
-
-      if (previousResult) {
-        setIsExamSubmitted(true);
-        return;
-      }
-
-      const { data: examData } = await supabase
-        .from('exams')
-        .select('*')
-        .eq('id', examId)
-        .single();
-
-      if (examData) {
-        setActiveExam(examData);
-        setExamTimeLeft((examData.duration_minutes || 30) * 60);
-        setIsExamSubmitted(false);
-        setExamAnswers({});
-      }
-    };
-
-    if (activeClass?.is_exam_active && activeClass?.active_exam_id) {
-      if (!isExamSubmitted) {
-        loadExam(activeClass.active_exam_id);
-      }
-    } else {
-      setActiveExam(null);
-    }
-  }, [activeClass?.is_exam_active, activeClass?.active_exam_id, currentUser, isExamSubmitted]);
-
-  // Exam Countdown Timer
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (activeExam && examTimeLeft > 0 && !isExamSubmitted && !showResultModal) {
-      timer = setInterval(() => {
-        setExamTimeLeft(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            submitExamAnswers(true);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [activeExam, examTimeLeft, isExamSubmitted, showResultModal]);
-
-  const handleOptionSelect = (questionNumber: number, optionIndex: number) => {
-    setExamAnswers(prev => ({ ...prev, [questionNumber]: optionIndex }));
-  };
-
-  const submitExamAnswers = async (autoSubmitted = false) => {
-    if (!activeExam) return;
-    if (!autoSubmitted) {
-      const confirmSubmit = window.confirm('ඔබේ සියලුම පිළිතුරු සබ්මිට් කිරීමට තහවුරු කරන්න.');
-      if (!confirmSubmit) return;
-    }
-
-    let correctCount = 0;
-    const correctAnswers = activeExam.correct_answer || {};
-
-    for (let i = 1; i <= activeExam.total_questions; i++) {
-      if (examAnswers[i] && correctAnswers[i] && Number(examAnswers[i]) === Number(correctAnswers[i])) {
-        correctCount++;
-      }
-    }
-
-    try {
-      await supabase.from('exam_results').insert([
-        {
-          username: currentUser.username,
-          student_id: currentUser.id,
-          exam_id: activeExam.id,
-          score: correctCount,
-          meta_data: examAnswers,
-          submitted_at: new Date().toISOString()
-        }
-      ]);
-
-      setExamResult({ score: correctCount, total: activeExam.total_questions });
-      setShowResultModal(true);
-      setIsExamSubmitted(true);
-      setActiveExam(null);
-    } catch (err) {
-      console.error('Error submitting exam:', err);
-      alert('පිළිතුරු පත්‍රය සබ්මිට් කිරීමේදී දෝෂයක් සිදු විය.');
-    }
-  };
-
-  const formatExamTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
   if (isLoading) {
-    return (
-      <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
-        දත්ත පූරණය වෙමින් පවතී...
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center bg-black text-white font-bold text-xl">Loading...</div>;
   }
 
-  // Payment Restricted Screen
-  if (!hasPaymentAccess && accessRestrictedDetails) {
+  // ගෙවීම් සීමා කර ඇත්නම් (Payment Restricted)
+  if (!hasPaymentAccess) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
         <div className="max-w-md w-full bg-gray-900 border border-red-500/30 rounded-3xl p-8 text-center shadow-2xl">
-          <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Lock size={32} />
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2">පන්තිය සඳහා ප්‍රවේශය සීමා කර ඇත</h2>
-          <p className="text-gray-400 text-sm leading-relaxed mb-6">
-            කරුණාකර <span className="text-amber-400 font-bold">{accessRestrictedDetails.classType}</span> සඳහා{' '}
-            <span className="text-amber-400 font-bold">{accessRestrictedDetails.year} {accessRestrictedDetails.month}</span> මාසික ගාස්තුව ගෙවා පන්තිය සඳහා සම්බන්ධ වන්න.
-          </p>
-          <div className="bg-gray-950 p-4 rounded-xl border border-gray-800 text-left mb-6 text-xs text-gray-400 space-y-2">
-            <div className="flex justify-between">
-              <span>පන්ති වර්ගය:</span>
-              <span className="text-gray-200 font-bold">{accessRestrictedDetails.classType}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>අදාළ මාසය:</span>
-              <span className="text-gray-200 font-bold">{accessRestrictedDetails.year} - {accessRestrictedDetails.month}</span>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500">
-            ගෙවීම් සිදුකර ඇත්නම් කරුණාකර පද්ධතියෙන් ඉවත් වී නැවත ලොග් වන්න හෝ ඇඩ්මින් සම්බන්ධ කරගන්න.
+          <Lock className="w-16 h-16 text-red-500 mx-auto mb-6" />
+          <h2 className="text-2xl font-bold text-white mb-2">ප්‍රවේශය සීමා කර ඇත</h2>
+          <p className="text-gray-400 text-sm mb-6">
+            මෙම පහසුකම් භාවිතා කිරීම සඳහා කරුණාකර <span className="text-amber-400 font-bold">{currentMonthStr}</span> සඳහා ඔබේ මාසික පන්ති ගාස්තුව ගෙවන්න. ගෙවීම් කර ඇත්නම් ඇඩ්මින් දැනුවත් කරන්න.
           </p>
         </div>
       </div>
     );
   }
 
-  // No Classes Screen
-  if (upcomingClasses.length === 0) {
-    return (
-      <div className="min-h-screen bg-black text-white p-6 md:p-10">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-center gap-3 mb-8">
-            <CalendarIcon className="text-blue-500" size={28} />
-            <h2 className="text-2xl font-bold text-gray-200">ඉදිරි පන්ති කාලසටහන (Class Schedule)</h2>
-          </div>
+  // ආසන්නතම පන්තිය තේරීම
+  const activeClass = upcomingClasses[0];
+  let isLive = false;
+  let diffSeconds = 999999;
 
-          {calendarEvents.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {calendarEvents.map(evt => (
-                <div key={evt.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 hover:border-blue-500/40 transition">
-                  <span className="bg-blue-500/10 text-blue-400 text-xs px-3 py-1 rounded-full font-bold uppercase">
-                    {evt.target_class_type || evt.class_type || 'General'}
-                  </span>
-                  <h3 className="text-xl font-bold mt-4 mb-2 text-white">{evt.title}</h3>
-                  <p className="text-gray-400 text-sm mb-4">{evt.description}</p>
-                  <div className="flex items-center gap-4 text-xs text-gray-400 border-t border-gray-800 pt-4">
-                    <span className="flex items-center gap-1"><CalendarIcon size={14} /> {evt.date}</span>
-                    <span className="flex items-center gap-1"><Clock size={14} /> {evt.start_time}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-20 bg-gray-900/50 border border-gray-800 rounded-3xl">
-              <AlertCircle size={48} className="mx-auto text-gray-600 mb-4" />
-              <h3 className="text-xl font-bold text-gray-400">පැය 24ක් ඇතුළත හෝ ඉදිරියට කාලසටහන් කළ පන්ති නොමැත.</h3>
-              <p className="text-gray-600 text-sm mt-2">නව පන්ති වේලාවන් ළඟදීම යාවත්කාලීන කරනු ඇත.</p>
-            </div>
+  if (activeClass) {
+    isLive = (activeClass.status || '').toLowerCase() === 'live' || activeClass.is_active === true;
+    const classDateTime = parseClassDateTime(activeClass.date, activeClass.time);
+    diffSeconds = Math.floor((classDateTime.getTime() - currentTime.getTime()) / 1000);
+  }
+
+  const isWithin12Hours = diffSeconds <= 43200 && diffSeconds > 1800; // පැය 12ත් විනාඩි 30ත් අතර
+  const isWithin30Mins = diffSeconds <= 1800; // විනාඩි 30ට අඩු හෝ පසුවී ඇති
+
+  // 1. LIVE PLAYER VIEW (status = 'live')
+  if (isLive) {
+    return (
+      <div className="w-full h-screen bg-black flex flex-col">
+        <div className="bg-gray-950 px-4 py-3 flex items-center gap-3 border-b border-gray-800">
+          <span className="flex h-3 w-3 relative">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
+          </span>
+          <span className="font-bold text-gray-200">{activeClass.title} - Live Now</span>
+        </div>
+        <div className="flex-1 w-full h-full">
+          <iframe 
+            src={getEmbeddableZoomUrl(activeClass.zoom_join_url)} 
+            allow="camera; microphone; fullscreen; display-capture; autoplay"
+            className="w-full h-full border-0"
+            title="Zoom Live Player"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // 2. 30-MINUTE WAITING VIDEO VIEW
+  if (activeClass && !isLive && isWithin30Mins) {
+    const displayMins = Math.floor(Math.max(0, diffSeconds) / 60);
+    const displaySecs = Math.max(0, diffSeconds) % 60;
+
+    return (
+      <div className="w-full h-screen bg-black relative flex items-center justify-center overflow-hidden">
+        {/* Waiting Video from System */}
+        <video 
+          autoPlay 
+          loop 
+          muted 
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover opacity-40"
+          src="/videos/waiting-video.mp4"
+        />
+        <div className="relative z-10 bg-black/60 backdrop-blur-md border border-white/10 p-10 rounded-3xl text-center max-w-lg w-full mx-4 shadow-2xl">
+          <Video className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-bounce" />
+          <h2 className="text-xl font-bold text-white mb-2">{activeClass.title}</h2>
+          <p className="text-gray-300 mb-6 text-sm">පන්තිය ආරම්භ වීමට තව...</p>
+          
+          <div className="text-7xl font-mono font-black text-white tracking-widest drop-shadow-lg mb-6">
+            {String(displayMins).padStart(2, '0')}:{String(displaySecs).padStart(2, '0')}
+          </div>
+          
+          {diffSeconds <= 0 && (
+             <div className="bg-amber-500/20 border border-amber-500/30 text-amber-400 py-3 px-4 rounded-xl text-sm font-bold animate-pulse">
+               ගුරුතුමා විසින් සජීවී සම්බන්ධතාවය ලබා දෙන තුරු රැඳී සිටින්න...
+             </div>
           )}
         </div>
       </div>
     );
   }
 
-  const statusStr = (activeClass.status || '').toLowerCase();
-  const isLive = statusStr === 'live' || activeClass.is_active === true;
-  const classDateTime = parseClassDateTime(activeClass.date, activeClass.time);
-  
-  // Seconds remaining
-  const diffSeconds = Math.floor((classDateTime.getTime() - currentTime.getTime()) / 1000);
-  
-  // Under 1 hour OR time passed but admin hasn't clicked 'live'
-  const isWithinOneHour = diffSeconds <= 3600; 
-  // Under 10 minutes OR time passed
-  const isWithinTenMins = diffSeconds <= 600;
+  // 3. 12-HOUR LIST VIEW (Classes within 12 hours)
+  if (activeClass && !isLive && isWithin12Hours) {
+    const classesWithin12h = upcomingClasses.filter(c => {
+      const sec = Math.floor((parseClassDateTime(c.date, c.time).getTime() - currentTime.getTime()) / 1000);
+      return sec <= 43200 && sec > 0;
+    });
 
-  // More than 1 hour away -> Show 24 Hour Schedule List
-  if (!isLive && !isWithinOneHour) {
     return (
-      <div className="min-h-screen bg-black text-white p-6 md:p-10">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-2xl font-bold text-gray-200 mb-6 flex items-center gap-3">
-            <Clock className="text-amber-500" size={28} /> පැය 24ක් ඇතුළත පැවැත්වෙන පන්ති
+      <div className="min-h-screen bg-black text-white p-8">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+            <Clock className="text-blue-500" /> පැය 12ක් ඇතුළත පවත්වන පන්ති ලැයිස්තුව
           </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {upcomingClasses.map((cls, idx) => {
-              const clsTime = parseClassDateTime(cls.date, cls.time);
-              const secDiff = Math.max(0, Math.floor((clsTime.getTime() - currentTime.getTime()) / 1000));
-              const hrs = Math.floor(secDiff / 3600);
-              const mins = Math.floor((secDiff % 3600) / 60);
-
-              return (
-                <div key={cls.id} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 relative overflow-hidden">
-                  {idx === 0 && <div className="absolute top-0 left-0 w-full h-1 bg-amber-500"></div>}
-                  <span className="bg-amber-500/10 text-amber-400 text-xs px-3 py-1 rounded-full font-bold uppercase">
-                    {cls.target_class_type || cls.class_type || 'General'}
-                  </span>
-                  <h3 className="text-xl font-bold mt-4 mb-2 text-white">{cls.title}</h3>
-                  <p className="text-gray-400 text-sm mb-4">දිනය: {cls.date} | වේලාව: {cls.time}</p>
-                  <div className="bg-black/60 p-4 rounded-xl border border-gray-800 text-center">
-                    <p className="text-xs text-gray-500 mb-1">පන්තිය ආරම්භ වීමට තව</p>
-                    <p className="text-xl font-mono font-bold text-amber-400">{hrs} පැය {mins} විනාඩි</p>
-                  </div>
-                </div>
-              );
+          <div className="flex flex-col gap-4">
+            {classesWithin12h.map((cls, idx) => {
+               const timeDiff = Math.floor((parseClassDateTime(cls.date, cls.time).getTime() - currentTime.getTime()) / 1000);
+               const h = Math.floor(timeDiff / 3600);
+               const m = Math.floor((timeDiff % 3600) / 60);
+               
+               return (
+                 <div key={cls.id} className="bg-gray-900 border border-gray-800 p-6 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center">
+                   <div>
+                     <span className="text-xs bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full font-bold mb-3 inline-block">
+                       {cls.target_class_type || 'General'}
+                     </span>
+                     <h3 className="text-xl font-bold text-white mb-1">{cls.title}</h3>
+                     <p className="text-gray-400 text-sm">දිනය: {cls.date} | වේලාව: {cls.time}</p>
+                   </div>
+                   <div className="mt-4 md:mt-0 bg-black p-4 rounded-xl border border-gray-800 text-center min-w-[150px]">
+                     <div className="text-xs text-gray-500 mb-1">ආරම්භ වීමට තව</div>
+                     <div className="text-amber-400 font-bold font-mono text-lg">{h}h {m}m</div>
+                   </div>
+                 </div>
+               )
             })}
           </div>
         </div>
@@ -568,182 +340,86 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // Pre-Class Countdown & Waiting Video (1 Hour or Less)
-  if (!isLive && isWithinOneHour) {
-    const displayDiff = Math.max(0, diffSeconds);
-    const countdownM = Math.floor(displayDiff / 60);
-    const countdownS = displayDiff % 60;
+  // 4. MONTHLY CALENDAR VIEW (Classes are > 12 hours away)
+  const today = new Date();
+  const monthStart = startOfMonth(today);
+  const monthEnd = endOfMonth(today);
+  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
+  const startDayIndex = getDay(monthStart); // 0 = Sunday, 1 = Monday, etc.
 
-    return (
-      <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
-        <div className="flex flex-col items-center justify-center flex-1 relative rounded-3xl overflow-hidden bg-gray-950 min-h-[75vh] border border-gray-800 shadow-2xl">
-          
-          {/* Background Video (Last 10 minutes or past time) */}
-          {isWithinTenMins && (
-            <video 
-              autoPlay 
-              loop 
-              muted 
-              playsInline
-              className="absolute inset-0 w-full h-full object-cover opacity-30 z-0 pointer-events-none"
-              src={activeClass.pre_class_video_path || "/videos/waiting-video.mp4"}
-            />
-          )}
-
-          <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-full mx-4 shadow-2xl">
-            <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-4 py-1.5 rounded-full mb-4 border border-blue-500/30">
-              {activeClass.target_class_type || activeClass.class_type || 'General Class'} - {activeClass.title}
-            </span>
-            <h2 className="text-lg md:text-xl text-gray-300 text-center mb-6 font-medium">
-              පන්තිය ආරම්භ වීමට තව...
-            </h2>
-            
-            <div className="text-7xl md:text-8xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]">
-              {String(countdownM).padStart(2, '0')}:{String(countdownS).padStart(2, '0')}
-            </div>
-
-            {diffSeconds <= 0 && (
-              <p className="mt-8 text-green-400 animate-pulse text-sm font-bold bg-green-500/10 px-5 py-3 rounded-xl border border-green-500/20 flex items-center gap-2">
-                <Clock size={18} /> ගුරුතුමා විසින් පන්තිය සක්‍රීය කරන තුරු මඳක් රැඳී සිටින්න...
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // LIVE CLASS PLAYER (Zoom Player + Split-Screen Exam)
-  if (isLive) {
-    const isExamPushed = !!activeExam;
-
-    return (
-      <div className="w-full h-screen max-h-screen bg-black text-white flex flex-col overflow-hidden">
+  return (
+    <div className="min-h-screen bg-black text-white p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3">
+          <CalendarIcon className="text-blue-500" size={32} /> පන්ති කාලසටහන - {format(today, 'MMMM yyyy')}
+        </h2>
         
-        {/* Top Header */}
-        <div className="bg-gray-950 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
-            </span>
-            <span className="font-bold text-sm text-gray-200">
-              {activeClass.title} {isExamPushed && <span className="text-amber-400 font-normal">| Live Exam Active</span>}
-            </span>
+        {/* Calendar Grid */}
+        <div className="bg-gray-900 rounded-3xl p-6 border border-gray-800 shadow-2xl">
+          <div className="grid grid-cols-7 gap-2 mb-4 text-center">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+              <div key={day} className="text-gray-500 font-bold text-sm uppercase">{day}</div>
+            ))}
           </div>
-        </div>
-
-        {/* Live Container Area */}
-        <div className={`flex-1 w-full ${isExamPushed ? 'flex flex-col lg:flex-row' : 'flex'}`}>
           
-          {/* Left Side: Zoom Player + Answer Sheet */}
-          <div className={`${isExamPushed ? 'h-[40vh] lg:h-full lg:w-[35%] flex flex-col border-b lg:border-b-0 lg:border-r border-gray-800 bg-gray-900' : 'w-full h-full'}`}>
+          <div className="grid grid-cols-7 gap-2 md:gap-4">
+            {Array.from({ length: startDayIndex }).map((_, i) => (
+              <div key={`empty-${i}`} className="p-4 rounded-xl bg-gray-950/50 border border-transparent"></div>
+            ))}
             
-            {/* Zoom Frame */}
-            <div className={isExamPushed ? 'h-1/2 w-full bg-black relative' : 'w-full h-full relative bg-black'}>
-              <iframe 
-                src={getEmbeddableZoomUrl(activeClass.zoom_join_url)} 
-                allow="camera; microphone; fullscreen; display-capture; autoplay"
-                sandbox="allow-forms allow-scripts allow-same-origin"
-                className="w-full h-full border-0 bg-white"
-                title="Zoom Classroom"
-              />
-            </div>
+            {daysInMonth.map(date => {
+              const dateStr = format(date, 'yyyy-MM-dd');
+              
+              // අදාළ දිනයට events තිබේදැයි පරීක්ෂා කිරීම
+              const dayEvents = calendarEvents.filter(e => {
+                const eDate = e.date.replace(/\//g, '-');
+                return eDate === dateStr || e.date === format(date, 'dd/MM/yyyy');
+              });
 
-            {/* MCQ OMR Answer Sheet */}
-            {isExamPushed && (
-              <div className="h-1/2 flex flex-col bg-gray-950 overflow-hidden">
-                <div className="bg-gray-900 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
-                  <span className="text-xs font-bold text-gray-300 uppercase flex items-center gap-1.5">
-                    <FileText size={14} className="text-amber-500" /> Answer Sheet
-                  </span>
-                  <span className={`font-mono font-bold text-xs px-2.5 py-1 rounded border ${examTimeLeft < 300 ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' : 'bg-amber-500/10 text-amber-400 border-amber-500/30'}`}>
-                    Time: {formatExamTime(examTimeLeft)}
-                  </span>
-                </div>
+              const hasEvent = dayEvents.length > 0;
+              const isToday = isSameDay(date, today);
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                  {Array.from({ length: activeExam.total_questions }, (_, i) => i + 1).map(qNum => (
-                    <div key={qNum} className="flex items-center justify-between bg-gray-900 p-2 rounded-xl border border-gray-800">
-                      <span className="text-xs font-mono font-bold text-gray-400 w-6">{qNum}.</span>
-                      <div className="flex gap-1.5">
-                        {[1, 2, 3, 4, 5].map(opt => (
-                          <button
-                            key={opt}
-                            onClick={() => handleOptionSelect(qNum, opt)}
-                            className={`w-7 h-7 rounded-lg text-xs font-bold transition flex items-center justify-center border ${
-                              examAnswers[qNum] === opt
-                                ? 'bg-amber-500 border-amber-400 text-black font-black shadow-[0_0_10px_rgba(245,158,11,0.4)]'
-                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
-                            }`}
-                          >
-                            {opt}
-                          </button>
-                        ))}
-                      </div>
+              return (
+                <div 
+                  key={date.toString()} 
+                  className={`
+                    relative p-2 md:p-4 rounded-2xl border min-h-[80px] md:min-h-[100px] flex flex-col items-center justify-start transition-all
+                    ${hasEvent ? 'bg-blue-900/20 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.2)]' : 'bg-gray-950 border-gray-800'}
+                    ${isToday && !hasEvent ? 'border-amber-500/50 bg-amber-900/10' : ''}
+                  `}
+                >
+                  <span className={`text-lg font-bold ${isToday ? 'text-amber-400' : hasEvent ? 'text-blue-400' : 'text-gray-500'}`}>
+                    {format(date, 'd')}
+                  </span>
+                  
+                  {hasEvent && (
+                    <div className="mt-2 w-full flex flex-col gap-1">
+                      {dayEvents.map(evt => (
+                        <div 
+                          key={evt.id} 
+                          className="bg-blue-500 text-white text-[9px] md:text-xs font-bold py-1 px-1.5 rounded-md truncate text-center animate-pulse shadow-lg"
+                          title={`${evt.title} - ${evt.start_time}`}
+                        >
+                          {evt.start_time} - {evt.title}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-
-                <div className="p-3 bg-gray-900 border-t border-gray-800 shrink-0">
-                  <button
-                    onClick={() => submitExamAnswers(false)}
-                    className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition"
-                  >
-                    <Send size={14} /> Submit Answers
-                  </button>
-                </div>
-              </div>
-            )}
+              );
+            })}
           </div>
-
-          {/* Right Side: Google Drive PDF Frame */}
-          {isExamPushed && (
-            <div className="h-[60vh] lg:h-full lg:w-[65%] bg-gray-900 relative">
-              <iframe 
-                src={getDrivePreviewUrl(activeExam.pdf_url)} 
-                className="w-full h-full border-0 bg-gray-800"
-                allow="fullscreen"
-                title="Exam Document Viewer"
-              />
-            </div>
-          )}
         </div>
 
-        {/* Results Modal */}
-        {showResultModal && examResult && (
-          <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-gray-900 border border-green-500/30 p-8 rounded-3xl max-w-md w-full text-center shadow-2xl relative">
-              <div className="w-16 h-16 bg-green-500/20 text-green-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                <CheckCircle2 size={36} />
-              </div>
-              <h2 className="text-2xl font-bold text-white mb-1">පිළිතුරු පත්‍රය භාරගන්නා ලදී</h2>
-              <p className="text-gray-400 text-xs mb-6">ඔබගේ ලකුණු ප්‍රමාණය පහතින් දැක්වේ.</p>
-
-              <div className="bg-gray-950 rounded-2xl p-6 border border-gray-800 mb-6">
-                <span className="text-xs text-gray-500 font-bold uppercase tracking-wider block mb-2">
-                  නිවැරදි පිළිතුරු සංඛ්‍යාව
-                </span>
-                <div className="text-5xl font-black text-amber-400 flex items-baseline justify-center gap-2">
-                  {examResult.score} <span className="text-2xl text-gray-600 font-normal">/ {examResult.total}</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowResultModal(false)}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 rounded-xl transition text-sm flex items-center justify-center gap-2"
-              >
-                <Maximize2 size={16} /> Close & Return to Full Screen Video
-              </button>
-            </div>
-          </div>
-        )}
+        {/* Info Legend */}
+        <div className="mt-8 flex flex-wrap gap-6 items-center justify-center text-sm text-gray-400">
+          <div className="flex items-center gap-2"><div className="w-4 h-4 rounded-full bg-blue-500 animate-pulse"></div> සජීවී පන්ති ඇති දින</div>
+          <div className="flex items-center gap-2"><div className="w-4 h-4 rounded-full border-2 border-amber-500"></div> අද දිනය</div>
+        </div>
 
       </div>
-    );
-  }
-
-  return null;
+    </div>
+  );
 };
 
 export default LiveClassPlayer;
