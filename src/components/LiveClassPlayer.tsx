@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, subMonths, addMonths } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths } from 'date-fns';
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -12,13 +12,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Video,
-  Sparkles
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Student {
   id: string;
   username: string;
-  target_classes?: string[];
+  name?: string;
+  class_types?: string[];
   active_months?: string[];
   free_months?: string[];
   is_paid?: boolean;
@@ -30,19 +32,33 @@ interface Student {
 interface ScheduledLive {
   id: string;
   title: string;
+  platform?: string;
+  link?: string;
   date: string;
   time: string;
+  target_month?: string;
+  target_classes?: string[];
   class_type?: string;
   target_class_type?: string;
-  target_classes?: string[];
-  target_month?: string;
   status?: string;
-  zoom_join_url: string;
+  is_active?: boolean;
   zoom_meeting_id?: string;
+  zoom_start_url?: string;
+  zoom_join_url: string;
+  pre_class_video_path?: string;
   is_exam_active?: boolean;
   active_exam_id?: string;
-  pre_class_video_path?: string;
-  is_active?: boolean;
+}
+
+interface CalendarEvent {
+  id: string;
+  date: string;
+  title: string;
+  description?: string;
+  status?: string;
+  start_time: string;
+  target_class_type?: string;
+  class_type?: string;
 }
 
 interface ExamData {
@@ -54,79 +70,86 @@ interface ExamData {
   correct_answer: Record<string, number>;
 }
 
-interface CalendarEvent {
-  id: string;
-  date: string;
-  title: string;
-  description?: string;
-  start_time: string;
-  class_type?: string;
-  target_class_type?: string;
-}
+// --------------------------------------------------
+// 12-Hour Time & Date Formatter & Parser Helpers
+// --------------------------------------------------
+const formatTo12Hour = (timeStr: string): string => {
+  if (!timeStr) return '';
+  const clean = timeStr.trim().toLowerCase();
+  if (clean.includes('am') || clean.includes('pm')) {
+    return timeStr.toUpperCase();
+  }
+  const parts = clean.split(':');
+  let hours = parseInt(parts[0] || '0', 10);
+  const minutes = parts[1] || '00';
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  return `${String(hours).padStart(2, '0')}:${minutes.slice(0, 2)} ${ampm}`;
+};
 
-// ----------------------------------------------------------------------
-// 12-Hour / 24-Hour & Diverse Date Format Robust Parser
-// ----------------------------------------------------------------------
 const parseClassDateTime = (dateStr: string, timeStr: string): Date => {
   if (!dateStr) return new Date();
 
-  try {
-    // 1. Clean & Parse Date String (Handles YYYY-MM-DD, DD/MM/YYYY, etc.)
-    let cleanDate = dateStr.trim().replace(/\//g, '-');
-    const dateParts = cleanDate.split('-');
-    let year = new Date().getFullYear();
-    let month = new Date().getMonth();
-    let day = new Date().getDate();
+  let cleanDate = dateStr.trim().replace(/\//g, '-');
+  const dateParts = cleanDate.split('-');
+  if (dateParts.length === 3) {
+    if (dateParts[0].length === 2 && dateParts[2].length === 4) {
+      cleanDate = `${dateParts[2]}-${dateParts[1].padStart(2, '0')}-${dateParts[0].padStart(2, '0')}`;
+    } else if (dateParts[0].length === 4) {
+      cleanDate = `${dateParts[0]}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`;
+    }
+  }
 
-    if (dateParts.length === 3) {
-      if (dateParts[0].length === 4) {
-        // YYYY-MM-DD
-        year = parseInt(dateParts[0], 10);
-        month = parseInt(dateParts[1], 10) - 1;
-        day = parseInt(dateParts[2], 10);
-      } else if (dateParts[2].length === 4) {
-        // DD-MM-YYYY
-        year = parseInt(dateParts[2], 10);
-        month = parseInt(dateParts[1], 10) - 1;
-        day = parseInt(dateParts[0], 10);
+  let cleanTime = (timeStr || '00:00').trim().toUpperCase();
+  const isPM = cleanTime.includes('PM');
+  const isAM = cleanTime.includes('AM');
+  cleanTime = cleanTime.replace(/AM|PM/g, '').trim().replace('.', ':');
+
+  const timeParts = cleanTime.split(':');
+  let hours = parseInt(timeParts[0] || '0', 10);
+  let minutes = parseInt(timeParts[1] || '0', 10);
+
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+
+  const hoursStr = String(hours).padStart(2, '0');
+  const minutesStr = String(minutes).padStart(2, '0');
+
+  const parsedDate = new Date(`${cleanDate}T${hoursStr}:${minutesStr}:00`);
+
+  if (isNaN(parsedDate.getTime())) {
+    const fallback = new Date(`${dateStr} ${timeStr}`);
+    return isNaN(fallback.getTime()) ? new Date() : fallback;
+  }
+
+  return parsedDate;
+};
+
+// Convert Zoom URL to Web Client Join URL
+const getEmbeddableZoomUrl = (joinUrl?: string, meetingId?: string) => {
+  if (!joinUrl && !meetingId) return '';
+  if (joinUrl && joinUrl.includes('/wc/')) return joinUrl;
+
+  if (joinUrl) {
+    try {
+      const url = new URL(joinUrl);
+      if (url.pathname.includes('/j/')) {
+        url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
+        return url.toString();
       }
+    } catch (e) {
+      // Ignore URL parse fail
     }
-
-    // 2. Clean & Parse Time String (Handles 12h AM/PM & 24h Formats)
-    let cleanTime = (timeStr || '00:00').trim().toLowerCase();
-    const isPM = cleanTime.includes('pm');
-    const isAM = cleanTime.includes('am');
-    cleanTime = cleanTime.replace(/am|pm/gi, '').trim();
-
-    const timeParts = cleanTime.split(':');
-    let hours = parseInt(timeParts[0] || '0', 10);
-    let minutes = parseInt(timeParts[1] || '0', 10);
-
-    if (isPM && hours < 12) hours += 12;
-    if (isAM && hours === 12) hours = 0;
-
-    const parsedDate = new Date(year, month, day, hours, minutes, 0);
-    return isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
-  } catch (err) {
-    return new Date();
   }
+
+  if (meetingId) {
+    return `https://zoom.us/wc/${meetingId}/join`;
+  }
+
+  return joinUrl || '';
 };
 
-// Convert Zoom standard URL to Web Embedded Join URL
-const getEmbeddableZoomUrl = (joinUrl: string) => {
-  if (!joinUrl) return '';
-  try {
-    const url = new URL(joinUrl);
-    if (url.pathname.includes('/j/')) {
-      url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
-    }
-    return url.toString();
-  } catch (error) {
-    return joinUrl;
-  }
-};
-
-// Convert Google Drive view link to embeddable preview link
 const getDrivePreviewUrl = (url: string) => {
   if (!url) return '';
   if (url.includes('/view')) return url.replace('/view', '/preview');
@@ -145,11 +168,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState<Date>(new Date());
 
+  // Payment Verification States
   const [hasPaymentAccess, setHasPaymentAccess] = useState<boolean>(true);
   const [accessRestrictedDetails, setAccessRestrictedDetails] = useState<{
     classType: string;
     month: string;
-    year: string;
   } | null>(null);
 
   // Exam States
@@ -160,21 +183,33 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   const [examResult, setExamResult] = useState<{ score: number; total: number } | null>(null);
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
 
-  // Live Timer Tick
+  // Live Clock Tick
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Realtime Supabase Subscriptions & Data Fetching
+  // Fetch Data & Setup Realtime Listeners
   useEffect(() => {
     initDataFetch();
 
     const channel = supabase
-      .channel('live-class-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => initDataFetch())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => initDataFetch())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calender_events' }, () => initDataFetch())
+      .channel('live-classroom-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'scheduled_lives' },
+        () => initDataFetch()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payments' },
+        () => initDataFetch()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'calender_events' },
+        () => initDataFetch()
+      )
       .subscribe();
 
     return () => {
@@ -188,7 +223,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       const now = new Date();
       const currentMonthStr = format(now, 'yyyy-MM');
 
-      // 1. Fetch & Sync Full Student Profile
+      // 1. Get full Student Profile
       let fullStudent: Student = currentUser;
       if (currentUser?.username || currentUser?.id) {
         const query = supabase.from('students').select('*');
@@ -200,10 +235,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       }
       setStudentProfile(fullStudent);
 
-      // Collect all enrolled class identifiers for filtering
+      // Collect all student enrolled class identifiers
       const studentClassesSet = new Set<string>();
-      if (Array.isArray(fullStudent.target_classes)) {
-        fullStudent.target_classes.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
+      if (Array.isArray(fullStudent.class_types)) {
+        fullStudent.class_types.forEach(c => c && studentClassesSet.add(String(c).trim().toLowerCase()));
       }
       if (fullStudent.class) studentClassesSet.add(String(fullStudent.class).trim().toLowerCase());
       if (fullStudent.course) studentClassesSet.add(String(fullStudent.course).trim().toLowerCase());
@@ -241,22 +276,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         return matchesStudentClass(cls.target_class_type || cls.class_type, cls.target_classes);
       });
 
-      // Filter upcoming or active lives
-      const activeOrUpcomingLives: ScheduledLive[] = [];
-      validLives.forEach((cls: ScheduledLive) => {
-        const status = (cls.status || '').toLowerCase();
-        const isLive = status === 'live' || cls.is_active === true;
-        
-        const classDateTime = parseClassDateTime(cls.date, cls.time);
-        const diffHours = (classDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-
-        if (isLive || (diffHours >= -24 && diffHours <= 72)) {
-          activeOrUpcomingLives.push(cls);
-        }
-      });
-
-      // Sort: LIVE status FIRST, then chronological by date/time
-      activeOrUpcomingLives.sort((a, b) => {
+      // Sort: LIVE status first, then by earliest date/time
+      validLives.sort((a, b) => {
         const aLive = (a.status || '').toLowerCase() === 'live' || a.is_active === true;
         const bLive = (b.status || '').toLowerCase() === 'live' || b.is_active === true;
         if (aLive && !bLive) return -1;
@@ -267,7 +288,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         return dateA - dateB;
       });
 
-      setUpcomingClasses(activeOrUpcomingLives);
+      setUpcomingClasses(validLives);
 
       // 3. Fetch Calendar Events
       const { data: calData } = await supabase
@@ -276,35 +297,35 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
         .order('date', { ascending: true });
 
       if (calData) {
-        const matchingCalEvents = calData.filter((evt: CalendarEvent) => matchesStudentClass(evt.target_class_type || evt.class_type));
+        const matchingCalEvents = calData.filter((evt: CalendarEvent) => {
+          return matchesStudentClass(evt.target_class_type || evt.class_type);
+        });
         setCalendarEvents(matchingCalEvents);
       }
 
-      // 4. Payment Verification
-      if (activeOrUpcomingLives.length > 0) {
-        await verifyPaymentAccess(activeOrUpcomingLives[0], fullStudent, currentMonthStr);
+      // 4. Payment Verification Logic
+      if (validLives.length > 0) {
+        await verifyPaymentAccess(validLives[0], fullStudent, currentMonthStr);
       } else {
         setHasPaymentAccess(true);
       }
 
     } catch (err) {
-      console.error('Error fetching live class data:', err);
+      console.error('Error in initDataFetch:', err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Payment Verification Logic
-  const verifyPaymentAccess = async (targetClass: ScheduledLive, student: Student, defaultMonth: string) => {
+  // Payment Verification Function
+  const verifyPaymentAccess = async (targetClass: ScheduledLive, student: Student, currentMonthStr: string) => {
     const classType = targetClass.target_class_type || targetClass.class_type || 'General Class';
-    const targetMonth = targetClass.target_month || defaultMonth;
-    const [yearVal, monthVal] = targetMonth.includes('-') 
-      ? targetMonth.split('-') 
-      : [format(new Date(), 'yyyy'), targetMonth];
+    const targetMonth = targetClass.target_month || currentMonthStr;
 
     const activeMonths = student?.active_months || [];
     const freeMonths = student?.free_months || [];
 
+    // Check direct approval in students table
     const isDirectApproved = 
       activeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
       freeMonths.some(m => m.includes(targetMonth) || targetMonth.includes(m)) ||
@@ -315,6 +336,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       return;
     }
 
+    // Query payments table for this student username
     const { data: paymentRecords } = await supabase
       .from('payments')
       .select('*')
@@ -338,15 +360,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
       setHasPaymentAccess(false);
       setAccessRestrictedDetails({
         classType,
-        month: monthVal,
-        year: yearVal
+        month: targetMonth
       });
     }
   };
 
   const activeClass = upcomingClasses[0];
 
-  // Exam Logic Handler
+  // Exam Loading
   useEffect(() => {
     const loadExam = async (examId: string) => {
       const { data: previousResult } = await supabase
@@ -376,13 +397,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     };
 
     if (activeClass?.is_exam_active && activeClass?.active_exam_id) {
-      if (!isExamSubmitted) loadExam(activeClass.active_exam_id);
+      if (!isExamSubmitted) {
+        loadExam(activeClass.active_exam_id);
+      }
     } else {
       setActiveExam(null);
     }
   }, [activeClass?.is_exam_active, activeClass?.active_exam_id, currentUser, isExamSubmitted]);
 
-  // Exam Timer Tick
+  // Exam Countdown
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (activeExam && examTimeLeft > 0 && !isExamSubmitted && !showResultModal) {
@@ -448,10 +471,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // ----------------------------------------------------------------------
-  // VIEW RENDERING LOGIC
-  // ----------------------------------------------------------------------
-
+  // Loading State
   if (isLoading) {
     return (
       <div className="flex flex-col justify-center items-center h-screen bg-black text-white font-semibold gap-4">
@@ -465,15 +485,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
   if (!hasPaymentAccess && accessRestrictedDetails) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-gray-900 border border-red-500/30 rounded-3xl p-8 text-center shadow-2xl relative overflow-hidden">
+        <div className="max-w-md w-full bg-gray-900 border border-red-500/40 rounded-3xl p-8 text-center shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-red-500"></div>
-          <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+          <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 border border-red-500/20">
             <Lock size={32} />
           </div>
           <h2 className="text-2xl font-bold text-white mb-2">පන්තිය සඳහා ප්‍රවේශය සීමා කර ඇත</h2>
           <p className="text-gray-400 text-sm leading-relaxed mb-6">
             කරුණාකර <span className="text-amber-400 font-bold">{accessRestrictedDetails.classType}</span> සඳහා{' '}
-            <span className="text-amber-400 font-bold">{accessRestrictedDetails.year} {accessRestrictedDetails.month}</span> මාසික ගාස්තුව ගෙවා පන්තිය සඳහා සම්බන්ධ වන්න.
+            <span className="text-amber-400 font-bold">{accessRestrictedDetails.month}</span> මාසික ගාස්තුව ගෙවා පන්තිය සඳහා සම්බන්ධ වන්න.
           </p>
           <div className="bg-gray-950 p-4 rounded-xl border border-gray-800 text-left mb-6 text-xs text-gray-400 space-y-2">
             <div className="flex justify-between">
@@ -482,7 +502,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             </div>
             <div className="flex justify-between">
               <span>අදාළ මාසය:</span>
-              <span className="text-gray-200 font-bold">{accessRestrictedDetails.year} - {accessRestrictedDetails.month}</span>
+              <span className="text-gray-200 font-bold">{accessRestrictedDetails.month}</span>
             </div>
           </div>
           <p className="text-xs text-gray-500 leading-normal">
@@ -493,28 +513,26 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // Timing Calculations
-  const statusStr = (activeClass?.status || '').trim().toLowerCase();
+  // Calculate timing state
+  const statusStr = (activeClass?.status || '').toLowerCase();
   const isLive = statusStr === 'live' || activeClass?.is_active === true;
-  const classDateTime = activeClass ? parseClassDateTime(activeClass.date, activeClass.time) : new Date();
   
+  const classDateTime = activeClass ? parseClassDateTime(activeClass.date, activeClass.time) : new Date();
   const diffSeconds = activeClass ? Math.floor((classDateTime.getTime() - currentTime.getTime()) / 1000) : 999999;
   
-  // Under 12 Hours (43,200 Seconds)
   const isWithin12Hours = activeClass && (diffSeconds <= 43200);
-  
-  // Under 30 Minutes (1,800 Seconds)
   const isWithin30Mins = activeClass && (diffSeconds <= 1800);
 
-  // ----------------------------------------------------------------------
-  // 2. LIVE EMBEDDED ZOOM PLAYER (Highest Priority when admin sets Live)
-  // ----------------------------------------------------------------------
-  if (isLive) {
+  // --------------------------------------------------
+  // 2. LIVE EMBEDDED ZOOM PLAYER (PRIORITY #1 - IF STATUS IS LIVE, SHOW IMMEDIATELY!)
+  // --------------------------------------------------
+  if (isLive && activeClass) {
     const isExamPushed = !!activeExam;
 
     return (
       <div className="w-full h-screen max-h-screen bg-black text-white flex flex-col overflow-hidden">
-        {/* Top Live Bar */}
+        
+        {/* Top Header */}
         <div className="bg-gray-950 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
           <div className="flex items-center gap-3">
             <span className="relative flex h-3 w-3">
@@ -522,27 +540,28 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
               <span className="relative inline-flex rounded-full h-3 w-3 bg-red-600"></span>
             </span>
             <span className="font-bold text-sm text-gray-200">
-              {activeClass.title} {isExamPushed && <span className="text-amber-400 font-normal">| සජීවී පරීක්ෂණය සක්‍රීයයි</span>}
+              {activeClass.title} <span className="text-xs text-amber-400 font-normal">({formatTo12Hour(activeClass.time)})</span>
+              {isExamPushed && <span className="text-amber-400 font-normal ml-2">| Live Exam Active</span>}
             </span>
           </div>
         </div>
 
-        {/* Embedded Viewport */}
+        {/* Live Zoom Main Container */}
         <div className={`flex-1 w-full ${isExamPushed ? 'flex flex-col lg:flex-row' : 'flex'}`}>
+          
+          {/* Zoom Player Section */}
           <div className={`${isExamPushed ? 'h-[40vh] lg:h-full lg:w-[35%] flex flex-col border-b lg:border-b-0 lg:border-r border-gray-800 bg-gray-900' : 'w-full h-full'}`}>
-            
-            {/* Embedded Zoom Iframe with full Camera and Mic privileges */}
             <div className={isExamPushed ? 'h-1/2 w-full bg-black relative' : 'w-full h-full relative bg-black'}>
               <iframe 
-                src={getEmbeddableZoomUrl(activeClass.zoom_join_url)} 
-                allow="camera; microphone; fullscreen; display-capture; autoplay"
-                sandbox="allow-forms allow-scripts allow-same-origin"
+                src={getEmbeddableZoomUrl(activeClass.zoom_join_url, activeClass.zoom_meeting_id)} 
+                allow="camera *; microphone *; fullscreen; display-capture; autoplay"
+                sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals"
                 className="w-full h-full border-0 bg-white"
                 title="Zoom Classroom"
               />
             </div>
 
-            {/* Split-screen Exam Sheet if Exam Active */}
+            {/* MCQ Answer Sheet if Exam Active */}
             {isExamPushed && (
               <div className="h-1/2 flex flex-col bg-gray-950 overflow-hidden">
                 <div className="bg-gray-900 px-4 py-2.5 flex justify-between items-center border-b border-gray-800 shrink-0">
@@ -589,14 +608,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             )}
           </div>
 
-          {/* Exam PDF Viewer */}
+          {/* PDF Viewer Section */}
           {isExamPushed && (
             <div className="h-[60vh] lg:h-full lg:w-[65%] bg-gray-900 relative">
               <iframe 
                 src={getDrivePreviewUrl(activeExam.pdf_url)} 
                 className="w-full h-full border-0 bg-gray-800"
                 allow="fullscreen"
-                title="Exam PDF Document Viewer"
+                title="Exam Document Viewer"
               />
             </div>
           )}
@@ -630,32 +649,35 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             </div>
           </div>
         )}
+
       </div>
     );
   }
 
-  // ----------------------------------------------------------------------
-  // 3. LAST 30-MINUTES WAITING VIDEO PLAYER
-  // ----------------------------------------------------------------------
-  if (isWithin30Mins) {
+  // --------------------------------------------------
+  // 3. LAST 30 MINUTES WAITING VIDEO PLAYER
+  // --------------------------------------------------
+  if (!isLive && isWithin30Mins && activeClass) {
     const displayDiff = Math.max(0, diffSeconds);
     const countdownM = Math.floor(displayDiff / 60);
     const countdownS = displayDiff % 60;
 
     return (
       <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
-        <div className="flex flex-col items-center justify-center flex-1 relative rounded-3xl overflow-hidden bg-gray-950 min-h-[75vh] border border-gray-800 shadow-2xl">
+        <div className="flex flex-col items-center justify-center flex-1 relative rounded-3xl overflow-hidden bg-gray-950 min-h-[80vh] border border-gray-800 shadow-2xl">
           
+          {/* Waiting Video Background */}
           <video 
             autoPlay 
             loop 
             muted 
             playsInline
-            className="absolute inset-0 w-full h-full object-cover opacity-35 z-0 pointer-events-none"
+            className="absolute inset-0 w-full h-full object-cover opacity-40 z-0 pointer-events-none"
             src={activeClass.pre_class_video_path || "/videos/waiting-video.mp4"}
           />
 
-          <div className="relative z-10 flex flex-col items-center p-8 md:p-10 bg-black/80 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-full mx-4 shadow-2xl text-center space-y-6">
+          {/* Countdown & Waiting Overlay Card */}
+          <div className="relative z-10 flex flex-col items-center p-8 md:p-12 bg-black/85 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-full mx-4 shadow-2xl text-center space-y-6">
             <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-4 py-1.5 rounded-full border border-blue-500/30">
               {activeClass.target_class_type || activeClass.class_type || 'General Class'} - {activeClass.title}
             </span>
@@ -670,19 +692,23 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
             <div className="bg-green-500/10 border border-green-500/30 p-4 rounded-2xl w-full">
               <p className="text-green-400 animate-pulse text-xs md:text-sm font-bold flex items-center justify-center gap-2">
-                <Video size={18} /> ගුරුතුමා විසින් පන්තිය සක්‍රීය (Live) කරන තුරු මඳක් රැඳී සිටින්න...
+                <Video size={18} /> ගුරුතුමා පැමිණෙන තුරු රැඳී සිටින්න...
               </p>
             </div>
+
+            <p className="text-[11px] text-gray-400 font-mono">
+              ආරම්භක වේලාව: {formatTo12Hour(activeClass.time)} ({activeClass.date})
+            </p>
           </div>
         </div>
       </div>
     );
   }
 
-  // ----------------------------------------------------------------------
-  // 4. LAST 12-HOURS CHRONOLOGICAL LIST VIEW (Calendar disappears)
-  // ----------------------------------------------------------------------
-  if (isWithin12Hours) {
+  // --------------------------------------------------
+  // 4. LAST 12-HOUR LIST VIEW (Calendar disappears, ordered list appears)
+  // --------------------------------------------------
+  if (!isLive && isWithin12Hours && !isWithin30Mins) {
     return (
       <div className="min-h-screen bg-black text-white p-6 md:p-10">
         <div className="max-w-4xl mx-auto space-y-6">
@@ -693,7 +719,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
             <div>
               <h2 className="text-xl font-bold text-white">අද දින පැවැත්වෙන සජීවී පන්ති කාලසටහන</h2>
               <p className="text-gray-400 text-xs mt-1">
-                පන්තිය ආරම්භ වීමට පැය 12 කට ආසන්න බැවින් අද දින පන්ති ලැයිස්තුව පහතින් වේලාව අනුව දැක්වේ.
+                පන්තිය ආරම්භ වීමට පැය 12 කට ආසන්න බැවින් කැලැන්ඩරය වෙනුවට අද දින පන්ති ලැයිස්තුව පහතින් දැක්වේ.
               </p>
             </div>
           </div>
@@ -721,7 +747,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                     <p className="text-gray-400 text-sm font-mono flex items-center gap-3">
                       <span>දිනය: {cls.date}</span>
                       <span>|</span>
-                      <span>වේලාව: {cls.time}</span>
+                      <span>වේලාව: {formatTo12Hour(cls.time)}</span>
                     </p>
                   </div>
 
@@ -738,9 +764,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
-  // ----------------------------------------------------------------------
-  // 5. CALENDAR VIEW (Show when class is > 12 hours away or no live class)
-  // ----------------------------------------------------------------------
+  // --------------------------------------------------
+  // 5. CALENDAR VIEW (More than 12 hours away or default)
+  // --------------------------------------------------
   const monthStart = startOfMonth(currentCalendarMonth);
   const monthEnd = endOfMonth(monthStart);
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
@@ -757,7 +783,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     <div className="min-h-screen bg-black text-white p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
         
-        {/* Header */}
+        {/* Calendar Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-900/60 p-6 rounded-3xl border border-gray-800 backdrop-blur-md">
           <div>
             <h1 className="text-2xl md:text-3xl font-black text-white flex items-center gap-3">
@@ -787,7 +813,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           </div>
         </div>
 
-        {/* Calendar Grid Container */}
+        {/* Calendar Grid */}
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-4 md:p-6 shadow-2xl overflow-hidden">
           
           <div className="grid grid-cols-7 gap-2 mb-4 text-center font-bold text-xs text-gray-500 uppercase tracking-wider">
@@ -819,7 +845,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                 >
                   <div className="flex justify-between items-center">
                     <span className={`text-xs font-mono font-bold w-6 h-6 rounded-full flex items-center justify-center ${
-                      isToday ? 'bg-amber-500 text-black' : hasEvent ? 'bg-blue-600 text-white' : 'text-gray-400'
+                      isToday ? 'bg-amber-500 text-black' : hasEvent ? 'bg-blue-600 text-white font-black' : 'text-gray-400'
                     }`}>
                       {format(dayDate, 'd')}
                     </span>
@@ -837,9 +863,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                         <div 
                           key={evt.id} 
                           className="bg-blue-600/30 border border-blue-500/50 rounded-lg p-1 text-[10px] text-blue-200 truncate font-semibold"
-                          title={`${evt.title} (${evt.start_time})`}
+                          title={`${evt.title} (${formatTo12Hour(evt.start_time)})`}
                         >
-                          <span className="block font-bold text-amber-400">{evt.start_time}</span>
+                          <span className="block font-bold text-amber-400">{formatTo12Hour(evt.start_time)}</span>
                           <span className="truncate block">{evt.title}</span>
                         </div>
                       ))}
@@ -851,7 +877,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           </div>
         </div>
 
-        {/* Calendar Events List */}
+        {/* Detailed Events List under Calendar */}
         {calendarEvents.length > 0 && (
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-300 flex items-center gap-2">
@@ -867,7 +893,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                   {evt.description && <p className="text-gray-400 text-xs">{evt.description}</p>}
                   <div className="flex items-center gap-4 text-xs text-gray-400 pt-2 border-t border-gray-800/80 font-mono">
                     <span className="flex items-center gap-1 text-amber-400"><CalendarIcon size={13} /> {evt.date}</span>
-                    <span className="flex items-center gap-1 text-blue-400"><Clock size={13} /> {evt.start_time}</span>
+                    <span className="flex items-center gap-1 text-blue-400"><Clock size={13} /> {formatTo12Hour(evt.start_time)}</span>
                   </div>
                 </div>
               ))}
