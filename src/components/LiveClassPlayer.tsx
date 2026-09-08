@@ -96,11 +96,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
   
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showControls, setShowControls] = useState(true); // For Auto-hide Title
+  const [showControls, setShowControls] = useState(true); 
   
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const wakeLockRef = useRef<any>(null); // For Screen Sleep Prevention
+  const wakeLockRef = useRef<any>(null); 
 
   const studentName = currentUser?.username || 'Student';
 
@@ -131,7 +131,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       releaseWakeLock();
     }
 
-    // User වෙනත් tab එකකට ගොස් ආවොත් නැවත wake lock එක සක්‍රීය කිරීමට
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && viewState === 'live') {
         requestWakeLock();
@@ -150,7 +149,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     
-    // ෆුල් ස්ක්‍රීන් එකේදී පමණක් තත්පර 3කින් හයිඩ් කිරීම
     if (isFullscreen) {
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
@@ -185,22 +183,25 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
+      // සිසුවාගේ පන්ති ලබා ගැනීම (StudentRecordings හි ඇති ක්‍රමයටම)
+      const studentClasses = (currentUser?.class_types || []).map(c => String(c).toLowerCase().trim());
       const hasClasses = studentClasses.length > 0;
 
-      // STRICT CLASS FILTERING: සිසුවාට පන්ති නැත්නම් false, ඇත්නම් හරියටම ගැලපෙන ඒවා පමණි
+      // 100% නිවැරදි Class Matching ලොජික් එක 
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
         if (!hasClasses) return false; 
         
         const check = (val?: string) => {
           if (!val) return false;
-          const v = val.trim().toLowerCase();
-          return studentClasses.some(sc => sc.includes(v) || v.includes(sc) || sc === v);
+          const v = String(val).toLowerCase().trim();
+          // හරියටම සමානද, නැතහොත් එකක අනෙක අන්තර්ගතදැයි පරීක්ෂා කිරීම (More forgiving match)
+          return studentClasses.some(sc => sc === v || sc.includes(v) || v.includes(sc));
         };
 
         if (check(type1)) return true;
         if (check(type2)) return true;
-        if (arr && arr.some(a => check(a))) return true;
+        if (arr && Array.isArray(arr) && arr.some(a => check(a))) return true;
+        
         return false;
       };
 
@@ -208,12 +209,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
-        .gte('date', today)
-        .eq('status', 'scheduled');
+        .gte('date', today);
 
       if (calData) {
-        const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
-          .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+        // Status එක Scheduled ද යන්න JS මගින් ෆිල්ටර් කිරීම (Case-insensitive)
+        const filteredCal = calData.filter(ev => {
+          const statusStr = String(ev.status || '').toLowerCase().trim();
+          const isScheduled = statusStr === 'scheduled';
+          return isScheduled && isMatch(ev.class_type, ev.target_class_type);
+        }).sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+        
         setCalendarEvents(filteredCal);
       }
 
@@ -221,12 +226,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
-        .in('status', ['scheduled', 'live'])
         .gte('date', today);
 
       if (liveData) {
-        const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, cls.class_type, cls.target_classes))
-          .sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+        const filteredLive = liveData.filter((cls: any) => {
+          const statusStr = String(cls.status || '').toLowerCase().trim();
+          const isLiveOrScheduled = statusStr === 'scheduled' || statusStr === 'live';
+          return isLiveOrScheduled && isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
+        }).sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+        
         setScheduledLives(filteredLive);
       }
     } catch (error) {
@@ -240,14 +248,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (isLoading) return;
     
     const interval = setInterval(() => {
-      const live = scheduledLives.find(c => c.status === 'live');
+      const live = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'live');
       if (live) {
         setTargetClass(live);
         setViewState('live');
         return;
       }
 
-      const nextLive = scheduledLives.find(c => c.status === 'scheduled');
+      const nextLive = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'scheduled');
       
       if (nextLive) {
         setTargetClass(nextLive);
@@ -355,7 +363,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">වේලාව:</span>
-                  {/* 12 HOUR FORMAT DISPLAY */}
                   <span className="text-gray-100 font-medium">{formatTo12Hour(ev.start_time)}</span>
                 </div>
               </div>
