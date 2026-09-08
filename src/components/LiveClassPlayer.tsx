@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { format, differenceInSeconds, parse } from 'date-fns';
+import { Maximize2, Minimize2 } from 'lucide-react'; // Icons සඳහා (lucide-react install කර නොමැති නම් ඉවත් කළ හැක)
 
 interface Student {
   username: string;
@@ -8,22 +9,32 @@ interface Student {
   free_months: string[];
 }
 
-// AdminLiveControls එකේ Database සකසා ඇති ආකාරයටම අලුත් කළ Interface එක
+// 1. Calendar Events සඳහා අලුතින් එක් කළ Interface එක (ඔබගේ තිරපිටපත් වලට අනුව)
+interface CalendarEvent {
+  id: string;
+  date: string;
+  title: string;
+  description: string;
+  status: string;
+  target_class_type: string;
+  class_type: string;
+  start_time: string;
+}
+
+// 2. Scheduled Lives (Zoom දත්ත සහ Countdown සඳහා)
 interface ScheduledLive {
   id: string;
   title: string;
   date: string;
   time: string;
-  target_class_type: string; // ප්‍රධාන පන්ති වර්ගය (Admin's mainClassType)
-  target_classes: string[];  // ඉලක්කගත පන්ති ලැයිස්තුව (Array)
-  target_month: string;      // ඉලක්කගත මාසය
-  pre_class_video_path: string; // Admin සකසන Waiting Video එක
-  status: string; // 'scheduled', 'live', 'ended'
+  target_class_type: string;
+  target_month: string;
+  pre_class_video_path: string;
+  status: string;
   zoom_join_url: string;
-  zoom_meeting_id: string;
 }
 
-// Zoom Web Client URL එක නිර්මාණය කිරීම සහ Passcode/Name Auto-fill කිරීම
+// Zoom Web Client URL එක නිර්මාණය කිරීම
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
@@ -31,7 +42,6 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
     if (url.pathname.includes('/j/')) {
       url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
     }
-    
     const pwd = url.searchParams.get('pwd');
     if (userName) {
       try {
@@ -41,18 +51,14 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
         url.searchParams.set('name', userName);
       }
     }
-    if (pwd) {
-      url.searchParams.set('pwd', pwd);
-    }
+    if (pwd) url.searchParams.set('pwd', pwd);
     url.searchParams.set('prefer', '1');
     return url.toString();
   } catch (error) {
-    console.error('Invalid Zoom URL', error);
     return joinUrl;
   }
 };
 
-// Class Type එක අනුව වර්ණයක් ලබා දීමේ Function එක
 const getClassColor = (type: string) => {
   if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
   const colors = [
@@ -61,150 +67,154 @@ const getClassColor = (type: string) => {
     'bg-pink-500/10 text-pink-400 border-pink-500/20',
     'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
     'bg-green-500/10 text-green-400 border-green-500/20',
-    'bg-rose-500/10 text-rose-400 border-rose-500/20',
     'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   ];
   let hash = 0;
-  for (let i = 0; i < type.length; i++) {
-    hash = type.charCodeAt(i) + ((hash << 5) - hash);
-  }
+  for (let i = 0; i < type.length; i++) hash = type.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
 
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
-  const [allClasses, setAllClasses] = useState<ScheduledLive[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [viewState, setViewState] = useState<'loading' | 'live' | 'waiting-0s' | 'waiting-30m' | 'waiting-24h' | 'upcoming-list' | 'no-classes'>('loading');
   const [targetClass, setTargetClass] = useState<ScheduledLive | null>(null);
   const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
+  
+  // Fullscreen State
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
 
   const studentName = currentUser?.username || 'Student';
 
   useEffect(() => {
-    fetchClassData();
-    
-    // දත්ත ගබඩාවේ වෙනසක් වූ සැනින් යාවත්කාලීන වීම (Realtime updates)
+    fetchData();
     const subscription = supabase
       .channel('live-class-updates')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'scheduled_lives' },
-        () => {
-          fetchClassData();
-        }
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => fetchData())
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(subscription);
-    };
+    return () => { supabase.removeChannel(subscription); };
   }, [currentUser]);
 
-  const fetchClassData = async () => {
+  const fetchData = async () => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
-      
-      const { data, error } = await supabase
+      const studentClasses = currentUser?.class_types || [];
+
+      // 1. Fetch Calendar Events (ඉදිරි දින ලැයිස්තුව සඳහා)
+      const { data: calData } = await supabase
+        .from('calendar_events')
+        .select('*')
+        .gte('date', today)
+        .eq('status', 'scheduled');
+
+      if (calData) {
+        const filteredCal = calData.filter(ev => 
+          studentClasses.includes(ev.class_type) || studentClasses.includes(ev.target_class_type)
+        ).sort((a, b) => parse(`${a.date} ${a.start_time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - parse(`${b.date} ${b.start_time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime());
+        setCalendarEvents(filteredCal);
+      }
+
+      // 2. Fetch Scheduled Lives (Zoom ලින්ක් සහ Countdown සඳහා)
+      const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
         .in('status', ['scheduled', 'live'])
         .gte('date', today);
 
-      if (error) throw error;
-
-      if (data) {
-        // සිසුවාගේ පන්ති වලට ගැලපෙන පන්ති පමණක් පෙරීම (Filter by arrays)
-        const studentClasses = currentUser?.class_types || [];
-        const filteredData = data.filter((cls: ScheduledLive) => {
-          if (!cls.target_classes || !Array.isArray(cls.target_classes)) return false;
-          // සිසුවාගේ විෂයන් සහ පන්තියේ විෂයන් අතර ගැළපීමක් ඇත්දැයි බැලීම
-          return cls.target_classes.some(tc => studentClasses.includes(tc));
-        });
-
-        // කාලය අනුව නිවැරදිව පෙළගැස්වීම (Sorting by exact DateTime)
-        const sortedData = filteredData.sort((a, b) => {
-          const timeA = parse(`${a.date} ${a.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
-          const timeB = parse(`${b.date} ${b.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
-          return timeA - timeB;
-        });
-        
-        setAllClasses(sortedData);
+      if (liveData) {
+        const filteredLive = liveData.filter((cls: any) => 
+          studentClasses.includes(cls.target_class_type) || 
+          (cls.target_classes && cls.target_classes.some((tc: string) => studentClasses.includes(tc)))
+        ).sort((a, b) => parse(`${a.date} ${a.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - parse(`${b.date} ${b.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime());
+        setScheduledLives(filteredLive);
       }
     } catch (error) {
-      console.error('Error fetching classes:', error);
+      console.error('Error fetching data:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Timer සහ UI View State පාලනය කරන ප්‍රධාන කොටස
   useEffect(() => {
     if (isLoading) return;
     
-    if (allClasses.length === 0) {
-      setViewState('no-classes');
-      return;
-    }
-
     const interval = setInterval(() => {
-      // 1. දැනට ලයිව් එකක් ඇත්දැයි බැලීම
-      const live = allClasses.find(c => c.status === 'live');
+      // ලයිව් එකක් ඇත්දැයි බැලීම (scheduled_lives හරහා)
+      const live = scheduledLives.find(c => c.status === 'live');
       if (live) {
         setTargetClass(live);
         setViewState('live');
         return;
       }
 
-      // 2. ලයිව් නැත්නම්, මීළඟට නියමිත ළඟම පන්තිය ලබා ගැනීම
-      const nextScheduled = allClasses.find(c => c.status === 'scheduled');
-      if (!nextScheduled) {
-        setViewState('no-classes');
-        return;
-      }
+      // මීළඟ Zoom පන්තිය ලබා ගැනීම
+      const nextLive = scheduledLives.find(c => c.status === 'scheduled');
+      
+      if (nextLive) {
+        setTargetClass(nextLive);
+        const classDateTime = parse(`${nextLive.date} ${nextLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
+        const diffSeconds = differenceInSeconds(classDateTime, new Date());
 
-      setTargetClass(nextScheduled);
-      const classDateTime = parse(`${nextScheduled.date} ${nextScheduled.time}`, 'yyyy-MM-dd HH:mm', new Date());
-      const now = new Date();
-      const diffSeconds = differenceInSeconds(classDateTime, now);
-
-      // තත්පර 86400 යනු හරියටම පැය 24කි.
-      if (diffSeconds > 86400) { 
-        // ළඟම පන්තියට පැය 24 කට වඩා කාලයක් තිබේ නම් List එක පෙන්වීම
-        setViewState('upcoming-list');
-      } 
-      else if (diffSeconds > 1800) { 
-        // පැය 24 තුළට පැමිණි පසු (විනාඩි 30 දක්වා) -> List එක ඉවත්වී Countdown එක පෙන්වීම
-        setViewState('waiting-24h');
-        setTimer({
-          h: Math.floor(diffSeconds / 3600),
-          m: Math.floor((diffSeconds % 3600) / 60),
-          s: diffSeconds % 60
-        });
-      } 
-      else if (diffSeconds > 0) { 
-        // අවසන් විනාඩි 30 (වීඩියෝව සමග Pulsing කවුන්ඩවුන් එක)
-        setViewState('waiting-30m');
-        setTimer({ h: 0, m: Math.floor(diffSeconds / 60), s: diffSeconds % 60 });
-      } 
-      else { 
-        // තත්පර 0 වූ පසු (කවුන්ඩවුන් නැත, වීඩියෝව සහ පණිවිඩය පමණි)
-        setViewState('waiting-0s');
+        if (diffSeconds > 86400) {
+           setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
+        } else if (diffSeconds > 1800) {
+          setViewState('waiting-24h');
+          setTimer({ h: Math.floor(diffSeconds / 3600), m: Math.floor((diffSeconds % 3600) / 60), s: diffSeconds % 60 });
+        } else if (diffSeconds > 0) {
+          setViewState('waiting-30m');
+          setTimer({ h: 0, m: Math.floor(diffSeconds / 60), s: diffSeconds % 60 });
+        } else {
+          setViewState('waiting-0s');
+        }
+      } else {
+        // Scheduled Zoom එකක් නැතිනම්, Calendar Events තියෙනවද බලමු
+        setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [allClasses, isLoading]);
+  }, [scheduledLives, calendarEvents, isLoading]);
+
+  // Mobile Fullscreen API Handling (Auto-rotate to landscape)
+  const toggleFullscreen = async () => {
+    if (!playerContainerRef.current) return;
+    
+    try {
+      if (!document.fullscreenElement) {
+        await playerContainerRef.current.requestFullscreen();
+        setIsFullscreen(true);
+        // ජංගම දුරකථනය Landscape කිරීමට උත්සාහ කිරීම
+        if (window.screen.orientation && window.screen.orientation.lock) {
+          window.screen.orientation.lock('landscape').catch(() => {});
+        }
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+        if (window.screen.orientation && window.screen.orientation.unlock) {
+          window.screen.orientation.unlock();
+        }
+      }
+    } catch (err) {
+      console.error("Fullscreen error", err);
+    }
+  };
+
+  // Fullscreen වෙනසක් වූ විට state එක අප්ඩේට් කිරීම
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
 
   if (isLoading || viewState === 'loading') {
-    return (
-      <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">
-        දත්ත පූරණය වෙමින් පවතී...
-      </div>
-    );
+    return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
   }
 
-  // 1. ඉදිරි දින සඳහා පන්ති නොමැති විට
+  // 1. පන්ති නොමැති විට
   if (viewState === 'no-classes') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
@@ -216,34 +226,26 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 2. පැය 24 ට වඩා කල් ඇති පන්ති ලිස්ට් එක පෙන්වීම
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන් පෙන්වීම)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold text-gray-200 mb-8 mt-4 text-center">ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති</h2>
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {allClasses.filter(c => c.status === 'scheduled').map((cls, idx) => (
-            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(cls.target_class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
-              <div className="flex justify-between items-start mb-4">
-                <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm">
-                  {cls.target_class_type}
-                </span>
-                {cls.target_month && (
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/20">
-                    {cls.target_month}
-                  </span>
-                )}
-              </div>
-              
-              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{cls.title}</h3>
+          {calendarEvents.map((ev, idx) => (
+            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
+                {ev.target_class_type || ev.class_type}
+              </span>
+              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
               <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">දිනය:</span>
-                  <span className="text-gray-100 font-medium">{cls.date}</span>
+                  <span className="text-gray-100 font-medium">{ev.date}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">වේලාව:</span>
-                  <span className="text-gray-100 font-medium">{cls.time}</span>
+                  <span className="text-gray-100 font-medium">{ev.start_time}</span>
                 </div>
               </div>
             </div>
@@ -256,114 +258,102 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
       
-      {/* 3. පැය 24 කවුන්ඩවුන් එක (වීඩියෝ නොමැතිව) */}
+      {/* 3. පැය 24 කවුන්ඩවුන් එක */}
       {viewState === 'waiting-24h' && targetClass && (
-        <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative overflow-hidden">
+        <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
             <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
               {targetClass.target_class_type}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
             <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
-            
             <div className="flex gap-3 md:gap-6 text-center">
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 md:w-24 md:h-24 bg-black border border-gray-700 rounded-xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-white shadow-inner">
-                  {String(timer.h).padStart(2, '0')}
+              {['h', 'm', 's'].map((unit) => (
+                <div key={unit} className="flex flex-col items-center">
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-black border border-gray-700 rounded-xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-white shadow-inner">
+                    {String(unit === 'h' ? timer.h : unit === 'm' ? timer.m : timer.s).padStart(2, '0')}
+                  </div>
+                  <span className="text-gray-500 text-xs md:text-sm mt-2 font-medium">
+                    {unit === 'h' ? 'පැය' : unit === 'm' ? 'විනාඩි' : 'තත්පර'}
+                  </span>
                 </div>
-                <span className="text-gray-500 text-xs md:text-sm mt-2 font-medium">පැය</span>
-              </div>
-              <div className="text-3xl md:text-5xl font-black text-gray-700 mt-2 md:mt-4">:</div>
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 md:w-24 md:h-24 bg-black border border-gray-700 rounded-xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-white shadow-inner">
-                  {String(timer.m).padStart(2, '0')}
-                </div>
-                <span className="text-gray-500 text-xs md:text-sm mt-2 font-medium">විනාඩි</span>
-              </div>
-              <div className="text-3xl md:text-5xl font-black text-gray-700 mt-2 md:mt-4">:</div>
-              <div className="flex flex-col items-center">
-                <div className="w-16 h-16 md:w-24 md:h-24 bg-black border border-gray-700 rounded-xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-white shadow-inner">
-                  {String(timer.s).padStart(2, '0')}
-                </div>
-                <span className="text-gray-500 text-xs md:text-sm mt-2 font-medium">තත්පර</span>
-              </div>
+              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. අවසන් විනාඩි 30 (Video + Pulsing Countdown) */}
+      {/* 4. අවසන් විනාඩි 30 */}
       {viewState === 'waiting-30m' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-900 border border-gray-800 shadow-2xl">
-          <video 
-            autoPlay loop muted playsInline controls={false}
-            className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none"
-          >
-            {/* Admin ලබාදුන් වීඩියෝව හෝ සාමාන්‍ය වීඩියෝව භාවිතය */}
+          <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none">
             <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
-          <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-[90%] md:w-full mx-4 shadow-2xl">
-            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 shadow-sm ${getClassColor(targetClass.target_class_type)}`}>
+          <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl">
+            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type)}`}>
               {targetClass.target_class_type}
             </span>
-            <h2 className="text-lg md:text-xl text-gray-200 text-center mb-6 font-medium">
-              පන්තිය ආරම්භ වීමට තව...
-            </h2>
-            <div className="text-6xl md:text-8xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
+            <h2 className="text-lg md:text-xl text-gray-200 mb-6">පන්තිය ආරම්භ වීමට තව...</h2>
+            <div className="text-6xl md:text-8xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
               {String(timer.m).padStart(2, '0')}:{String(timer.s).padStart(2, '0')}
             </div>
           </div>
         </div>
       )}
 
-      {/* 5. තත්පර 0 වූ පසු ගුරුවරයා එනතෙක් රැඳී සිටීම (0s Threshold) */}
+      {/* 5. තත්පර 0 වූ පසු */}
       {viewState === 'waiting-0s' && targetClass && (
-        <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-950 border border-green-500/40 shadow-[0_0_40px_rgba(34,197,94,0.15)]">
-          <video 
-            autoPlay loop muted playsInline controls={false}
-            className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none"
-          >
+        <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-950 border border-green-500/40">
+          <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none">
             <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
-          <div className="relative z-10 flex flex-col items-center p-6 md:p-10 bg-black/70 rounded-3xl backdrop-blur-lg border border-green-500/30 max-w-xl w-[90%] md:w-full mx-4 text-center shadow-2xl">
-            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-5 border border-green-500/30">
-              <span className="relative flex h-6 w-6">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-6 w-6 bg-green-500"></span>
-              </span>
-            </div>
-            <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full mb-3 ${getClassColor(targetClass.target_class_type)}`}>
-              {targetClass.target_class_type}
-            </span>
-            <h2 className="text-2xl md:text-3xl font-bold text-white mb-4 leading-tight">{targetClass.title}</h2>
-            <div className="bg-green-500/10 px-5 py-3 rounded-xl border border-green-500/20 w-full">
-              <p className="text-green-400 text-base md:text-lg font-medium">
-                ගුරුවරයා පන්තිය ආරම්භ කරන තෙක් රැඳී සිටින්න...
-              </p>
+          <div className="relative z-10 flex flex-col items-center p-6 bg-black/70 rounded-3xl backdrop-blur-lg border border-green-500/30 text-center shadow-2xl">
+            <span className="animate-ping h-4 w-4 rounded-full bg-green-500 mb-4"></span>
+            <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">{targetClass.title}</h2>
+            <div className="bg-green-500/10 px-5 py-3 rounded-xl border border-green-500/20">
+              <p className="text-green-400 font-medium">ගුරුවරයා පන්තිය ආරම්භ කරන තෙක් රැඳී සිටින්න...</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* 6. Live තත්ත්වයට පත් වූ විට (Zoom Player එක) */}
+      {/* 6. Live Zoom Player (With API Fullscreen Button) */}
       {viewState === 'live' && targetClass && (
-        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.15)]">
-          <div className="bg-green-950/60 text-green-400 px-4 py-3 flex items-center gap-3 font-semibold border-b border-green-500/20 text-sm md:text-base">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-            </span>
-            සජීවී විකාශය ක්‍රියාත්මකයි: {targetClass.target_class_type} - {targetClass.title}
+        <div 
+          ref={playerContainerRef} 
+          className={`flex flex-col bg-gray-900 border border-green-500/30 overflow-hidden ${isFullscreen ? 'w-screen h-screen fixed inset-0 z-[99999]' : 'flex-1 rounded-2xl shadow-[0_0_30px_rgba(34,197,94,0.15)]'}`}
+        >
+          {/* Header Bar with Fullscreen Toggle */}
+          <div className="bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-10">
+            <div className="flex items-center gap-3 font-semibold">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+              </span>
+              සජීවී: {targetClass.title}
+            </div>
+            
+            {/* ජංගම දුරකථන සඳහා විශේෂිත Fullscreen Button එක */}
+            <button 
+              onClick={toggleFullscreen} 
+              className="bg-green-500/20 hover:bg-green-500/40 text-green-300 p-2 rounded-lg transition border border-green-500/30 flex items-center gap-2"
+              title="Toggle Fullscreen"
+            >
+              {isFullscreen ? (
+                <><Minimize2 size={16} /> <span className="hidden md:inline text-xs">Exit Fullscreen</span></>
+              ) : (
+                <><Maximize2 size={16} /> <span className="hidden md:inline text-xs">Full Screen</span></>
+              )}
+            </button>
           </div>
           
-          <div className="w-full h-[70vh] md:h-[80vh] bg-white relative">
-            {/* TS Error එක මඟ හැරීමට allowFullScreen පමණක් භාවිතා කර ඇත */}
+          <div className={`w-full bg-white relative ${isFullscreen ? 'h-[calc(100vh-44px)]' : 'h-[70vh] md:h-[80vh]'}`}>
             <iframe 
               src={getEmbeddableZoomUrl(targetClass.zoom_join_url, studentName)} 
               allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *"
               allowFullScreen={true}
               sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals"
-              className="absolute inset-0 w-full h-full border-0 rounded-b-2xl"
+              className="absolute inset-0 w-full h-full border-0"
               title="Zoom Web Client"
             />
           </div>
