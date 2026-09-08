@@ -41,7 +41,7 @@ const formatTo12Hour = (timeStr: string) => {
     let hour = parseInt(hourStr, 10);
     const ampm = hour >= 12 ? 'PM' : 'AM';
     hour = hour % 12;
-    hour = hour ? hour : 12; // 0 නම් 12 ලෙස සකසයි
+    hour = hour ? hour : 12; 
     return `${hour.toString().padStart(2, '0')}:${minuteStr} ${ampm}`;
   } catch (error) {
     return timeStr;
@@ -104,7 +104,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
-  // WakeLock Effect: සජීවී පන්තියක සිටින විට Screen එක Off වීම වැලැක්වීම
+  // WakeLock Effect
   useEffect(() => {
     const requestWakeLock = async () => {
       if (viewState === 'live' && 'wakeLock' in navigator) {
@@ -183,46 +183,77 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      // සිසුවාගේ පන්ති ලබා ගැනීම (StudentRecordings හි ඇති ක්‍රමයටම)
-      const studentClasses = (currentUser?.class_types || []).map(c => String(c).toLowerCase().trim());
-      const hasClasses = studentClasses.length > 0;
+      // 1. Supabase හි ඇති Array ගැටළු මගහැර නිවැරදිව පන්ති වෙන් කරගැනීම
+      let rawClasses = currentUser?.class_types || [];
+      let studentClasses: string[] = [];
+      
+      if (typeof rawClasses === 'string') {
+          try { rawClasses = JSON.parse(rawClasses); } catch(e) { rawClasses = [rawClasses]; }
+      }
+      
+      if (Array.isArray(rawClasses)) {
+          rawClasses.forEach(c => {
+              if (typeof c === 'string' && c.startsWith('[')) {
+                  try {
+                      const parsed = JSON.parse(c);
+                      if (Array.isArray(parsed)) studentClasses.push(...parsed);
+                      else studentClasses.push(c);
+                  } catch { studentClasses.push(c); }
+              } else if (c) {
+                  studentClasses.push(String(c));
+              }
+          });
+      }
 
-      // 100% නිවැරදි Class Matching ලොජික් එක 
-      const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
+      // අවසන් පන්ති ලැයිස්තුව (Recordings Section එකේ පරිදිම)
+      const cleanStudentClasses = studentClasses.filter(Boolean).map(c => c.toLowerCase().trim());
+      const hasClasses = cleanStudentClasses.length > 0;
+
+      // 100% අදාළ පන්ති පමණක් තෝරන Matching Logic එක
+      const isMatch = (type1?: string, type2?: string, arr?: any) => {
         if (!hasClasses) return false; 
         
-        const check = (val?: string) => {
-          if (!val) return false;
-          const v = String(val).toLowerCase().trim();
-          // හරියටම සමානද, නැතහොත් එකක අනෙක අන්තර්ගතදැයි පරීක්ෂා කිරීම (More forgiving match)
-          return studentClasses.some(sc => sc === v || sc.includes(v) || v.includes(sc));
+        const check = (targetVal?: string) => {
+          if (!targetVal) return false;
+          const rClass = String(targetVal).toLowerCase().trim();
+          
+          return cleanStudentClasses.some(sc => sc === rClass || sc.includes(rClass) || rClass.includes(sc));
         };
 
         if (check(type1)) return true;
         if (check(type2)) return true;
-        if (arr && Array.isArray(arr) && arr.some(a => check(a))) return true;
         
+        if (arr) {
+            if (Array.isArray(arr) && arr.some(a => check(a))) return true;
+            if (typeof arr === 'string') {
+                try {
+                    const parsed = JSON.parse(arr);
+                    if (Array.isArray(parsed) && parsed.some(a => check(a))) return true;
+                } catch {
+                    if (check(arr)) return true;
+                }
+            }
+        }
         return false;
       };
 
-      // 1. Calendar Events
+      // 2. Calendar Events ලබාගැනීම
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
         .gte('date', today);
 
       if (calData) {
-        // Status එක Scheduled ද යන්න JS මගින් ෆිල්ටර් කිරීම (Case-insensitive)
         const filteredCal = calData.filter(ev => {
           const statusStr = String(ev.status || '').toLowerCase().trim();
-          const isScheduled = statusStr === 'scheduled';
-          return isScheduled && isMatch(ev.class_type, ev.target_class_type);
+          const isNotCancelled = statusStr !== 'cancelled' && statusStr !== 'ended'; // දැඩි Status ෆිල්ටර් කිරීම ඉවත් කර ඇත
+          return isNotCancelled && isMatch(ev.class_type, ev.target_class_type);
         }).sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         
         setCalendarEvents(filteredCal);
       }
 
-      // 2. Scheduled Lives
+      // 3. Scheduled Lives ලබාගැනීම
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -231,8 +262,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       if (liveData) {
         const filteredLive = liveData.filter((cls: any) => {
           const statusStr = String(cls.status || '').toLowerCase().trim();
-          const isLiveOrScheduled = statusStr === 'scheduled' || statusStr === 'live';
-          return isLiveOrScheduled && isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
+          const isValidStatus = ['scheduled', 'live', 'active', 'published'].includes(statusStr);
+          return isValidStatus && isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
         }).sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
         
         setScheduledLives(filteredLive);
@@ -246,8 +277,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   useEffect(() => {
     if (isLoading) return;
-    
-    const interval = setInterval(() => {
+
+    const updateViewState = () => {
       const live = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'live');
       if (live) {
         setTargetClass(live);
@@ -255,11 +286,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
-      const nextLive = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'scheduled');
+      const nextLive = scheduledLives.find(c => ['scheduled', 'active', 'published'].includes(String(c.status).toLowerCase().trim()));
       
       if (nextLive) {
         setTargetClass(nextLive);
-        const classDateTime = new Date(`${nextLive.date}T${nextLive.time}:00`);
+        const classDateTime = new Date(`${nextLive.date}T${nextLive.time || '00:00'}:00`);
         const diffSeconds = differenceInSeconds(classDateTime, new Date());
 
         if (diffSeconds > 86400) {
@@ -276,7 +307,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       } else {
         setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
       }
-    }, 1000);
+    };
+
+    updateViewState(); // Initial load එකේදී තත්පරයක් ප්‍රමාද වීම වැළැක්වීමට
+    const interval = setInterval(updateViewState, 1000);
 
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading]);
