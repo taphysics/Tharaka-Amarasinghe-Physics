@@ -5,7 +5,7 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 
 interface Student {
   username: string;
-  class_types: string[]; 
+  class_types: any; 
   free_months: string[];
 }
 
@@ -15,8 +15,8 @@ interface CalendarEvent {
   title: string;
   description: string;
   status: string;
-  target_class_type: string;
-  class_type: string;
+  target_class_type: any;
+  class_type: any;
   start_time: string;
 }
 
@@ -25,8 +25,8 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
-  target_class_type: string;
-  target_classes: string[];
+  target_class_type: any;
+  target_classes: any;
   target_month: string;
   pre_class_video_path: string;
   status: string;
@@ -72,8 +72,21 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-const getClassColor = (type: string) => {
-  if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
+const formatClassLabel = (val: any): string => {
+  if (!val) return '';
+  if (Array.isArray(val)) return val.join(', ');
+  if (typeof val === 'string' && val.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed.join(', ');
+    } catch {}
+  }
+  return String(val);
+};
+
+const getClassColor = (type: any) => {
+  const strType = formatClassLabel(type);
+  if (!strType) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
   const colors = [
     'bg-blue-500/10 text-blue-400 border-blue-500/20',
     'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -83,7 +96,7 @@ const getClassColor = (type: string) => {
     'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   ];
   let hash = 0;
-  for (let i = 0; i < type.length; i++) hash = type.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < strType.length; i++) hash = strType.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 };
 
@@ -183,8 +196,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      // 1. Supabase හි ඇති Array ගැටළු මගහැර නිවැරදිව පන්ති වෙන් කරගැනීම
-      let rawClasses = currentUser?.class_types || [];
+      let rawClasses: any = currentUser?.class_types || [];
       let studentClasses: string[] = [];
       
       if (typeof rawClasses === 'string') {
@@ -205,55 +217,50 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           });
       }
 
-      // අවසන් පන්ති ලැයිස්තුව (Recordings Section එකේ පරිදිම)
-      const cleanStudentClasses = studentClasses.filter(Boolean).map(c => c.toLowerCase().trim());
+      const cleanStudentClasses = studentClasses.filter(Boolean).map(c => String(c).toLowerCase().trim());
       const hasClasses = cleanStudentClasses.length > 0;
 
-      // 100% අදාළ පන්ති පමණක් තෝරන Matching Logic එක
-      const isMatch = (type1?: string, type2?: string, arr?: any) => {
+      const isMatch = (val1?: any, val2?: any, val3?: any): boolean => {
         if (!hasClasses) return false; 
         
-        const check = (targetVal?: string) => {
+        const check = (targetVal?: any): boolean => {
           if (!targetVal) return false;
-          const rClass = String(targetVal).toLowerCase().trim();
           
+          if (Array.isArray(targetVal)) {
+            return targetVal.some(v => check(v));
+          }
+          
+          if (typeof targetVal === 'string' && targetVal.startsWith('[')) {
+            try {
+              const parsed = JSON.parse(targetVal);
+              if (Array.isArray(parsed)) {
+                return parsed.some(v => check(v));
+              }
+            } catch (e) {}
+          }
+          
+          const rClass = String(targetVal).toLowerCase().trim();
           return cleanStudentClasses.some(sc => sc === rClass || sc.includes(rClass) || rClass.includes(sc));
         };
 
-        if (check(type1)) return true;
-        if (check(type2)) return true;
-        
-        if (arr) {
-            if (Array.isArray(arr) && arr.some(a => check(a))) return true;
-            if (typeof arr === 'string') {
-                try {
-                    const parsed = JSON.parse(arr);
-                    if (Array.isArray(parsed) && parsed.some(a => check(a))) return true;
-                } catch {
-                    if (check(arr)) return true;
-                }
-            }
-        }
-        return false;
+        return check(val1) || check(val2) || check(val3);
       };
 
-      // 2. Calendar Events ලබාගැනීම
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
         .gte('date', today);
 
       if (calData) {
-        const filteredCal = calData.filter(ev => {
+        const filteredCal = calData.filter((ev: any) => {
           const statusStr = String(ev.status || '').toLowerCase().trim();
-          const isNotCancelled = statusStr !== 'cancelled' && statusStr !== 'ended'; // දැඩි Status ෆිල්ටර් කිරීම ඉවත් කර ඇත
+          const isNotCancelled = statusStr !== 'cancelled' && statusStr !== 'ended'; 
           return isNotCancelled && isMatch(ev.class_type, ev.target_class_type);
-        }).sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+        }).sort((a: any, b: any) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         
         setCalendarEvents(filteredCal);
       }
 
-      // 3. Scheduled Lives ලබාගැනීම
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -264,7 +271,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           const statusStr = String(cls.status || '').toLowerCase().trim();
           const isValidStatus = ['scheduled', 'live', 'active', 'published'].includes(statusStr);
           return isValidStatus && isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
-        }).sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+        }).sort((a: any, b: any) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
         
         setScheduledLives(filteredLive);
       }
@@ -274,6 +281,32 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       setIsLoading(false);
     }
   };
+
+  // ✅ New Logic: අනාගත පන්ති දෙවර්ගයම එකට එකතු කර ලැයිස්තුවක් සෑදීම
+  const allUpcomingClasses = [
+    ...calendarEvents.map(ev => ({
+      id: ev.id,
+      title: ev.title,
+      date: ev.date,
+      time: ev.start_time,
+      type: ev.target_class_type || ev.class_type
+    })),
+    ...scheduledLives.map(live => ({
+      id: live.id,
+      title: live.title,
+      date: live.date,
+      time: live.time,
+      type: live.target_class_type || live.target_classes
+    }))
+  ].filter(cls => {
+    try {
+      const dt = new Date(`${cls.date}T${cls.time || '00:00'}:00`);
+      return differenceInSeconds(dt, new Date()) > 0;
+    } catch(e) { return false; }
+  }).sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+
+  // ✅ එකම පන්තිය දෙවරක් ඇතුලත් වී ඇත්නම් ඉවත් කිරීම (Remove duplicates)
+  const uniqueUpcomingClasses = Array.from(new Map(allUpcomingClasses.map(item => [item.title + item.date, item])).values());
 
   useEffect(() => {
     if (isLoading) return;
@@ -293,8 +326,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         const classDateTime = new Date(`${nextLive.date}T${nextLive.time || '00:00'}:00`);
         const diffSeconds = differenceInSeconds(classDateTime, new Date());
 
+        // ✅ මීළඟ පන්තිය පැය 24කට වඩා දුරින් නම් (Upcoming List එක පෙන්වන්න)
         if (diffSeconds > 86400) {
-           setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
+           setViewState(uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes');
         } else if (diffSeconds > 1800) {
           setViewState('waiting-24h');
           setTimer({ h: Math.floor(diffSeconds / 3600), m: Math.floor((diffSeconds % 3600) / 60), s: diffSeconds % 60 });
@@ -305,15 +339,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           setViewState('waiting-0s');
         }
       } else {
-        setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
+        // ✅ NextLive එකක් නැතත්, අනාගත පන්ති ඇත්නම් ඒවා පෙන්වීම.
+        setViewState(uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes');
       }
     };
 
-    updateViewState(); // Initial load එකේදී තත්පරයක් ප්‍රමාද වීම වැළැක්වීමට
+    updateViewState(); 
     const interval = setInterval(updateViewState, 1000);
 
     return () => clearInterval(interval);
-  }, [scheduledLives, calendarEvents, isLoading]);
+  }, [scheduledLives, calendarEvents, isLoading, uniqueUpcomingClasses.length]);
 
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
@@ -384,10 +419,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold text-gray-200 mb-8 mt-4 text-center">ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති</h2>
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {calendarEvents.map((ev, idx) => (
-            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+          {uniqueUpcomingClasses.map((ev, idx) => (
+            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
               <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
-                {ev.target_class_type || ev.class_type}
+                {formatClassLabel(ev.type)}
               </span>
               <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
               <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
@@ -397,7 +432,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">වේලාව:</span>
-                  <span className="text-gray-100 font-medium">{formatTo12Hour(ev.start_time)}</span>
+                  <span className="text-gray-100 font-medium">{formatTo12Hour(ev.time)}</span>
                 </div>
               </div>
             </div>
@@ -414,7 +449,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
             <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
-              {targetClass.target_class_type}
+              {formatClassLabel(targetClass.target_class_type)}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
             <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
@@ -441,7 +476,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           </video>
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl">
             <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type)}`}>
-              {targetClass.target_class_type}
+              {formatClassLabel(targetClass.target_class_type)}
             </span>
             <h2 className="text-lg md:text-xl text-gray-200 mb-6">පන්තිය ආරම්භ වීමට තව...</h2>
             <div className="text-6xl md:text-8xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
