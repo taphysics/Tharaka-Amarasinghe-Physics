@@ -4,18 +4,20 @@ import { format, differenceInSeconds, parse } from 'date-fns';
 
 interface Student {
   username: string;
-  class_types: string[];
+  class_types: string[]; // සිසුවා තෝරාගෙන ඇති පන්ති
   free_months: string[];
 }
 
+// AdminLiveControls එකේ Database සකසා ඇති ආකාරයටම අලුත් කළ Interface එක
 interface ScheduledLive {
   id: string;
   title: string;
   date: string;
   time: string;
-  class_type: string;
-  target_class_type?: string;
-  target_month: string;
+  target_class_type: string; // ප්‍රධාන පන්ති වර්ගය (Admin's mainClassType)
+  target_classes: string[];  // ඉලක්කගත පන්ති ලැයිස්තුව (Array)
+  target_month: string;      // ඉලක්කගත මාසය
+  pre_class_video_path: string; // Admin සකසන Waiting Video එක
   status: string; // 'scheduled', 'live', 'ended'
   zoom_join_url: string;
   zoom_meeting_id: string;
@@ -52,6 +54,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
 
 // Class Type එක අනුව වර්ණයක් ලබා දීමේ Function එක
 const getClassColor = (type: string) => {
+  if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
   const colors = [
     'bg-blue-500/10 text-blue-400 border-blue-500/20',
     'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -101,27 +104,30 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      let query = supabase
+      const { data, error } = await supabase
         .from('scheduled_lives')
         .select('*')
         .in('status', ['scheduled', 'live'])
         .gte('date', today);
 
-      // සිසුවා තෝරාගෙන ඇති පන්ති වලට අදාළ දත්ත පමණක් පෙරීම (Filter by class_types)
-      if (currentUser?.class_types && currentUser.class_types.length > 0) {
-        query = query.in('class_type', currentUser.class_types);
-      }
-
-      const { data, error } = await query;
       if (error) throw error;
 
       if (data) {
+        // සිසුවාගේ පන්ති වලට ගැලපෙන පන්ති පමණක් පෙරීම (Filter by arrays)
+        const studentClasses = currentUser?.class_types || [];
+        const filteredData = data.filter((cls: ScheduledLive) => {
+          if (!cls.target_classes || !Array.isArray(cls.target_classes)) return false;
+          // සිසුවාගේ විෂයන් සහ පන්තියේ විෂයන් අතර ගැළපීමක් ඇත්දැයි බැලීම
+          return cls.target_classes.some(tc => studentClasses.includes(tc));
+        });
+
         // කාලය අනුව නිවැරදිව පෙළගැස්වීම (Sorting by exact DateTime)
-        const sortedData = data.sort((a, b) => {
+        const sortedData = filteredData.sort((a, b) => {
           const timeA = parse(`${a.date} ${a.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
           const timeB = parse(`${b.date} ${b.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
           return timeA - timeB;
         });
+        
         setAllClasses(sortedData);
       }
     } catch (error) {
@@ -149,7 +155,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
-      // 2. ලයිව් නැත්නම්, මීළඟට නියමිත පන්තිය ලබා ගැනීම
+      // 2. ලයිව් නැත්නම්, මීළඟට නියමිත ළඟම පන්තිය ලබා ගැනීම
       const nextScheduled = allClasses.find(c => c.status === 'scheduled');
       if (!nextScheduled) {
         setViewState('no-classes');
@@ -161,10 +167,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       const now = new Date();
       const diffSeconds = differenceInSeconds(classDateTime, now);
 
-      if (diffSeconds > 86400) { // පැය 24 ට වඩා වැඩි නම්
+      // තත්පර 86400 යනු හරියටම පැය 24කි.
+      if (diffSeconds > 86400) { 
+        // ළඟම පන්තියට පැය 24 කට වඩා කාලයක් තිබේ නම් List එක පෙන්වීම
         setViewState('upcoming-list');
       } 
-      else if (diffSeconds > 1800) { // විනාඩි 30 සිට පැය 24 දක්වා (වීඩියෝව නැත, සාමාන්‍ය කවුන්ඩවුන් එක)
+      else if (diffSeconds > 1800) { 
+        // පැය 24 තුළට පැමිණි පසු (විනාඩි 30 දක්වා) -> List එක ඉවත්වී Countdown එක පෙන්වීම
         setViewState('waiting-24h');
         setTimer({
           h: Math.floor(diffSeconds / 3600),
@@ -172,11 +181,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           s: diffSeconds % 60
         });
       } 
-      else if (diffSeconds > 0) { // අවසන් විනාඩි 30 (වීඩියෝව සමග Pulsing කවුන්ඩවුන් එක)
+      else if (diffSeconds > 0) { 
+        // අවසන් විනාඩි 30 (වීඩියෝව සමග Pulsing කවුන්ඩවුන් එක)
         setViewState('waiting-30m');
         setTimer({ h: 0, m: Math.floor(diffSeconds / 60), s: diffSeconds % 60 });
       } 
-      else { // තත්පර 0 වූ පසු (කවුන්ඩවුන් නැත, වීඩියෝව සහ පණිවිඩය පමණි)
+      else { 
+        // තත්පර 0 වූ පසු (කවුන්ඩවුන් නැත, වීඩියෝව සහ පණිවිඩය පමණි)
         setViewState('waiting-0s');
       }
     }, 1000);
@@ -212,10 +223,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         <h2 className="text-2xl md:text-3xl font-bold text-gray-200 mb-8 mt-4 text-center">ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති</h2>
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {allClasses.filter(c => c.status === 'scheduled').map((cls, idx) => (
-            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(cls.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
-              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 mb-4 inline-block shadow-sm">
-                {cls.class_type}
-              </span>
+            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(cls.target_class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+              <div className="flex justify-between items-start mb-4">
+                <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm">
+                  {cls.target_class_type}
+                </span>
+                {cls.target_month && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded border border-emerald-500/20">
+                    {cls.target_month}
+                  </span>
+                )}
+              </div>
+              
               <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{cls.title}</h3>
               <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
                 <div className="flex items-center justify-between">
@@ -241,8 +260,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       {viewState === 'waiting-24h' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative overflow-hidden">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
-            <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.class_type)}`}>
-              {targetClass.class_type}
+            <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
+              {targetClass.target_class_type}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
             <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
@@ -280,11 +299,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             autoPlay loop muted playsInline controls={false}
             className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none"
           >
-            <source src="/videos/waiting-video.mp4" type="video/mp4" />
+            {/* Admin ලබාදුන් වීඩියෝව හෝ සාමාන්‍ය වීඩියෝව භාවිතය */}
+            <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 max-w-lg w-[90%] md:w-full mx-4 shadow-2xl">
-            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 shadow-sm ${getClassColor(targetClass.class_type)}`}>
-              {targetClass.class_type}
+            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 shadow-sm ${getClassColor(targetClass.target_class_type)}`}>
+              {targetClass.target_class_type}
             </span>
             <h2 className="text-lg md:text-xl text-gray-200 text-center mb-6 font-medium">
               පන්තිය ආරම්භ වීමට තව...
@@ -299,12 +319,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       {/* 5. තත්පර 0 වූ පසු ගුරුවරයා එනතෙක් රැඳී සිටීම (0s Threshold) */}
       {viewState === 'waiting-0s' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-950 border border-green-500/40 shadow-[0_0_40px_rgba(34,197,94,0.15)]">
-          {/* මෙහිදී Video එක වඩාත් පැහැදිලිව පෙනීමට Opacity වැඩි කර ඇත */}
           <video 
             autoPlay loop muted playsInline controls={false}
             className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none"
           >
-            <source src="/videos/waiting-video.mp4" type="video/mp4" />
+            <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
           <div className="relative z-10 flex flex-col items-center p-6 md:p-10 bg-black/70 rounded-3xl backdrop-blur-lg border border-green-500/30 max-w-xl w-[90%] md:w-full mx-4 text-center shadow-2xl">
             <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mb-5 border border-green-500/30">
@@ -313,8 +332,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 <span className="relative inline-flex rounded-full h-6 w-6 bg-green-500"></span>
               </span>
             </div>
-            <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full mb-3 ${getClassColor(targetClass.class_type)}`}>
-              {targetClass.class_type}
+            <span className={`text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full mb-3 ${getClassColor(targetClass.target_class_type)}`}>
+              {targetClass.target_class_type}
             </span>
             <h2 className="text-2xl md:text-3xl font-bold text-white mb-4 leading-tight">{targetClass.title}</h2>
             <div className="bg-green-500/10 px-5 py-3 rounded-xl border border-green-500/20 w-full">
@@ -334,18 +353,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
             </span>
-            සජීවී විකාශය ක්‍රියාත්මකයි: {targetClass.class_type} - {targetClass.title}
+            සජීවී විකාශය ක්‍රියාත්මකයි: {targetClass.target_class_type} - {targetClass.title}
           </div>
           
           <div className="w-full h-[70vh] md:h-[80vh] bg-white relative">
+            {/* TS Error එක මඟ හැරීමට allowFullScreen පමණක් භාවිතා කර ඇත */}
             <iframe 
               src={getEmbeddableZoomUrl(targetClass.zoom_join_url, studentName)} 
               allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *"
               allowFullScreen={true}
-              // @ts-ignore - පරණ ජංගම දුරකථන බ්‍රවුසර් වල ෆුල්ස්ක්‍රීන් සහාය ලබා දීමට
-              webkitallowfullscreen="true"
-              // @ts-ignore
-              mozallowfullscreen="true"
               sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals"
               className="absolute inset-0 w-full h-full border-0 rounded-b-2xl"
               title="Zoom Web Client"
