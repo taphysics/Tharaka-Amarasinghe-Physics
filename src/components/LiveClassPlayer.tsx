@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, differenceInSeconds } from 'date-fns';
+import { format, differenceInSeconds, parse } from 'date-fns';
 import { Maximize2, Minimize2 } from 'lucide-react'; 
 
 interface Student {
@@ -33,6 +33,7 @@ interface ScheduledLive {
   zoom_join_url: string;
 }
 
+// Zoom Web Client URL එක නිර්මාණය කිරීම 
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
@@ -57,6 +58,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
+// වර්ණ ජෙනරේට් කිරීම
 const getClassColor = (type: string) => {
   if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
   const colors = [
@@ -72,6 +74,17 @@ const getClassColor = (type: string) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+// පැය 12 කාල ආකෘතියට (12-Hour format - AM/PM) පරිවර්තනය කිරීමේ Function එක
+const formatTime12h = (timeStr: string) => {
+  if (!timeStr) return '';
+  try {
+    const parsedTime = parse(timeStr, 'HH:mm', new Date());
+    return format(parsedTime, 'hh:mm a');
+  } catch (error) {
+    return timeStr; // වැරදි කාලයක් නම් තිබෙන ආකාරයෙන්ම පෙන්වීමට
+  }
+};
+
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
@@ -81,10 +94,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
   
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+  
   const playerContainerRef = useRef<HTMLDivElement>(null);
+  const headerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const wakeLockRef = useRef<any>(null);
 
   const studentName = currentUser?.username || 'Student';
 
+  // දත්ත පූරණය කිරීම සහ 100% Strict Filtering
   useEffect(() => {
     fetchData();
     const subscription = supabase
@@ -97,16 +115,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchData = async () => {
     try {
-      // අද දිනය ලබා ගැනීම
       const today = format(new Date(), 'yyyy-MM-dd');
-      
-      // සිසුවාගේ විෂයන් කැපිටල්/සිම්පල් ගැටළු මඟහරවා සකසා ගැනීම
       const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
-      const hasClasses = studentClasses.length > 0;
+      
+      // සිසුවාට කිසිදු පන්තියක් නොමැති නම් කිසිවක් පෙන්වන්නේ නැත (Strict Rule)
+      if (studentClasses.length === 0) {
+        setCalendarEvents([]);
+        setScheduledLives([]);
+        setIsLoading(false);
+        return;
+      }
 
-      // Class Filter කරන Function එක (Fail-safe)
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
-        if (!hasClasses) return true; // සිසුවාට විෂයයන් අසායින් කර නැත්නම් සියල්ල පෙන්වීමට (Testing සඳහා)
         if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
         if (type2 && studentClasses.includes(type2.trim().toLowerCase())) return true;
         if (arr && arr.some(a => studentClasses.includes(a.trim().toLowerCase()))) return true;
@@ -145,11 +165,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
+  // Timer Control
   useEffect(() => {
     if (isLoading) return;
     
     const interval = setInterval(() => {
-      // ලයිව් එකක් ඇත්දැයි බැලීම
       const live = scheduledLives.find(c => c.status === 'live');
       if (live) {
         setTargetClass(live);
@@ -157,7 +177,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
-      // මීළඟ Zoom පන්තිය ලබා ගැනීම
       const nextLive = scheduledLives.find(c => c.status === 'scheduled');
       
       if (nextLive) {
@@ -184,7 +203,64 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading]);
 
-  // Mobile Fullscreen API + CSS Overlay
+
+  // Screen Sleep එක වැළැක්වීම (Wake Lock API)
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        } catch (err) {
+          console.warn('Wake Lock failed:', err);
+        }
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && (viewState === 'live' || viewState === 'waiting-30m' || viewState === 'waiting-0s')) {
+        requestWakeLock();
+      }
+    };
+
+    if (viewState === 'live' || viewState === 'waiting-30m' || viewState === 'waiting-0s') {
+      requestWakeLock();
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    } else {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [viewState]);
+
+
+  // Fullscreen Header Auto-hide පාලනය කිරීම
+  const handleUserActivity = () => {
+    if (!isFullscreen) return;
+    setIsHeaderVisible(true);
+    if (headerTimeoutRef.current) clearTimeout(headerTimeoutRef.current);
+    headerTimeoutRef.current = setTimeout(() => {
+      setIsHeaderVisible(false);
+    }, 3000); // තත්පර 3 කින් පසු නැවත Hide වේ
+  };
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      setIsHeaderVisible(true);
+      if (headerTimeoutRef.current) clearTimeout(headerTimeoutRef.current);
+    } else {
+      handleUserActivity();
+    }
+  }, [isFullscreen]);
+
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
     
@@ -194,31 +270,21 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         if (playerContainerRef.current.requestFullscreen) {
           await playerContainerRef.current.requestFullscreen();
         } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
-          await (playerContainerRef.current as any).webkitRequestFullscreen(); // For iOS
+          await (playerContainerRef.current as any).webkitRequestFullscreen(); 
         }
-        // තිරය Landscape කිරීමට (Support කරන Devices සඳහා පමණක්)
         if (window.screen?.orientation?.lock) {
           await window.screen.orientation.lock('landscape').catch(() => {});
         }
-      } catch (err) {
-        console.warn("Fullscreen API not fully supported, using CSS fallback.");
-      }
+      } catch (err) {}
     } else {
       setIsFullscreen(false);
       try {
         if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
-          if (document.exitFullscreen) {
-            await document.exitFullscreen();
-          } else if ((document as any).webkitExitFullscreen) {
-            await (document as any).webkitExitFullscreen();
-          }
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen();
         }
-        if (window.screen?.orientation?.unlock) {
-          window.screen.orientation.unlock();
-        }
-      } catch (err) {
-        console.warn("Exit fullscreen error", err);
-      }
+        if (window.screen?.orientation?.unlock) window.screen.orientation.unlock();
+      } catch (err) {}
     }
   };
 
@@ -231,6 +297,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     };
   }, []);
+
 
   if (isLoading || viewState === 'loading') {
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
@@ -248,7 +315,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන්)
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (12-Hour Format සහිතව)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
@@ -267,7 +334,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-400">වේලාව:</span>
-                  <span className="text-gray-100 font-medium">{ev.start_time}</span>
+                  <span className="text-gray-100 font-medium">{formatTime12h(ev.start_time)}</span>
                 </div>
               </div>
             </div>
@@ -287,8 +354,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
               {targetClass.target_class_type}
             </span>
-            <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
-            <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
+            <h1 className="text-2xl md:text-4xl font-bold text-white mb-4 leading-tight">{targetClass.title}</h1>
+            <p className="text-yellow-400/80 font-medium text-lg mb-8">අද දින {formatTime12h(targetClass.time)} ට ආරම්භ වේ</p>
+            
             <div className="flex gap-3 md:gap-6 text-center">
               {['h', 'm', 's'].map((unit) => (
                 <div key={unit} className="flex flex-col items-center">
@@ -305,7 +373,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* 4. අවසන් විනාඩි 30 */}
+      {/* 4. අවසන් විනාඩි 30 (Video සමග) */}
       {viewState === 'waiting-30m' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-900 border border-gray-800 shadow-2xl">
           <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none">
@@ -339,17 +407,33 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* 6. Live Zoom Player (With CSS + API Fullscreen) */}
+      {/* 6. Live Zoom Player */}
       {viewState === 'live' && targetClass && (
         <div 
           ref={playerContainerRef} 
-          className={`flex flex-col bg-gray-900 border-green-500/30 overflow-hidden ${
-            isFullscreen 
-              ? 'fixed inset-0 z-[999999] w-full h-full m-0 p-0 rounded-none' 
-              : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(34,197,94,0.15)]'
+          className={`flex flex-col bg-gray-900 overflow-hidden relative ${
+            isFullscreen ? 'fixed inset-0 z-[999999] w-full h-full m-0 p-0 rounded-none' : 'flex-1 rounded-2xl border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.15)]'
           }`}
         >
-          <div className="bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-10">
+          {/* Hit Area - මවුස් එක උඩට ගෙනගිය විට Header එක පෙන්වීම සඳහා (Fullscreen හිදී පමණි) */}
+          {isFullscreen && (
+            <div 
+              className="absolute top-0 left-0 w-full h-16 z-[40]"
+              onMouseEnter={handleUserActivity}
+              onTouchStart={handleUserActivity}
+            />
+          )}
+
+          {/* Header Bar - Auto hiding in Fullscreen */}
+          <div 
+            onMouseMove={handleUserActivity}
+            onTouchStart={handleUserActivity}
+            className={`w-full bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-50 transition-all duration-300 ${
+              isFullscreen 
+                ? `absolute top-0 left-0 ${isHeaderVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0'}` 
+                : 'relative translate-y-0 opacity-100'
+            }`}
+          >
             <div className="flex items-center gap-3 font-semibold">
               <span className="relative flex h-3 w-3">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -370,7 +454,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             </button>
           </div>
           
-          <div className={`w-full bg-white relative ${isFullscreen ? 'flex-1' : 'h-[70vh] md:h-[80vh]'}`}>
+          <div className={`w-full bg-black relative ${isFullscreen ? 'h-full' : 'h-[70vh] md:h-[80vh]'}`}>
             <iframe 
               src={getEmbeddableZoomUrl(targetClass.zoom_join_url, studentName)} 
               allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *"
