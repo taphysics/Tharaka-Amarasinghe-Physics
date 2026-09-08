@@ -21,15 +21,34 @@ interface ScheduledLive {
   zoom_meeting_id: string;
 }
 
-// සූම් ඇප් එක ඕපන් නොවී වෙබ් පිටුව තුළම පෙන්වීම සඳහා URL එක වෙනස් කරන ෆන්ක්ෂන් එක
-const getEmbeddableZoomUrl = (joinUrl: string) => {
+// සූම් ඇප් එක ඕපන් නොවී වෙබ් පිටුව තුළම පෙන්වීම සහ Name/Passcode Auto-fill කිරීම
+const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
     const url = new URL(joinUrl);
+    
     // සාමාන්‍ය '/j/' ලින්ක් එක වෙබ් ක්ලයන්ට් ('/wc/') ලින්ක් එකක් බවට පත් කිරීම
     if (url.pathname.includes('/j/')) {
       url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
     }
+    
+    // මුල් ලින්ක් එකේ ඇති Passcode (pwd) එක ලබාගැනීම
+    const pwd = url.searchParams.get('pwd');
+    
+    // සිසුවාගේ නම URL එකට ඇතුළත් කිරීම (Zoom Web Client එක auto-fill කරගැනීම සඳහා)
+    if (userName) {
+      url.searchParams.set('un', btoa(userName)); // සමහර Zoom versions base64 බලාපොරොත්තු වේ
+      url.searchParams.set('name', userName);     // සාමාන්‍ය නම
+    }
+
+    // Passcode එක නැවත URL එකට තහවුරු කිරීම (Passcode ඉල්ලීම වැළැක්වීමට)
+    if (pwd) {
+      url.searchParams.set('pwd', pwd);
+    }
+    
+    // වෙබ් ක්ලයන්ට් එක force කිරීම
+    url.searchParams.set('prefer', '1');
+
     return url.toString();
   } catch (error) {
     console.error('Invalid Zoom URL', error);
@@ -173,7 +192,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
       {/* 1. Scheduled තත්ත්වයේ පවතින විට (පන්තිය පටන් ගැනීමට පෙර) */}
       {currentLive.status === 'scheduled' && (
-        <div className="flex flex-col items-center justify-center flex-1 relative rounded-2xl overflow-hidden bg-gray-900 min-h-[65vh] border border-gray-800 shadow-2xl">
+        <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-900 border border-gray-800 shadow-2xl">
           {isWithinOneHour ? (
             <>
               {/* Waiting Video එක ස්වයංක්‍රීයව Play වීම */}
@@ -182,20 +201,21 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                 loop 
                 muted 
                 playsInline
-                className="absolute inset-0 w-full h-full object-cover opacity-30 pointer-events-none"
+                controls={false}
+                className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none"
               >
                 <source src="/videos/waiting-video.mp4" type="video/mp4" />
               </video>
 
               {/* Countdown Overlay */}
-              <div className="relative z-10 flex flex-col items-center p-8 bg-black/70 rounded-2xl backdrop-blur-md border border-white/5 max-w-md w-full mx-4">
+              <div className="relative z-10 flex flex-col items-center p-6 md:p-8 bg-black/60 rounded-2xl backdrop-blur-md border border-white/10 max-w-md w-[90%] md:w-full mx-4 shadow-2xl">
                 <span className="text-xs font-bold uppercase tracking-widest bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full mb-3">
                   {currentLive.class_type}
                 </span>
-                <h2 className="text-lg md:text-xl text-gray-300 text-center mb-6 font-medium">
+                <h2 className="text-lg md:text-xl text-gray-300 text-center mb-4 md:mb-6 font-medium">
                   පන්තිය ආරම්භ වීමට තව...
                 </h2>
-                <div className="text-6xl md:text-7xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+                <div className="text-5xl md:text-7xl font-mono font-black text-white tracking-wider drop-shadow-[0_0_15px_rgba(255,255,255,0.4)]">
                   {countdown ? (
                     `${String(countdown.m).padStart(2, '0')}:${String(countdown.s).padStart(2, '0')}`
                   ) : (
@@ -203,7 +223,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
                   )}
                 </div>
                 {countdown?.m === 0 && countdown?.s === 0 && (
-                  <p className="mt-6 text-green-400 animate-pulse text-sm font-medium bg-green-500/10 px-4 py-2 rounded-lg border border-green-500/20">
+                  <p className="mt-6 text-green-400 animate-pulse text-sm font-medium bg-green-500/10 px-4 py-2 rounded-lg border border-green-500/20 text-center">
                     ගුරුතුමා විසින් පන්තිය සක්‍රීය කරන තුරු මඳක් රැඳී සිටින්න...
                   </p>
                 )}
@@ -223,22 +243,22 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
 
       {/* 2. Live තත්ත්වයට පත් වූ විට (ඇඩ්මින් Start Zoom ක්ලික් කළ පසු) */}
       {currentLive.status === 'live' && (
-        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/20 shadow-2xl">
-          <div className="bg-green-950/40 text-green-400 px-4 py-3 flex items-center gap-3 font-semibold border-b border-green-500/10 text-sm md:text-base">
-            <span className="relative flex h-2.5 w-2.5">
+        <div className="flex-1 flex flex-col rounded-2xl overflow-hidden bg-gray-900 border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.15)]">
+          <div className="bg-green-950/60 text-green-400 px-4 py-3 flex items-center gap-3 font-semibold border-b border-green-500/20 text-sm md:text-base">
+            <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
             </span>
             සජීවී විකාශය ක්‍රියාත්මකයි: {currentLive.class_type} - {currentLive.title}
           </div>
           
           {/* Zoom Embed Area */}
-          <div className="w-full flex-1 min-h-[75vh] bg-black relative">
+          <div className="w-full h-[70vh] md:h-[80vh] bg-white relative">
             <iframe 
-              src={getEmbeddableZoomUrl(currentLive.zoom_join_url)} 
+              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser.username)} 
               allow="camera; microphone; fullscreen; display-capture; autoplay"
-              sandbox="allow-forms allow-scripts allow-same-origin"
-              className="absolute inset-0 w-full h-full border-0 rounded-b-2xl bg-white"
+              sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
+              className="absolute inset-0 w-full h-full border-0 rounded-b-2xl"
               title="Zoom Web Client"
             />
           </div>
