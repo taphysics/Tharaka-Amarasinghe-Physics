@@ -5,7 +5,7 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 
 interface Student {
   username: string;
-  class_types: any; // JSON string හෝ Array එකක් පැමිණිය හැකි බැවින් any කර ඇත
+  class_types: any; 
   free_months: string[];
 }
 
@@ -15,8 +15,8 @@ interface CalendarEvent {
   title: string;
   description: string;
   status: string;
-  target_class_type?: any;
-  class_type?: any;
+  target_class_type: any;
+  class_type: any;
   start_time: string;
 }
 
@@ -25,27 +25,43 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
-  target_class_type?: any;
-  target_classes?: any;
-  class_type?: any;
+  target_class_type: any;
+  target_classes: any;
   target_month: string;
   pre_class_video_path: string;
   status: string;
   zoom_join_url: string;
 }
 
-// පැය 12 ක්‍රමයට (AM/PM) වේලාව හැරවීමේ ෆන්ක්ශන් එක
+// 1. පැය 12 ක්‍රමයට (AM/PM) වේලාව හැරවීමේ ෆන්ක්ශන් එක (අලුතින් එක් කරන ලදී)
 const formatTo12Hour = (timeStr: string) => {
   if (!timeStr) return '';
   try {
     const [h, m] = timeStr.split(':');
     let hour = parseInt(h, 10);
     const ampm = hour >= 12 ? 'PM' : 'AM';
-    hour = hour % 12 || 12; // 0 නම් 12 ලෙස සකසයි
+    hour = hour % 12 || 12; 
     return `${hour.toString().padStart(2, '0')}:${m} ${ampm}`;
   } catch (error) {
     return timeStr;
   }
+};
+
+// Database එකෙන් එන Arrays / JSON අතිරේක ලකුණු ඉවත් කර පිරිසිදු කිරීම (අලුතින් එක් කරන ලදී)
+const parseClasses = (rawClasses: any): string[] => {
+  if (!rawClasses) return [];
+  let parsed: any[] = [];
+  if (Array.isArray(rawClasses)) {
+    parsed = rawClasses;
+  } else if (typeof rawClasses === 'string') {
+    try {
+      const decoded = JSON.parse(rawClasses);
+      parsed = Array.isArray(decoded) ? decoded : [rawClasses];
+    } catch {
+      parsed = rawClasses.split(',');
+    }
+  }
+  return parsed.map(c => String(c).replace(/[\[\]"']/g, '').trim().toLowerCase()).filter(Boolean);
 };
 
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
@@ -72,28 +88,12 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-// Database එකෙන් එන Arrays / JSON අතිරේක ලකුණු ඉවත් කර පිරිසිදු කිරීම
-const parseClasses = (rawClasses: any): string[] => {
-  if (!rawClasses) return [];
-  let parsed: any[] = [];
-  if (Array.isArray(rawClasses)) {
-    parsed = rawClasses;
-  } else if (typeof rawClasses === 'string') {
-    try {
-      const decoded = JSON.parse(rawClasses);
-      parsed = Array.isArray(decoded) ? decoded : [rawClasses];
-    } catch {
-      parsed = rawClasses.split(',');
-    }
-  }
-  return parsed.map(c => String(c).replace(/[\[\]"']/g, '').trim().toLowerCase()).filter(Boolean);
-};
-
 const getClassColor = (type: any) => {
   if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
-  let strType = '';
-  try { strType = Array.isArray(type) ? type.join(' ') : String(type); } catch(e) {}
   
+  // Array එකක් පැමිණියහොත් එය String එකක් බවට හැරවීම
+  const strType = Array.isArray(type) ? type.join(', ') : String(type).replace(/[\[\]"']/g, '');
+
   const colors = [
     'bg-blue-500/10 text-blue-400 border-blue-500/20',
     'bg-purple-500/10 text-purple-400 border-purple-500/20',
@@ -116,15 +116,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
   
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [showControls, setShowControls] = useState(true); // Fullscreen Auto-hide සඳහා
-  
   const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  // 2. Fullscreen Title Auto-hide සඳහා State (අලුතින් එක් කරන ලදී)
+  const [showControls, setShowControls] = useState(true);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const wakeLockRef = useRef<any>(null); // Screen Sleep වීම වැලැක්වීමට
+  
+  // 3. Screen Sleep වීම වැලැක්වීමට Ref (අලුතින් එක් කරන ලදී)
+  const wakeLockRef = useRef<any>(null); 
 
   const studentName = currentUser?.username || 'Student';
 
-  // WakeLock Effect: සජීවී පන්තියක සිටින විට Screen එක Off වීම වැලැක්වීම
+  // 4. WakeLock Effect (අලුතින් එක් කරන ලදී)
   useEffect(() => {
     const requestWakeLock = async () => {
       if (viewState === 'live' && 'wakeLock' in navigator) {
@@ -136,7 +139,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         try { await wakeLockRef.current.release(); wakeLockRef.current = null; } catch (err) {}
       }
     };
-
     if (viewState === 'live') requestWakeLock();
     else releaseWakeLock();
 
@@ -145,7 +147,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => { document.removeEventListener('visibilitychange', handleVisibilityChange); releaseWakeLock(); };
   }, [viewState]);
 
-  // Fullscreen Title Auto-hide Logic
+  // 5. Fullscreen Title Auto-hide Logic (අලුතින් එක් කරන ලදී)
   const resetControlsTimeout = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -175,15 +177,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchData = async () => {
     try {
+      // අද දිනය ලබා ගැනීම
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      // සිසුවාගේ විෂයන් ඉතා ආරක්ෂිතව ලබාගැනීම
+      // 6. සිසුවාගේ විෂයන් කැපිටල්/සිම්පල් ගැටළු මඟහරවා සකසා ගැනීම (වැඩිදියුණු කර ඇත)
       const studentClasses = parseClasses(currentUser?.class_types);
       const hasClasses = studentClasses.length > 0;
 
-      // Class Filter කරන Function එක (Strict Match)
+      // 7. Class Filter කරන Function එක (සිසුවාට අදාල නොවන ඒවා Hide කිරීමට වෙනස් කර ඇත)
       const isMatch = (type1?: any, type2?: any, arr?: any) => {
-        if (!hasClasses) return false; // සිසුවාට පන්ති නැත්නම් අනිවාර්යයෙන් මුකුත් පෙන්වන්න එපා
+        if (!hasClasses) return false; // සිසුවාට විෂයයන් අසායින් කර නැත්නම් False (Hide All)
 
         const check = (val?: any) => {
           if (!val) return false;
@@ -191,36 +194,32 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           return parsedVals.some(v => studentClasses.some(sc => sc === v || sc.includes(v) || v.includes(sc)));
         };
 
-        if (check(type1)) return true;
-        if (check(type2)) return true;
-        if (check(arr)) return true;
-        
-        return false;
+        return check(type1) || check(type2) || check(arr);
       };
 
-      // 1. Calendar Events
+      // 1. Calendar Events (ඉදිරි දින ලැයිස්තුව)
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
         .gte('date', today)
-        .eq('status', 'scheduled');
+        .in('status', ['scheduled', 'Scheduled']); // Capital S දෝෂය මගහැරීමට
 
       if (calData) {
-        const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
-          .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+        const filteredCal = calData.filter((ev: any) => isMatch(ev.class_type, ev.target_class_type))
+          .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         setCalendarEvents(filteredCal);
       }
 
-      // 2. Scheduled Lives
+      // 2. Scheduled Lives (Zoom ලින්ක් සහ Countdown)
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
-        .in('status', ['scheduled', 'live'])
+        .in('status', ['scheduled', 'live', 'Scheduled', 'Live']) // Capital දෝෂය මගහැරීමට
         .gte('date', today);
 
       if (liveData) {
         const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, cls.class_type, cls.target_classes))
-          .sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+          .sort((a: any, b: any) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
         setScheduledLives(filteredLive);
       }
     } catch (error) {
@@ -234,14 +233,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (isLoading) return;
     
     const interval = setInterval(() => {
-      const live = scheduledLives.find(c => c.status === 'live');
+      // ලයිව් එකක් ඇත්දැයි බැලීම
+      const live = scheduledLives.find(c => String(c.status).toLowerCase() === 'live');
       if (live) {
         setTargetClass(live);
         setViewState('live');
         return;
       }
 
-      const nextLive = scheduledLives.find(c => c.status === 'scheduled');
+      // මීළඟ Zoom පන්තිය ලබා ගැනීම
+      const nextLive = scheduledLives.find(c => String(c.status).toLowerCase() === 'scheduled');
       
       if (nextLive) {
         setTargetClass(nextLive);
@@ -267,6 +268,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading]);
 
+  // Mobile Fullscreen API + CSS Overlay
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
     
@@ -276,13 +278,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         if (playerContainerRef.current.requestFullscreen) {
           await playerContainerRef.current.requestFullscreen();
         } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
-          await (playerContainerRef.current as any).webkitRequestFullscreen();
+          await (playerContainerRef.current as any).webkitRequestFullscreen(); // For iOS
         }
+        // තිරය Landscape කිරීමට (Support කරන Devices සඳහා පමණක්)
         if (window.screen?.orientation?.lock) {
           await window.screen.orientation.lock('landscape').catch(() => {});
         }
       } catch (err) {
-        console.warn("Fullscreen API not fully supported.");
+        console.warn("Fullscreen API not fully supported, using CSS fallback.");
       }
     } else {
       setIsFullscreen(false);
@@ -313,6 +316,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     };
   }, []);
 
+  // UI Helper - Array එකක් ආවත් String එකක් ලෙස පෙන්වීම
+  const renderClassType = (type: any) => {
+    if (Array.isArray(type)) return type.join(', ');
+    return String(type || '').replace(/[\[\]"']/g, '');
+  };
+
   if (isLoading || viewState === 'loading') {
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
   }
@@ -329,34 +338,31 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 2. පැය 24 ට වඩා කල් ඇති පන්ති
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන්)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold text-gray-200 mb-8 mt-4 text-center">ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති</h2>
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {calendarEvents.map((ev, idx) => {
-            const rawType = ev.target_class_type || ev.class_type;
-            const displayType = Array.isArray(rawType) ? rawType.join(', ') : String(rawType || '').replace(/[\[\]"']/g, '');
-            return (
-              <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(rawType)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
-                <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
-                  {displayType}
-                </span>
-                <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
-                <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">දිනය:</span>
-                    <span className="text-gray-100 font-medium">{ev.date}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400">වේලාව:</span>
-                    <span className="text-gray-100 font-medium">{formatTo12Hour(ev.start_time)}</span>
-                  </div>
+          {calendarEvents.map((ev, idx) => (
+            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
+                {renderClassType(ev.target_class_type || ev.class_type)}
+              </span>
+              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
+              <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">දිනය:</span>
+                  <span className="text-gray-100 font-medium">{ev.date}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-400">වේලාව:</span>
+                  {/* 8. පැය 12 ක්‍රමයට වේලාව පෙන්වීම */}
+                  <span className="text-gray-100 font-medium">{formatTo12Hour(ev.start_time)}</span>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -370,7 +376,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
             <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
-              {Array.isArray(targetClass.target_class_type) ? targetClass.target_class_type.join(', ') : String(targetClass.target_class_type || '').replace(/[\[\]"']/g, '')}
+              {renderClassType(targetClass.target_class_type)}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
             <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
@@ -398,7 +404,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           </video>
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl">
             <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type)}`}>
-              {Array.isArray(targetClass.target_class_type) ? targetClass.target_class_type.join(', ') : String(targetClass.target_class_type || '').replace(/[\[\]"']/g, '')}
+              {renderClassType(targetClass.target_class_type)}
             </span>
             <h2 className="text-lg md:text-xl text-gray-200 mb-6">පන්තිය ආරම්භ වීමට තව...</h2>
             <div className="text-6xl md:text-8xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
@@ -424,10 +430,11 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* 6. Live Zoom Player */}
+      {/* 6. Live Zoom Player (With CSS + API Fullscreen) */}
       {viewState === 'live' && targetClass && (
         <div 
           ref={playerContainerRef} 
+          // 9. Fullscreen Auto-hide Events
           onMouseMove={resetControlsTimeout}
           onTouchStart={resetControlsTimeout}
           onClick={resetControlsTimeout}
@@ -437,7 +444,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
               : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(34,197,94,0.15)]'
           }`}
         >
-          {/* HEADER SECTION (Auto Hides in Fullscreen) */}
+          {/* 10. Auto-hide Header Class එක */}
           <div className={`
             bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-50 transition-all duration-500 ease-in-out
             ${isFullscreen ? 'absolute top-0 left-0 right-0' : ''} 
