@@ -37,8 +37,14 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
     
     // සිසුවාගේ නම URL එකට ඇතුළත් කිරීම (Zoom Web Client එක auto-fill කරගැනීම සඳහා)
     if (userName) {
-      url.searchParams.set('un', btoa(userName)); // සමහර Zoom versions base64 බලාපොරොත්තු වේ
-      url.searchParams.set('name', userName);     // සාමාන්‍ය නම
+      try {
+        // සිංහල අකුරු වැනි Unicode අකුරු ඇත්නම් බිඳ වැටීම වැළැක්වීමට
+        const encodedName = btoa(unescape(encodeURIComponent(userName)));
+        url.searchParams.set('un', encodedName);
+      } catch (e) {
+        console.warn('Encoding warning', e);
+        url.searchParams.set('name', userName);
+      }
     }
 
     // Passcode එක නැවත URL එකට තහවුරු කිරීම (Passcode ඉල්ලීම වැළැක්වීමට)
@@ -56,7 +62,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
+const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [currentLive, setCurrentLive] = useState<ScheduledLive | null>(null);
   const [nextLive, setNextLive] = useState<ScheduledLive | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -188,6 +194,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
     );
   }
 
+  // ගැටළුව මග හැරීම සඳහා username එක ආරක්ෂිතව ලබා ගැනීම (Optional Chaining)
+  const studentName = currentUser?.username || 'Student';
+
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
       {/* 1. Scheduled තත්ත්වයේ පවතින විට (පන්තිය පටන් ගැනීමට පෙර) */}
@@ -255,9 +264,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student }) => {
           {/* Zoom Embed Area */}
           <div className="w-full h-[70vh] md:h-[80vh] bg-white relative">
             <iframe 
-              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, currentUser.username)} 
-              allow="camera; microphone; fullscreen; display-capture; autoplay"
-              sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
+              src={getEmbeddableZoomUrl(currentLive.zoom_join_url, studentName)} 
+              allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *"
+              allowFullScreen={true}
+              sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals"
               className="absolute inset-0 w-full h-full border-0 rounded-b-2xl"
               title="Zoom Web Client"
             />
