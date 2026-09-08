@@ -33,7 +33,7 @@ interface ScheduledLive {
   zoom_join_url: string;
 }
 
-// Zoom Web Client URL එක නිර්මාණය කිරීම 
+// Zoom Web Client URL එක නිර්මාණය කිරීම සහ UI Clean කිරීම
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
@@ -51,6 +51,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
       }
     }
     if (pwd) url.searchParams.set('pwd', pwd);
+    // UI එක පිරිසිදු කිරීමට සහ Web Client එක බලකිරීමට
     url.searchParams.set('prefer', '1');
     return url.toString();
   } catch (error) {
@@ -58,7 +59,6 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-// වර්ණ ජෙනරේට් කිරීම
 const getClassColor = (type: string) => {
   if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
   const colors = [
@@ -74,14 +74,15 @@ const getClassColor = (type: string) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
-// පැය 12 කාල ආකෘතියට (12-Hour format - AM/PM) පරිවර්තනය කිරීමේ Function එක
+// පැය 12 කාල ආකෘතියට (12-Hour format - AM/PM) පරිවර්තනය කිරීම
 const formatTime12h = (timeStr: string) => {
   if (!timeStr) return '';
   try {
-    const parsedTime = parse(timeStr, 'HH:mm', new Date());
+    const cleanTime = timeStr.substring(0, 5); // 18:36:00 තිබුණත් 18:36 පමණක් ලබාගනී
+    const parsedTime = parse(cleanTime, 'HH:mm', new Date());
     return format(parsedTime, 'hh:mm a');
   } catch (error) {
-    return timeStr; // වැරදි කාලයක් නම් තිබෙන ආකාරයෙන්ම පෙන්වීමට
+    return timeStr;
   }
 };
 
@@ -102,7 +103,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
-  // දත්ත පූරණය කිරීම සහ 100% Strict Filtering
+  // දත්ත පූරණය කිරීම සහ 100% Strict Filtering ( : PAID කොටස මඟහරිමින් )
   useEffect(() => {
     fetchData();
     const subscription = supabase
@@ -116,9 +117,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const fetchData = async () => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
-      const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
+      const studentClasses = currentUser?.class_types || [];
       
-      // සිසුවාට කිසිදු පන්තියක් නොමැති නම් කිසිවක් පෙන්වන්නේ නැත (Strict Rule)
       if (studentClasses.length === 0) {
         setCalendarEvents([]);
         setScheduledLives([]);
@@ -126,10 +126,21 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
+      // වඩාත් ආරක්ෂිත String Matching එක (: PAID ආදිය මඟ හැරේ)
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
-        if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
-        if (type2 && studentClasses.includes(type2.trim().toLowerCase())) return true;
-        if (arr && arr.some(a => studentClasses.includes(a.trim().toLowerCase()))) return true;
+        const check = (val?: string) => {
+          if (!val) return false;
+          const normVal = val.toLowerCase().replace(/\s+/g, '');
+          return studentClasses.some(sc => {
+            const normSc = sc.toLowerCase().replace(/\s+/g, '');
+            // උදා: normSc = "2026theory:paid", normVal = "2026theory"
+            return normSc.includes(normVal) || normVal.includes(normSc);
+          });
+        };
+
+        if (check(type1)) return true;
+        if (check(type2)) return true;
+        if (arr && arr.some(a => check(a))) return true;
         return false;
       };
 
@@ -142,7 +153,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
       if (calData) {
         const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
-          .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+          .sort((a, b) => {
+            const tA = a.start_time ? a.start_time.substring(0, 5) : '00:00';
+            const tB = b.start_time ? b.start_time.substring(0, 5) : '00:00';
+            return parse(`${a.date} ${tA}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - 
+                   parse(`${b.date} ${tB}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
+          });
         setCalendarEvents(filteredCal);
       }
 
@@ -155,7 +171,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
       if (liveData) {
         const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
-          .sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+          .sort((a, b) => {
+            const tA = a.time ? a.time.substring(0, 5) : '00:00';
+            const tB = b.time ? b.time.substring(0, 5) : '00:00';
+            return parse(`${a.date} ${tA}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - 
+                   parse(`${b.date} ${tB}`, 'yyyy-MM-dd HH:mm', new Date()).getTime();
+          });
         setScheduledLives(filteredLive);
       }
     } catch (error) {
@@ -181,7 +202,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       
       if (nextLive) {
         setTargetClass(nextLive);
-        const classDateTime = new Date(`${nextLive.date}T${nextLive.time}:00`);
+        const cleanTime = nextLive.time ? nextLive.time.substring(0, 5) : '00:00';
+        const classDateTime = parse(`${nextLive.date} ${cleanTime}`, 'yyyy-MM-dd HH:mm', new Date());
         const diffSeconds = differenceInSeconds(classDateTime, new Date());
 
         if (diffSeconds > 86400) {
@@ -249,7 +271,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (headerTimeoutRef.current) clearTimeout(headerTimeoutRef.current);
     headerTimeoutRef.current = setTimeout(() => {
       setIsHeaderVisible(false);
-    }, 3000); // තත්පර 3 කින් පසු නැවත Hide වේ
+    }, 3000); 
   };
 
   useEffect(() => {
@@ -415,10 +437,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             isFullscreen ? 'fixed inset-0 z-[999999] w-full h-full m-0 p-0 rounded-none' : 'flex-1 rounded-2xl border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.15)]'
           }`}
         >
-          {/* Hit Area - මවුස් එක උඩට ගෙනගිය විට Header එක පෙන්වීම සඳහා (Fullscreen හිදී පමණි) */}
+          {/* Hit Area - මවුස් එක හෝ ඇඟිල්ල ඉහළට ගෙනගිය විට Header එක පෙන්වීම සඳහා */}
           {isFullscreen && (
             <div 
-              className="absolute top-0 left-0 w-full h-16 z-[40]"
+              className="absolute top-0 left-0 w-full h-20 z-[40]"
               onMouseEnter={handleUserActivity}
               onTouchStart={handleUserActivity}
             />
@@ -428,10 +450,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           <div 
             onMouseMove={handleUserActivity}
             onTouchStart={handleUserActivity}
-            className={`w-full bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-50 transition-all duration-300 ${
+            className={`w-full bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-50 transition-transform duration-500 ease-in-out ${
               isFullscreen 
-                ? `absolute top-0 left-0 ${isHeaderVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0'}` 
-                : 'relative translate-y-0 opacity-100'
+                ? `absolute top-0 left-0 ${isHeaderVisible ? 'translate-y-0' : '-translate-y-full'}` 
+                : 'relative translate-y-0'
             }`}
           >
             <div className="flex items-center gap-3 font-semibold">
