@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, differenceInSeconds, parse } from 'date-fns';
-import { Maximize2, Minimize2 } from 'lucide-react'; // Icons සඳහා (lucide-react install කර නොමැති නම් ඉවත් කළ හැක)
+import { format, differenceInSeconds } from 'date-fns';
+import { Maximize2, Minimize2 } from 'lucide-react'; 
 
 interface Student {
   username: string;
-  class_types: string[]; // සිසුවා තෝරාගෙන ඇති පන්ති
+  class_types: string[]; 
   free_months: string[];
 }
 
-// 1. Calendar Events සඳහා අලුතින් එක් කළ Interface එක (ඔබගේ තිරපිටපත් වලට අනුව)
 interface CalendarEvent {
   id: string;
   date: string;
@@ -21,20 +20,19 @@ interface CalendarEvent {
   start_time: string;
 }
 
-// 2. Scheduled Lives (Zoom දත්ත සහ Countdown සඳහා)
 interface ScheduledLive {
   id: string;
   title: string;
   date: string;
   time: string;
   target_class_type: string;
+  target_classes: string[];
   target_month: string;
   pre_class_video_path: string;
   status: string;
   zoom_join_url: string;
 }
 
-// Zoom Web Client URL එක නිර්මාණය කිරීම
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
@@ -82,7 +80,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [targetClass, setTargetClass] = useState<ScheduledLive | null>(null);
   const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
   
-  // Fullscreen State
   const [isFullscreen, setIsFullscreen] = useState(false);
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
@@ -100,10 +97,23 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchData = async () => {
     try {
+      // අද දිනය ලබා ගැනීම
       const today = format(new Date(), 'yyyy-MM-dd');
-      const studentClasses = currentUser?.class_types || [];
+      
+      // සිසුවාගේ විෂයන් කැපිටල්/සිම්පල් ගැටළු මඟහරවා සකසා ගැනීම
+      const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
+      const hasClasses = studentClasses.length > 0;
 
-      // 1. Fetch Calendar Events (ඉදිරි දින ලැයිස්තුව සඳහා)
+      // Class Filter කරන Function එක (Fail-safe)
+      const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
+        if (!hasClasses) return true; // සිසුවාට විෂයයන් අසායින් කර නැත්නම් සියල්ල පෙන්වීමට (Testing සඳහා)
+        if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
+        if (type2 && studentClasses.includes(type2.trim().toLowerCase())) return true;
+        if (arr && arr.some(a => studentClasses.includes(a.trim().toLowerCase()))) return true;
+        return false;
+      };
+
+      // 1. Calendar Events (ඉදිරි දින ලැයිස්තුව)
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
@@ -111,13 +121,12 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         .eq('status', 'scheduled');
 
       if (calData) {
-        const filteredCal = calData.filter(ev => 
-          studentClasses.includes(ev.class_type) || studentClasses.includes(ev.target_class_type)
-        ).sort((a, b) => parse(`${a.date} ${a.start_time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - parse(`${b.date} ${b.start_time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime());
+        const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
+          .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         setCalendarEvents(filteredCal);
       }
 
-      // 2. Fetch Scheduled Lives (Zoom ලින්ක් සහ Countdown සඳහා)
+      // 2. Scheduled Lives (Zoom ලින්ක් සහ Countdown)
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -125,10 +134,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         .gte('date', today);
 
       if (liveData) {
-        const filteredLive = liveData.filter((cls: any) => 
-          studentClasses.includes(cls.target_class_type) || 
-          (cls.target_classes && cls.target_classes.some((tc: string) => studentClasses.includes(tc)))
-        ).sort((a, b) => parse(`${a.date} ${a.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime() - parse(`${b.date} ${b.time}`, 'yyyy-MM-dd HH:mm', new Date()).getTime());
+        const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
+          .sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
         setScheduledLives(filteredLive);
       }
     } catch (error) {
@@ -142,7 +149,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (isLoading) return;
     
     const interval = setInterval(() => {
-      // ලයිව් එකක් ඇත්දැයි බැලීම (scheduled_lives හරහා)
+      // ලයිව් එකක් ඇත්දැයි බැලීම
       const live = scheduledLives.find(c => c.status === 'live');
       if (live) {
         setTargetClass(live);
@@ -155,7 +162,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       
       if (nextLive) {
         setTargetClass(nextLive);
-        const classDateTime = parse(`${nextLive.date} ${nextLive.time}`, 'yyyy-MM-dd HH:mm', new Date());
+        const classDateTime = new Date(`${nextLive.date}T${nextLive.time}:00`);
         const diffSeconds = differenceInSeconds(classDateTime, new Date());
 
         if (diffSeconds > 86400) {
@@ -170,7 +177,6 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           setViewState('waiting-0s');
         }
       } else {
-        // Scheduled Zoom එකක් නැතිනම්, Calendar Events තියෙනවද බලමු
         setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
       }
     }, 1000);
@@ -178,37 +184,53 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading]);
 
-  // Mobile Fullscreen API Handling (Auto-rotate to landscape)
+  // Mobile Fullscreen API + CSS Overlay
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
     
-    try {
-      if (!document.fullscreenElement) {
-        await playerContainerRef.current.requestFullscreen();
-        setIsFullscreen(true);
-        // ජංගම දුරකථනය Landscape කිරීමට උත්සාහ කිරීම
-        if (window.screen.orientation && window.screen.orientation.lock) {
-          window.screen.orientation.lock('landscape').catch(() => {});
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      try {
+        if (playerContainerRef.current.requestFullscreen) {
+          await playerContainerRef.current.requestFullscreen();
+        } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
+          await (playerContainerRef.current as any).webkitRequestFullscreen(); // For iOS
         }
-      } else {
-        await document.exitFullscreen();
-        setIsFullscreen(false);
-        if (window.screen.orientation && window.screen.orientation.unlock) {
+        // තිරය Landscape කිරීමට (Support කරන Devices සඳහා පමණක්)
+        if (window.screen?.orientation?.lock) {
+          await window.screen.orientation.lock('landscape').catch(() => {});
+        }
+      } catch (err) {
+        console.warn("Fullscreen API not fully supported, using CSS fallback.");
+      }
+    } else {
+      setIsFullscreen(false);
+      try {
+        if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+          if (document.exitFullscreen) {
+            await document.exitFullscreen();
+          } else if ((document as any).webkitExitFullscreen) {
+            await (document as any).webkitExitFullscreen();
+          }
+        }
+        if (window.screen?.orientation?.unlock) {
           window.screen.orientation.unlock();
         }
+      } catch (err) {
+        console.warn("Exit fullscreen error", err);
       }
-    } catch (err) {
-      console.error("Fullscreen error", err);
     }
   };
 
-  // Fullscreen වෙනසක් වූ විට state එක අප්ඩේට් කිරීම
   useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const handleFullscreenChange = () => setIsFullscreen(!!(document.fullscreenElement || (document as any).webkitFullscreenElement));
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
   }, []);
-
 
   if (isLoading || viewState === 'loading') {
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
@@ -226,7 +248,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන් පෙන්වීම)
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන්)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
@@ -317,13 +339,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* 6. Live Zoom Player (With API Fullscreen Button) */}
+      {/* 6. Live Zoom Player (With CSS + API Fullscreen) */}
       {viewState === 'live' && targetClass && (
         <div 
           ref={playerContainerRef} 
-          className={`flex flex-col bg-gray-900 border border-green-500/30 overflow-hidden ${isFullscreen ? 'w-screen h-screen fixed inset-0 z-[99999]' : 'flex-1 rounded-2xl shadow-[0_0_30px_rgba(34,197,94,0.15)]'}`}
+          className={`flex flex-col bg-gray-900 border-green-500/30 overflow-hidden ${
+            isFullscreen 
+              ? 'fixed inset-0 z-[999999] w-full h-full m-0 p-0 rounded-none' 
+              : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(34,197,94,0.15)]'
+          }`}
         >
-          {/* Header Bar with Fullscreen Toggle */}
           <div className="bg-green-950/90 text-green-400 px-4 py-2 flex items-center justify-between border-b border-green-500/20 text-sm md:text-base z-10">
             <div className="flex items-center gap-3 font-semibold">
               <span className="relative flex h-3 w-3">
@@ -333,11 +358,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
               සජීවී: {targetClass.title}
             </div>
             
-            {/* ජංගම දුරකථන සඳහා විශේෂිත Fullscreen Button එක */}
             <button 
               onClick={toggleFullscreen} 
-              className="bg-green-500/20 hover:bg-green-500/40 text-green-300 p-2 rounded-lg transition border border-green-500/30 flex items-center gap-2"
-              title="Toggle Fullscreen"
+              className="bg-green-500/20 hover:bg-green-500/40 text-green-300 p-2 rounded-lg transition border border-green-500/30 flex items-center gap-2 cursor-pointer"
             >
               {isFullscreen ? (
                 <><Minimize2 size={16} /> <span className="hidden md:inline text-xs">Exit Fullscreen</span></>
@@ -347,7 +370,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             </button>
           </div>
           
-          <div className={`w-full bg-white relative ${isFullscreen ? 'h-[calc(100vh-44px)]' : 'h-[70vh] md:h-[80vh]'}`}>
+          <div className={`w-full bg-white relative ${isFullscreen ? 'flex-1' : 'h-[70vh] md:h-[80vh]'}`}>
             <iframe 
               src={getEmbeddableZoomUrl(targetClass.zoom_join_url, studentName)} 
               allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *"
