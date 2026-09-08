@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { format, differenceInSeconds, parse } from 'date-fns';
-import { Maximize2, Minimize2 } from 'lucide-react'; 
+import { Maximize2, Minimize2, Lock } from 'lucide-react'; 
 
 interface Student {
   username: string;
   class_types: string[]; 
   free_months: string[];
+  plan_type?: string;
 }
 
 interface CalendarEvent {
@@ -25,6 +26,7 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
+  class_type?: string; // TS Error එක විසඳීම සඳහා මෙය අලුතින් එක් කරන ලදී
   target_class_type: string;
   target_classes: string[];
   target_month: string;
@@ -51,7 +53,6 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
       }
     }
     if (pwd) url.searchParams.set('pwd', pwd);
-    // UI එක පිරිසිදු කිරීමට සහ Web Client එක බලකිරීමට
     url.searchParams.set('prefer', '1');
     return url.toString();
   } catch (error) {
@@ -78,7 +79,7 @@ const getClassColor = (type: string) => {
 const formatTime12h = (timeStr: string) => {
   if (!timeStr) return '';
   try {
-    const cleanTime = timeStr.substring(0, 5); // 18:36:00 තිබුණත් 18:36 පමණක් ලබාගනී
+    const cleanTime = timeStr.substring(0, 5); 
     const parsedTime = parse(cleanTime, 'HH:mm', new Date());
     return format(parsedTime, 'hh:mm a');
   } catch (error) {
@@ -89,6 +90,7 @@ const formatTime12h = (timeStr: string) => {
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
+  const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [viewState, setViewState] = useState<'loading' | 'live' | 'waiting-0s' | 'waiting-30m' | 'waiting-24h' | 'upcoming-list' | 'no-classes'>('loading');
   const [targetClass, setTargetClass] = useState<ScheduledLive | null>(null);
@@ -103,21 +105,23 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
-  // දත්ත පූරණය කිරීම සහ 100% Strict Filtering ( : PAID කොටස මඟහරිමින් )
   useEffect(() => {
-    fetchData();
+    fetchDataAndPayments();
     const subscription = supabase
       .channel('live-class-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchDataAndPayments())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => fetchDataAndPayments())
       .subscribe();
     return () => { supabase.removeChannel(subscription); };
   }, [currentUser]);
 
-  const fetchData = async () => {
+  // දත්ත පූරණය, Filtering සහ Payment Checking
+  const fetchDataAndPayments = async () => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
-      const studentClasses = currentUser?.class_types || [];
+      
+      // Database එකේ ඇති පරිදිම පන්ති ලබා ගැනීම
+      const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
       
       if (studentClasses.length === 0) {
         setCalendarEvents([]);
@@ -126,33 +130,22 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
-      // වඩාත් ආරක්ෂිත String Matching එක (: PAID ආදිය මඟ හැරේ)
+      // Simple Exact Matching - සිසුවාගේ DB එකේ අගයන් සහ පන්තියේ අගයන් කෙලින්ම ගැලපීම
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
-        const check = (val?: string) => {
-          if (!val) return false;
-          const normVal = val.toLowerCase().replace(/\s+/g, '');
-          return studentClasses.some(sc => {
-            const normSc = sc.toLowerCase().replace(/\s+/g, '');
-            // උදා: normSc = "2026theory:paid", normVal = "2026theory"
-            return normSc.includes(normVal) || normVal.includes(normSc);
-          });
-        };
-
-        if (check(type1)) return true;
-        if (check(type2)) return true;
-        if (arr && arr.some(a => check(a))) return true;
-        return false;
+        const check = (val?: string) => val ? studentClasses.includes(val.trim().toLowerCase()) : false;
+        return check(type1) || check(type2) || (arr && arr.some(check));
       };
 
-      // 1. Calendar Events (ඉදිරි දින ලැයිස්තුව)
+      // 1. Calendar Events Fetch
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
         .gte('date', today)
         .eq('status', 'scheduled');
 
+      let filteredCal: CalendarEvent[] = [];
       if (calData) {
-        const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
+        filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
           .sort((a, b) => {
             const tA = a.start_time ? a.start_time.substring(0, 5) : '00:00';
             const tB = b.start_time ? b.start_time.substring(0, 5) : '00:00';
@@ -162,15 +155,16 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         setCalendarEvents(filteredCal);
       }
 
-      // 2. Scheduled Lives (Zoom ලින්ක් සහ Countdown)
+      // 2. Scheduled Lives Fetch
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
         .in('status', ['scheduled', 'live'])
         .gte('date', today);
 
+      let filteredLive: ScheduledLive[] = [];
       if (liveData) {
-        const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
+        filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, cls.class_type, cls.target_classes))
           .sort((a, b) => {
             const tA = a.time ? a.time.substring(0, 5) : '00:00';
             const tB = b.time ? b.time.substring(0, 5) : '00:00';
@@ -179,6 +173,47 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           });
         setScheduledLives(filteredLive);
       }
+
+      // 3. Payments Checking (Recordings වල ආකාරයටම)
+      if (currentUser?.username) {
+        const { data: payData } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('username', currentUser.username);
+
+        const statusMap: Record<string, boolean> = {};
+        const isGloballyFree = currentUser?.plan_type?.toLowerCase() === 'free';
+
+        const checkPayment = (id: string, classType: string, dateStr: string, targetMonth?: string) => {
+          if (isGloballyFree) {
+            statusMap[id] = true; return;
+          }
+
+          const monthToUse = targetMonth || dateStr.substring(0, 7); // උදා: "2026-09"
+          const isMonthFree = currentUser?.free_months?.some(m => m.includes(monthToUse));
+          
+          if (isMonthFree) {
+            statusMap[id] = true; return;
+          }
+
+          const paymentRecord = payData?.find(p => {
+            const pClass = String(p.class_type || p.class_name || "").trim().toLowerCase();
+            const rClass = String(classType).trim().toLowerCase();
+            const isClassMatch = pClass === rClass || pClass.includes(rClass) || rClass.includes(pClass);
+            const pMonth = String(p.month || p.target_month || "").trim();
+            return isClassMatch && pMonth === monthToUse;
+          });
+
+          const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
+          statusMap[id] = ['paid', 'free', 'approved', 'success'].includes(pStatus || '');
+        };
+
+        filteredLive.forEach(live => checkPayment(live.id, live.target_class_type || live.class_type || '', live.date, live.target_month));
+        filteredCal.forEach(cal => checkPayment(cal.id, cal.target_class_type || cal.class_type || '', cal.date));
+
+        setPaymentStatuses(statusMap);
+      }
+
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -337,30 +372,65 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (12-Hour Format සහිතව)
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Payment Badge එක සහිතව)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold text-gray-200 mb-8 mt-4 text-center">ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති</h2>
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {calendarEvents.map((ev, idx) => (
-            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
-              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
-                {ev.target_class_type || ev.class_type}
-              </span>
-              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
-              <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">දිනය:</span>
-                  <span className="text-gray-100 font-medium">{ev.date}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-400">වේලාව:</span>
-                  <span className="text-gray-100 font-medium">{formatTime12h(ev.start_time)}</span>
+          {calendarEvents.map((ev, idx) => {
+            const isUnlocked = paymentStatuses[ev.id];
+            
+            return (
+              <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300 relative overflow-hidden`}>
+                
+                {!isUnlocked && (
+                   <div className="absolute top-3 right-3 bg-red-500/20 text-red-400 p-1.5 rounded-full border border-red-500/30" title="ගෙවීම් කර නොමැත">
+                     <Lock size={14} />
+                   </div>
+                )}
+                
+                <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
+                  {ev.target_class_type || ev.class_type}
+                </span>
+                <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
+                <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">දිනය:</span>
+                    <span className="text-gray-100 font-medium">{ev.date}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">වේලාව:</span>
+                    <span className="text-gray-100 font-medium">{formatTime12h(ev.start_time)}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // පන්තිය Live හෝ පටන්ගැනීමට ආසන්න වූ විට ගෙවීම් පරික්ෂා කිරීම
+  const isTargetUnlocked = targetClass ? paymentStatuses[targetClass.id] : false;
+
+  // ගෙවීම් කර නොමැති විට පෙන්වන Screen එක
+  if (!isTargetUnlocked && targetClass) {
+    return (
+      <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
+        <div className="flex flex-col items-center justify-center flex-1 bg-slate-950 rounded-2xl border border-red-500/30 shadow-[0_0_30px_rgba(239,68,68,0.1)] relative p-6 text-center">
+          <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-6 border border-red-500/20">
+            <Lock className="w-10 h-10 text-red-500 animate-pulse" />
+          </div>
+          <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-4 ${getClassColor(targetClass.target_class_type)}`}>
+            {targetClass.target_class_type || targetClass.class_type}
+          </span>
+          <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">{targetClass.title}</h2>
+          <div className="bg-red-500/10 px-6 py-4 rounded-xl border border-red-500/20 max-w-lg">
+            <h3 className="text-red-400 font-bold text-lg mb-2">පන්ති ගාස්තු ගෙවා නොමැත</h3>
+            <p className="text-slate-400 text-sm">මෙම සජීවී පන්තියට සහභාගී වීමට කරුණාකර අදාළ මාසය සඳහා ගෙවීම් සිදු කරන්න.</p>
+          </div>
         </div>
       </div>
     );
@@ -374,7 +444,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
             <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
-              {targetClass.target_class_type}
+              {targetClass.target_class_type || targetClass.class_type}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-4 leading-tight">{targetClass.title}</h1>
             <p className="text-yellow-400/80 font-medium text-lg mb-8">අද දින {formatTime12h(targetClass.time)} ට ආරම්භ වේ</p>
@@ -403,7 +473,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           </video>
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl">
             <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type)}`}>
-              {targetClass.target_class_type}
+              {targetClass.target_class_type || targetClass.class_type}
             </span>
             <h2 className="text-lg md:text-xl text-gray-200 mb-6">පන්තිය ආරම්භ වීමට තව...</h2>
             <div className="text-6xl md:text-8xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
