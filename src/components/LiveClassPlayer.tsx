@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { format, differenceInSeconds } from 'date-fns';
+import { format } from 'date-fns'; // differenceInSeconds ඉවත් කර වඩාත් ආරක්ෂිත Math.floor යොදා ඇත
 import { Maximize2, Minimize2 } from 'lucide-react'; 
 
 interface Student {
@@ -26,7 +26,7 @@ interface ScheduledLive {
   date: string;
   time: string;
   target_class_type?: any;
-  class_type?: any; // TypeScript Error එක නිරාකරණය කිරීම සඳහා එකතු කරන ලදී
+  class_type?: any; 
   target_classes?: any;
   target_month: string;
   pre_class_video_path: string;
@@ -73,7 +73,22 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-// සුපබේස් දත්තවල ඇති වරහන් හා අතිරේක ලකුණු ඉවත් කර පිරිසිදු කරගැනීම
+// 100% Bulletproof Date Parser (ඕනෑම Date Format එකක් හඳුනාගනී)
+const parseClassTime = (dateStr: string, timeStr: string) => {
+  try {
+    const cleanDate = (dateStr || '').replace(/-/g, '/'); // iOS/Safari Support සඳහා
+    const cleanTime = (timeStr || '00:00');
+    const parsed = new Date(`${cleanDate} ${cleanTime}:00`);
+    if (!isNaN(parsed.getTime())) return parsed.getTime();
+    
+    // Fallback parsing
+    return new Date(`${dateStr}T${cleanTime}:00`).getTime();
+  } catch {
+    return 0;
+  }
+};
+
+// Database එකෙන් එන Arrays / JSON අතිරේක ලකුණු ඉවත් කර පිරිසිදු කිරීම
 const extractText = (val: any): string[] => {
   if (!val) return [];
   let arr: any[] = [];
@@ -85,20 +100,19 @@ const extractText = (val: any): string[] => {
         const parsed = JSON.parse(val);
         arr = Array.isArray(parsed) ? parsed : [val];
       } catch {
-        arr = [val];
+        arr = val.split(',');
       }
     } else {
-      arr = [val];
+      arr = val.split(',');
     }
   } else {
     arr = [val];
   }
-  return arr.map(v => String(v).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+  return arr.map(v => String(v).replace(/["'[\]]/g, '').trim()).filter(Boolean);
 };
 
 const formatClassLabel = (val: any): string => {
-  const texts = extractText(val);
-  return texts.join(', ');
+  return extractText(val).join(', ');
 };
 
 const getClassColor = (type: any) => {
@@ -122,7 +136,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
-  const [now, setNow] = useState(new Date());
+  const [now, setNow] = useState(new Date().getTime());
   
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true); 
@@ -133,8 +147,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
+  // තත්පරෙන් තත්පරය වේලාව Update කිරීම
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 1000);
+    const interval = setInterval(() => setNow(new Date().getTime()), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -151,29 +166,27 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const fetchData = async () => {
     try {
       setIsLoading(true);
-      const today = format(new Date(), 'yyyy-MM-dd');
       
-      // සිසුවාගේ පන්ති ලැයිස්තුව ආරක්ෂිතව සකසා ගැනීම
       const studentClassesList = extractText(currentUser?.class_types).map(c => c.toLowerCase());
       const hasClasses = studentClassesList.length > 0;
 
-      // පන්ති ගැලපේදැයි පරීක්ෂා කරන 100% නිවැරදි Function එක
+      // 100% ගැළපෙන බව තහවුරු කරන Matcher එක
       const isMatch = (val1?: any, val2?: any, val3?: any): boolean => {
         if (!hasClasses) return false; 
         
         const targets = [...extractText(val1), ...extractText(val2), ...extractText(val3)]
                         .map(c => c.toLowerCase());
         
+        if (targets.length === 0) return false;
+
         return targets.some(tc => 
           studentClassesList.some(sc => sc === tc || sc.includes(tc) || tc.includes(sc))
         );
       };
 
-      const { data: calData } = await supabase
-        .from('calendar_events')
-        .select('*')
-        .gte('date', today);
-
+      // Date Filter එක ඉවත් කර ඇත. සියල්ල ගෙන JS වලින් Filter කරයි (To fix Supabase Text/Date issues)
+      const { data: calData } = await supabase.from('calendar_events').select('*');
+      
       if (calData) {
         const filteredCal = calData.filter((ev: any) => {
           const statusStr = String(ev.status || '').toLowerCase().trim();
@@ -183,10 +196,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         setCalendarEvents(filteredCal);
       }
 
-      const { data: liveData } = await supabase
-        .from('scheduled_lives')
-        .select('*')
-        .gte('date', today);
+      const { data: liveData } = await supabase.from('scheduled_lives').select('*');
 
       if (liveData) {
         const filteredLive = liveData.filter((cls: any) => {
@@ -203,8 +213,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
+  // --- View State Engine ---
+
   const activeLive = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'live');
-  const nextLive = scheduledLives.find(c => ['scheduled', 'active', 'published', 'pending'].includes(String(c.status).toLowerCase().trim()));
+  
+  // ළඟම එන පන්තිය තෝරාගැනීම
+  const upcomingLives = scheduledLives
+    .filter(c => ['scheduled', 'active', 'published', 'pending'].includes(String(c.status).toLowerCase().trim()))
+    .map(c => ({ ...c, timeVal: parseClassTime(c.date, c.time) }))
+    .filter(c => (c.timeVal - now) > -7200000) // පැය 2ක් ඇතුළත හෝ අනාගත
+    .sort((a, b) => a.timeVal - b.timeVal);
+    
+  const nextLive = upcomingLives[0];
 
   const allEvents = [
     ...calendarEvents.map(ev => ({
@@ -227,14 +247,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const uniqueUpcomingClasses = Array.from(
     new Map(allEvents.map(item => [item.title + item.date, item])).values()
   ).filter(ev => {
-    const classTime = new Date(`${ev.date.replace(/-/g, '/')} ${ev.time}:00`).getTime();
-    // පැය 2ක් ඇතුළත ආරම්භ වූ පන්ති හෝ අනාගත පන්ති පෙන්වීම
-    return (classTime - now.getTime()) > -7200000; 
-  }).sort((a, b) => {
-      const dA = new Date(`${a.date.replace(/-/g, '/')} ${a.time}:00`).getTime();
-      const dB = new Date(`${b.date.replace(/-/g, '/')} ${b.time}:00`).getTime();
-      return dA - dB;
-  });
+    const classTime = parseClassTime(ev.date, ev.time);
+    return (classTime - now) > -7200000; 
+  }).sort((a, b) => parseClassTime(a.date, a.time) - parseClassTime(b.date, b.time));
 
   let viewState = 'loading';
   let targetClass: ScheduledLive | null = null;
@@ -245,14 +260,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       viewState = 'live';
       targetClass = activeLive;
     } else if (nextLive) {
-      targetClass = nextLive;
-      
-      let classDateTime = new Date(`${nextLive.date}T${nextLive.time || '00:00'}:00`);
-      if (isNaN(classDateTime.getTime())) {
-          classDateTime = new Date(`${nextLive.date.replace(/-/g, '/')} ${nextLive.time || '00:00'}:00`);
-      }
-      
-      const diffSeconds = differenceInSeconds(classDateTime, now);
+      targetClass = nextLive as ScheduledLive;
+      const diffSeconds = Math.floor((nextLive.timeVal - now) / 1000);
 
       if (diffSeconds > 86400) {
         viewState = uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes';
