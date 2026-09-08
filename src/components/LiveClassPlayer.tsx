@@ -15,8 +15,8 @@ interface CalendarEvent {
   title: string;
   description: string;
   status: string;
-  target_class_type: any;
-  class_type: any;
+  target_class_type?: any;
+  class_type?: any;
   start_time: string;
 }
 
@@ -25,15 +25,16 @@ interface ScheduledLive {
   title: string;
   date: string;
   time: string;
-  target_class_type: any;
-  target_classes: any;
+  target_class_type?: any;
+  class_type?: any; // TypeScript Error එක නිරාකරණය කිරීම සඳහා එකතු කරන ලදී
+  target_classes?: any;
   target_month: string;
   pre_class_video_path: string;
   status: string;
   zoom_join_url: string;
 }
 
-// 12-Hour Format Converter Function
+// 12-Hour Format Converter
 const formatTo12Hour = (timeStr: string) => {
   if (!timeStr) return '';
   try {
@@ -72,16 +73,32 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   }
 };
 
-const formatClassLabel = (val: any): string => {
-  if (!val) return '';
-  if (Array.isArray(val)) return val.join(', ');
-  if (typeof val === 'string' && val.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(val);
-      if (Array.isArray(parsed)) return parsed.join(', ');
-    } catch {}
+// සුපබේස් දත්තවල ඇති වරහන් හා අතිරේක ලකුණු ඉවත් කර පිරිසිදු කරගැනීම
+const extractText = (val: any): string[] => {
+  if (!val) return [];
+  let arr: any[] = [];
+  if (Array.isArray(val)) {
+    arr = val;
+  } else if (typeof val === 'string') {
+    if (val.trim().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(val);
+        arr = Array.isArray(parsed) ? parsed : [val];
+      } catch {
+        arr = [val];
+      }
+    } else {
+      arr = [val];
+    }
+  } else {
+    arr = [val];
   }
-  return String(val);
+  return arr.map(v => String(v).replace(/[\[\]"']/g, '').trim()).filter(Boolean);
+};
+
+const formatClassLabel = (val: any): string => {
+  const texts = extractText(val);
+  return texts.join(', ');
 };
 
 const getClassColor = (type: any) => {
@@ -104,9 +121,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [viewState, setViewState] = useState<'loading' | 'live' | 'waiting-0s' | 'waiting-30m' | 'waiting-24h' | 'upcoming-list' | 'no-classes'>('loading');
-  const [targetClass, setTargetClass] = useState<ScheduledLive | null>(null);
-  const [timer, setTimer] = useState({ h: 0, m: 0, s: 0 });
+  
+  const [now, setNow] = useState(new Date());
   
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true); 
@@ -117,70 +133,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
-  // WakeLock Effect
   useEffect(() => {
-    const requestWakeLock = async () => {
-      if (viewState === 'live' && 'wakeLock' in navigator) {
-        try {
-          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        } catch (err) {
-          console.warn('Wake Lock request failed:', err);
-        }
-      }
-    };
-
-    const releaseWakeLock = async () => {
-      if (wakeLockRef.current) {
-        try {
-          await wakeLockRef.current.release();
-          wakeLockRef.current = null;
-        } catch (err) {}
-      }
-    };
-
-    if (viewState === 'live') {
-      requestWakeLock();
-    } else {
-      releaseWakeLock();
-    }
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && viewState === 'live') {
-        requestWakeLock();
-      }
-    };
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      releaseWakeLock();
-    };
-  }, [viewState]);
-
-  // Fullscreen Title Auto-hide Logic
-  const resetControlsTimeout = () => {
-    setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    
-    if (isFullscreen) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, 3000);
-    }
-  };
-
-  useEffect(() => {
-    if (isFullscreen) {
-      resetControlsTimeout();
-    } else {
-      setShowControls(true);
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    }
-    return () => {
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    };
-  }, [isFullscreen]);
-
+    const interval = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -194,56 +150,23 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchData = async () => {
     try {
+      setIsLoading(true);
       const today = format(new Date(), 'yyyy-MM-dd');
       
-      let rawClasses: any = currentUser?.class_types || [];
-      let studentClasses: string[] = [];
-      
-      if (typeof rawClasses === 'string') {
-          try { rawClasses = JSON.parse(rawClasses); } catch(e) { rawClasses = [rawClasses]; }
-      }
-      
-      if (Array.isArray(rawClasses)) {
-          rawClasses.forEach(c => {
-              if (typeof c === 'string' && c.startsWith('[')) {
-                  try {
-                      const parsed = JSON.parse(c);
-                      if (Array.isArray(parsed)) studentClasses.push(...parsed);
-                      else studentClasses.push(c);
-                  } catch { studentClasses.push(c); }
-              } else if (c) {
-                  studentClasses.push(String(c));
-              }
-          });
-      }
+      // සිසුවාගේ පන්ති ලැයිස්තුව ආරක්ෂිතව සකසා ගැනීම
+      const studentClassesList = extractText(currentUser?.class_types).map(c => c.toLowerCase());
+      const hasClasses = studentClassesList.length > 0;
 
-      const cleanStudentClasses = studentClasses.filter(Boolean).map(c => String(c).toLowerCase().trim());
-      const hasClasses = cleanStudentClasses.length > 0;
-
+      // පන්ති ගැලපේදැයි පරීක්ෂා කරන 100% නිවැරදි Function එක
       const isMatch = (val1?: any, val2?: any, val3?: any): boolean => {
         if (!hasClasses) return false; 
         
-        const check = (targetVal?: any): boolean => {
-          if (!targetVal) return false;
-          
-          if (Array.isArray(targetVal)) {
-            return targetVal.some(v => check(v));
-          }
-          
-          if (typeof targetVal === 'string' && targetVal.startsWith('[')) {
-            try {
-              const parsed = JSON.parse(targetVal);
-              if (Array.isArray(parsed)) {
-                return parsed.some(v => check(v));
-              }
-            } catch (e) {}
-          }
-          
-          const rClass = String(targetVal).toLowerCase().trim();
-          return cleanStudentClasses.some(sc => sc === rClass || sc.includes(rClass) || rClass.includes(sc));
-        };
-
-        return check(val1) || check(val2) || check(val3);
+        const targets = [...extractText(val1), ...extractText(val2), ...extractText(val3)]
+                        .map(c => c.toLowerCase());
+        
+        return targets.some(tc => 
+          studentClassesList.some(sc => sc === tc || sc.includes(tc) || tc.includes(sc))
+        );
       };
 
       const { data: calData } = await supabase
@@ -256,8 +179,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           const statusStr = String(ev.status || '').toLowerCase().trim();
           const isNotCancelled = statusStr !== 'cancelled' && statusStr !== 'ended'; 
           return isNotCancelled && isMatch(ev.class_type, ev.target_class_type);
-        }).sort((a: any, b: any) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
-        
+        });
         setCalendarEvents(filteredCal);
       }
 
@@ -269,10 +191,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       if (liveData) {
         const filteredLive = liveData.filter((cls: any) => {
           const statusStr = String(cls.status || '').toLowerCase().trim();
-          const isValidStatus = ['scheduled', 'live', 'active', 'published'].includes(statusStr);
+          const isValidStatus = ['scheduled', 'live', 'active', 'published', 'pending'].includes(statusStr);
           return isValidStatus && isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
-        }).sort((a: any, b: any) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
-        
+        });
         setScheduledLives(filteredLive);
       }
     } catch (error) {
@@ -282,115 +203,135 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
   };
 
-  // ✅ New Logic: අනාගත පන්ති දෙවර්ගයම එකට එකතු කර ලැයිස්තුවක් සෑදීම
-  const allUpcomingClasses = [
+  const activeLive = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'live');
+  const nextLive = scheduledLives.find(c => ['scheduled', 'active', 'published', 'pending'].includes(String(c.status).toLowerCase().trim()));
+
+  const allEvents = [
     ...calendarEvents.map(ev => ({
       id: ev.id,
       title: ev.title,
       date: ev.date,
-      time: ev.start_time,
+      time: ev.start_time || '00:00',
       type: ev.target_class_type || ev.class_type
     })),
     ...scheduledLives.map(live => ({
       id: live.id,
       title: live.title,
       date: live.date,
-      time: live.time,
-      type: live.target_class_type || live.target_classes
+      time: live.time || '00:00',
+      type: live.target_class_type || live.target_classes || live.class_type
     }))
-  ].filter(cls => {
-    try {
-      const dt = new Date(`${cls.date}T${cls.time || '00:00'}:00`);
-      return differenceInSeconds(dt, new Date()) > 0;
-    } catch(e) { return false; }
-  }).sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
+  ];
 
-  // ✅ එකම පන්තිය දෙවරක් ඇතුලත් වී ඇත්නම් ඉවත් කිරීම (Remove duplicates)
-  const uniqueUpcomingClasses = Array.from(new Map(allUpcomingClasses.map(item => [item.title + item.date, item])).values());
+  // අනාගත පන්ති පමණක් වෙන්කර ගැනීම
+  const uniqueUpcomingClasses = Array.from(
+    new Map(allEvents.map(item => [item.title + item.date, item])).values()
+  ).filter(ev => {
+    const classTime = new Date(`${ev.date.replace(/-/g, '/')} ${ev.time}:00`).getTime();
+    // පැය 2ක් ඇතුළත ආරම්භ වූ පන්ති හෝ අනාගත පන්ති පෙන්වීම
+    return (classTime - now.getTime()) > -7200000; 
+  }).sort((a, b) => {
+      const dA = new Date(`${a.date.replace(/-/g, '/')} ${a.time}:00`).getTime();
+      const dB = new Date(`${b.date.replace(/-/g, '/')} ${b.time}:00`).getTime();
+      return dA - dB;
+  });
+
+  let viewState = 'loading';
+  let targetClass: ScheduledLive | null = null;
+  let timer = { h: 0, m: 0, s: 0 };
+
+  if (!isLoading) {
+    if (activeLive) {
+      viewState = 'live';
+      targetClass = activeLive;
+    } else if (nextLive) {
+      targetClass = nextLive;
+      
+      let classDateTime = new Date(`${nextLive.date}T${nextLive.time || '00:00'}:00`);
+      if (isNaN(classDateTime.getTime())) {
+          classDateTime = new Date(`${nextLive.date.replace(/-/g, '/')} ${nextLive.time || '00:00'}:00`);
+      }
+      
+      const diffSeconds = differenceInSeconds(classDateTime, now);
+
+      if (diffSeconds > 86400) {
+        viewState = uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes';
+      } else if (diffSeconds > 1800) {
+        viewState = 'waiting-24h';
+        timer = { h: Math.floor(diffSeconds / 3600), m: Math.floor((diffSeconds % 3600) / 60), s: diffSeconds % 60 };
+      } else if (diffSeconds > 0) {
+        viewState = 'waiting-30m';
+        timer = { h: 0, m: Math.floor(diffSeconds / 60), s: diffSeconds % 60 };
+      } else {
+        viewState = 'waiting-0s';
+      }
+    } else {
+      viewState = uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes';
+    }
+  }
 
   useEffect(() => {
-    if (isLoading) return;
-
-    const updateViewState = () => {
-      const live = scheduledLives.find(c => String(c.status).toLowerCase().trim() === 'live');
-      if (live) {
-        setTargetClass(live);
-        setViewState('live');
-        return;
+    const requestWakeLock = async () => {
+      if (viewState === 'live' && 'wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        } catch (err) {}
       }
-
-      const nextLive = scheduledLives.find(c => ['scheduled', 'active', 'published'].includes(String(c.status).toLowerCase().trim()));
-      
-      if (nextLive) {
-        setTargetClass(nextLive);
-        const classDateTime = new Date(`${nextLive.date}T${nextLive.time || '00:00'}:00`);
-        const diffSeconds = differenceInSeconds(classDateTime, new Date());
-
-        // ✅ මීළඟ පන්තිය පැය 24කට වඩා දුරින් නම් (Upcoming List එක පෙන්වන්න)
-        if (diffSeconds > 86400) {
-           setViewState(uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes');
-        } else if (diffSeconds > 1800) {
-          setViewState('waiting-24h');
-          setTimer({ h: Math.floor(diffSeconds / 3600), m: Math.floor((diffSeconds % 3600) / 60), s: diffSeconds % 60 });
-        } else if (diffSeconds > 0) {
-          setViewState('waiting-30m');
-          setTimer({ h: 0, m: Math.floor(diffSeconds / 60), s: diffSeconds % 60 });
-        } else {
-          setViewState('waiting-0s');
-        }
-      } else {
-        // ✅ NextLive එකක් නැතත්, අනාගත පන්ති ඇත්නම් ඒවා පෙන්වීම.
-        setViewState(uniqueUpcomingClasses.length > 0 ? 'upcoming-list' : 'no-classes');
+    };
+    const releaseWakeLock = async () => {
+      if (wakeLockRef.current) {
+        try { await wakeLockRef.current.release(); wakeLockRef.current = null; } catch (err) {}
       }
     };
 
-    updateViewState(); 
-    const interval = setInterval(updateViewState, 1000);
+    if (viewState === 'live') requestWakeLock();
+    else releaseWakeLock();
 
-    return () => clearInterval(interval);
-  }, [scheduledLives, calendarEvents, isLoading, uniqueUpcomingClasses.length]);
+    const handleVisibilityChange = () => { if (document.visibilityState === 'visible' && viewState === 'live') requestWakeLock(); };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => { document.removeEventListener('visibilitychange', handleVisibilityChange); releaseWakeLock(); };
+  }, [viewState]);
 
-  const toggleFullscreen = async () => {
-    if (!playerContainerRef.current) return;
-    
-    if (!isFullscreen) {
-      setIsFullscreen(true);
-      try {
-        if (playerContainerRef.current.requestFullscreen) {
-          await playerContainerRef.current.requestFullscreen();
-        } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
-          await (playerContainerRef.current as any).webkitRequestFullscreen();
-        }
-        if (window.screen?.orientation?.lock) {
-          await window.screen.orientation.lock('landscape').catch(() => {});
-        }
-      } catch (err) {
-        console.warn("Fullscreen API not fully supported.");
-      }
-    } else {
-      setIsFullscreen(false);
-      try {
-        if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
-          if (document.exitFullscreen) {
-            await document.exitFullscreen();
-          } else if ((document as any).webkitExitFullscreen) {
-            await (document as any).webkitExitFullscreen();
-          }
-        }
-        if (window.screen?.orientation?.unlock) {
-          window.screen.orientation.unlock();
-        }
-      } catch (err) {
-        console.warn("Exit fullscreen error", err);
-      }
+  const resetControlsTimeout = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (isFullscreen) {
+      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
     }
   };
 
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      const isFull = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
-      setIsFullscreen(isFull);
-    };
+    if (isFullscreen) resetControlsTimeout();
+    else {
+      setShowControls(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    }
+    return () => { if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); };
+  }, [isFullscreen]);
+
+  const toggleFullscreen = async () => {
+    if (!playerContainerRef.current) return;
+    if (!isFullscreen) {
+      setIsFullscreen(true);
+      try {
+        if (playerContainerRef.current.requestFullscreen) await playerContainerRef.current.requestFullscreen();
+        else if ((playerContainerRef.current as any).webkitRequestFullscreen) await (playerContainerRef.current as any).webkitRequestFullscreen();
+        if (window.screen?.orientation?.lock) await window.screen.orientation.lock('landscape').catch(() => {});
+      } catch (err) {}
+    } else {
+      setIsFullscreen(false);
+      try {
+        if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if ((document as any).webkitExitFullscreen) await (document as any).webkitExitFullscreen();
+        }
+        if (window.screen?.orientation?.unlock) window.screen.orientation.unlock();
+      } catch (err) {}
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(!!(document.fullscreenElement || (document as any).webkitFullscreenElement));
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     return () => {
@@ -399,7 +340,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     };
   }, []);
 
-  if (isLoading || viewState === 'loading') {
+  if (viewState === 'loading') {
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
   }
 
@@ -448,8 +389,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
       {viewState === 'waiting-24h' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative">
           <div className="z-10 text-center p-6 flex flex-col items-center w-full max-w-2xl">
-            <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type)}`}>
-              {formatClassLabel(targetClass.target_class_type)}
+            <span className={`text-xs md:text-sm font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-6 ${getClassColor(targetClass.target_class_type || targetClass.class_type || targetClass.target_classes)}`}>
+              {formatClassLabel(targetClass.target_class_type || targetClass.class_type || targetClass.target_classes)}
             </span>
             <h1 className="text-2xl md:text-4xl font-bold text-white mb-6 md:mb-8 leading-tight">{targetClass.title}</h1>
             <p className="text-gray-400 mb-6 text-base md:text-lg">පන්තිය ආරම්භ වීමට තව...</p>
@@ -475,8 +416,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
             <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
           <div className="relative z-10 flex flex-col items-center p-8 bg-black/60 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl">
-            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type)}`}>
-              {formatClassLabel(targetClass.target_class_type)}
+            <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full mb-5 ${getClassColor(targetClass.target_class_type || targetClass.class_type || targetClass.target_classes)}`}>
+              {formatClassLabel(targetClass.target_class_type || targetClass.class_type || targetClass.target_classes)}
             </span>
             <h2 className="text-lg md:text-xl text-gray-200 mb-6">පන්තිය ආරම්භ වීමට තව...</h2>
             <div className="text-6xl md:text-8xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.6)] animate-pulse">
