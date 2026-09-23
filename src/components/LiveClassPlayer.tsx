@@ -1,10 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+
+
 import { supabase } from '../supabaseClient';
+
+
 
 import { format, differenceInSeconds } from 'date-fns';
 
+
+
 import { Maximize2, Minimize2, Lock } from 'lucide-react'; 
+
+
+
+
 
 
 
@@ -21,6 +31,10 @@ interface Student {
   plan_type?: string;
 
 }
+
+
+
+
 
 
 
@@ -43,6 +57,10 @@ interface CalendarEvent {
   start_time: string;
 
 }
+
+
+
+
 
 
 
@@ -69,6 +87,10 @@ interface ScheduledLive {
   zoom_join_url: string;
 
 }
+
+
+
+
 
 
 
@@ -120,6 +142,10 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
 
 
 
+
+
+
+
 const getClassColor = (type: string) => {
 
   if (!type) return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
@@ -150,7 +176,9 @@ const getClassColor = (type: string) => {
 
 
 
-// දත්ත කියවීමේදී සිදුවන දෝෂය මඟ හැරීමට (String or Array)
+
+
+
 
 const parseSafeArray = (val: any): string[] => {
 
@@ -174,11 +202,17 @@ const parseSafeArray = (val: any): string[] => {
 
 
 
+
+
+
+
 const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
+
+  const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -196,43 +230,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
   const studentName = currentUser?.username || 'Student';
 
 
 
-  // ගෙවීම් පරීක්ෂා කිරීමේ අලුත් ක්‍රියාවලිය
 
-  const isClassPaid = (monthString?: string) => {
-
-    if (!currentUser) return false;
-
-    if (currentUser.plan_type === 'free') return true;
-
-
-
-    const targetMonth = monthString || format(new Date(), 'yyyy-MM');
-
-    const activeMonths = parseSafeArray(currentUser.active_months);
-
-    const freeMonths = parseSafeArray(currentUser.free_months);
-
-    const currentYearStr = targetMonth.split('-')[0];
-
-
-
-    return (
-
-      activeMonths.includes(targetMonth) ||
-
-      activeMonths.includes(currentYearStr) ||
-
-      freeMonths.includes(targetMonth) ||
-
-      freeMonths.includes(currentYearStr)
-
-    );
-
-  };
 
 
 
@@ -256,17 +262,17 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
   const fetchData = async () => {
 
     try {
 
-      // අද දිනය ලබා ගැනීම
-
       const today = format(new Date(), 'yyyy-MM-dd');
 
       
-
-      // සිසුවාගේ විෂයන් කැපිටල්/සිම්පල් ගැටළු මඟහරවා සකසා ගැනීම (parseSafeArray භාවිතා කර ඇත)
 
       const studentClasses = parseSafeArray(currentUser?.class_types).map(c => c.trim().toLowerCase());
 
@@ -274,11 +280,13 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
-      // Class Filter කරන Function එක (Fail-safe)
+
+
+
 
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
 
-        if (!hasClasses) return false; // සිසුවා පන්ති තෝරාගෙන නැත්නම් කිසිවක් නොපෙන්වන්න
+        if (!hasClasses) return false; 
 
         if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
 
@@ -289,6 +297,56 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return false;
 
       };
+
+
+
+
+
+
+
+      // Payments Data Fetching (Copied from StudentRecordings)
+
+      const { data: payData, error: payError } = await supabase
+
+        .from('payments')
+
+        .select('*')
+
+        .eq('username', studentName);
+
+
+
+
+
+
+
+      const formatYearMonth = (dateStr?: string, targetMonthStr?: string) => {
+
+        if (targetMonthStr && targetMonthStr.includes('-')) return targetMonthStr;
+
+        if (dateStr && dateStr.includes('-')) {
+
+            const parts = dateStr.split('-');
+
+            return `${parts[0]}-${parts[1]}`;
+
+        }
+
+        return format(new Date(), 'yyyy-MM');
+
+      };
+
+
+
+
+
+
+
+      const statusMap: Record<string, boolean> = {};
+
+
+
+
 
 
 
@@ -306,15 +364,69 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
       if (calData) {
 
         const filteredCal = calData.filter(ev => isMatch(ev.class_type, ev.target_class_type))
 
           .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
 
+        
+
+        filteredCal.forEach((ev: any) => {
+
+            const standardizedDbMonth = formatYearMonth(ev.date, undefined);
+
+            const isGloballyFree = currentUser?.plan_type?.toLowerCase() === 'free';
+
+            const isThisMonthFree = parseSafeArray(currentUser?.free_months).includes(standardizedDbMonth);
+
+            
+
+            const paymentRecord = payData?.find((p: any) => {
+
+                const pClass = String(p.class_type || p.class_name || "").toLowerCase().trim();
+
+                const rClass = String(ev.target_class_type || ev.class_type || "").toLowerCase().trim();
+
+                const isClassMatch = pClass === rClass || pClass.includes(rClass) || rClass.includes(pClass);
+
+                
+
+                const pTargetMonth = String(p.target_month || "").trim();
+
+                const pMonth = String(p.month || "").trim();
+
+
+
+                return isClassMatch && (pTargetMonth === standardizedDbMonth || pMonth === standardizedDbMonth);
+
+            });
+
+            
+
+            const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
+
+            const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
+
+            
+
+            statusMap[`cal_${ev.id}`] = isGloballyFree || isThisMonthFree || isPaid;
+
+        });
+
+
+
         setCalendarEvents(filteredCal);
 
       }
+
+
+
+
 
 
 
@@ -332,15 +444,71 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
       if (liveData) {
 
         const filteredLive = liveData.filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
 
           .sort((a, b) => new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime());
 
+        
+
+        filteredLive.forEach((live: any) => {
+
+            const standardizedDbMonth = formatYearMonth(live.date, live.target_month);
+
+            const isGloballyFree = currentUser?.plan_type?.toLowerCase() === 'free';
+
+            const isThisMonthFree = parseSafeArray(currentUser?.free_months).includes(standardizedDbMonth);
+
+            
+
+            const paymentRecord = payData?.find((p: any) => {
+
+                const pClass = String(p.class_type || p.class_name || "").toLowerCase().trim();
+
+                const rClass = String(live.target_class_type || live.target_classes?.[0] || "").toLowerCase().trim();
+
+                const isClassMatch = pClass === rClass || pClass.includes(rClass) || rClass.includes(pClass);
+
+                
+
+                const pTargetMonth = String(p.target_month || "").trim();
+
+                const pMonth = String(p.month || "").trim();
+
+
+
+                return isClassMatch && (pTargetMonth === standardizedDbMonth || pMonth === standardizedDbMonth);
+
+            });
+
+            
+
+            const pStatus = paymentRecord?.status?.toLowerCase()?.trim();
+
+            const isPaid = pStatus === 'paid' || pStatus === 'free' || pStatus === 'approved' || pStatus === 'success';
+
+            
+
+            statusMap[live.id] = isGloballyFree || isThisMonthFree || isPaid;
+
+        });
+
+
+
         setScheduledLives(filteredLive);
 
       }
+
+
+
+      setPaymentStatuses(statusMap);
+
+
 
     } catch (error) {
 
@@ -353,6 +521,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     }
 
   };
+
+
+
+
 
 
 
@@ -380,6 +552,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
       // මීළඟ Zoom පන්තිය ලබා ගැනීම
 
       const nextLive = scheduledLives.find(c => c.status === 'scheduled');
@@ -393,6 +569,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         const classDateTime = new Date(`${nextLive.date}T${nextLive.time.length === 5 ? nextLive.time + ':00' : nextLive.time}`);
 
         const diffSeconds = differenceInSeconds(classDateTime, new Date());
+
+
+
+
 
 
 
@@ -428,9 +608,17 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
     return () => clearInterval(interval);
 
   }, [scheduledLives, calendarEvents, isLoading]);
+
+
+
+
 
 
 
@@ -510,6 +698,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
   useEffect(() => {
 
     const handleFullscreenChange = () => setIsFullscreen(!!(document.fullscreenElement || (document as any).webkitFullscreenElement));
@@ -530,11 +722,19 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
   if (isLoading || viewState === 'loading') {
 
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
 
   }
+
+
+
+
 
 
 
@@ -562,6 +762,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
   // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන්)
 
   if (viewState === 'upcoming-list') {
@@ -574,19 +778,35 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
         <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-          {calendarEvents.map((ev, idx) => (
+          {calendarEvents.map((ev, idx) => {
 
-            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+            const isPaid = paymentStatuses[`cal_${ev.id}`];
 
-              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4">
+            return (
+
+            <div key={idx} className={`p-6 rounded-2xl border bg-gray-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300 relative overflow-hidden`}>
+
+              {!isPaid && (
+
+                <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center p-4 z-10 backdrop-blur-[2px]">
+
+                  <Lock className="text-red-500 w-8 h-8 mb-2" />
+
+                  <span className="text-red-400 font-bold text-xs text-center">මුදල් ගෙවා පන්තියට සහභාගී වන්න</span>
+
+                </div>
+
+              )}
+
+              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full bg-black/40 inline-block shadow-sm mb-4 relative z-0">
 
                 {ev.target_class_type || ev.class_type}
 
               </span>
 
-              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight">{ev.title}</h3>
+              <h3 className="text-xl text-white font-bold mb-4 line-clamp-2 leading-tight relative z-0">{ev.title}</h3>
 
-              <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl">
+              <div className="flex flex-col gap-2 text-sm bg-black/20 p-4 rounded-xl relative z-0">
 
                 <div className="flex items-center justify-between">
 
@@ -608,7 +828,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
             </div>
 
-          ))}
+          )})}
 
         </div>
 
@@ -620,13 +840,21 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
-  // --- වර්තමාන පන්තිය ගෙවා ඇත්දැයි පරීක්ෂා කිරීම ---
-
-  const isTargetClassPaid = targetClass ? isClassPaid(targetClass.target_month || targetClass.date.substring(0, 7)) : false;
 
 
 
-  // --- ගෙවා නොමැති විට පෙන්වන අගුලු දැමූ (Locked) තිරය ---
+
+  // --- Payment Validation State for Currently Target Class ---
+
+  const isTargetClassPaid = targetClass ? paymentStatuses[targetClass.id] : false;
+
+
+
+
+
+
+
+  // --- Locked Overlay Component for Unpaid Users ---
 
   const renderLockedOverlay = () => {
 
@@ -651,6 +879,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
 
   };
+
+
+
+
 
 
 
@@ -712,6 +944,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
       {/* 4. අවසන් විනාඩි 30 */}
 
       {viewState === 'waiting-30m' && targetClass && (
@@ -754,6 +990,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
 
 
+
+
+
+
       {/* 5. තත්පර 0 වූ පසු */}
 
       {viewState === 'waiting-0s' && targetClass && (
@@ -789,6 +1029,10 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
 
       )}
+
+
+
+
 
 
 
@@ -859,6 +1103,8 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           
 
           <div className={`w-full bg-white relative ${isFullscreen ? 'flex-1' : 'h-[70vh] md:h-[80vh]'} ${!isTargetClassPaid ? 'opacity-20 blur-sm pointer-events-none' : ''}`}>
+
+            {/* පන්තියට මුදල් ගෙවා ඇත්නම් පමණක් Zoom iframe එක render කරයි. */}
 
             {isTargetClassPaid && (
 
