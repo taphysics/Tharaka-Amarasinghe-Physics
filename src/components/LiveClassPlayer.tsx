@@ -87,14 +87,15 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const studentName = currentUser?.username || 'Student';
 
-  // 1. Payment Verification Logic
+  // --- Payment Verification Logic ---
   const isClassPaid = (monthString?: string) => {
     if (!currentUser) return false;
-    if (currentUser.plan_type === 'free') return true;
+    if (currentUser.plan_type === 'free') return true; // Free plan students get full access
 
     const targetMonth = monthString || format(new Date(), 'yyyy-MM');
     const activeMonths = currentUser.active_months || [];
     const freeMonths = currentUser.free_months || [];
+    
     const currentYearStr = targetMonth.split('-')[0];
 
     return (
@@ -117,12 +118,14 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
 
   const fetchData = async () => {
     try {
+      // අද දිනය ලබා ගැනීම
       const today = format(new Date(), 'yyyy-MM-dd');
       
+      // සිසුවාගේ විෂයන් කැපිටල්/සිම්පල් ගැටළු මඟහරවා සකසා ගැනීම
       const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
       const hasClasses = studentClasses.length > 0;
 
-      // 2. Class Filter Logic (Strictly hide unselected classes)
+      // Class Filter කරන Function එක (Strict Filtering applied)
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
         if (!hasClasses) return false; // සිසුවා පන්ති තෝරාගෙන නැත්නම් කිසිවක් නොපෙන්වන්න
         if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
@@ -131,6 +134,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return false;
       };
 
+      // 1. Calendar Events (ඉදිරි දින ලැයිස්තුව)
       const { data: calData } = await supabase
         .from('calendar_events')
         .select('*')
@@ -143,6 +147,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         setCalendarEvents(filteredCal);
       }
 
+      // 2. Scheduled Lives (Zoom ලින්ක් සහ Countdown)
       const { data: liveData } = await supabase
         .from('scheduled_lives')
         .select('*')
@@ -165,6 +170,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     if (isLoading) return;
     
     const interval = setInterval(() => {
+      // ලයිව් එකක් ඇත්දැයි බැලීම
       const live = scheduledLives.find(c => c.status === 'live');
       if (live) {
         setTargetClass(live);
@@ -172,6 +178,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         return;
       }
 
+      // මීළඟ Zoom පන්තිය ලබා ගැනීම
       const nextLive = scheduledLives.find(c => c.status === 'scheduled');
       
       if (nextLive) {
@@ -198,6 +205,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading]);
 
+  // Mobile Fullscreen API + CSS Overlay
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
     
@@ -207,8 +215,9 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         if (playerContainerRef.current.requestFullscreen) {
           await playerContainerRef.current.requestFullscreen();
         } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
-          await (playerContainerRef.current as any).webkitRequestFullscreen(); 
+          await (playerContainerRef.current as any).webkitRequestFullscreen(); // For iOS
         }
+        // තිරය Landscape කිරීමට (Support කරන Devices සඳහා පමණක්)
         if (window.screen?.orientation?.lock) {
           await window.screen.orientation.lock('landscape').catch(() => {});
         }
@@ -248,7 +257,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     return <div className="flex justify-center items-center h-screen bg-black text-white font-semibold">දත්ත පූරණය වෙමින් පවතී...</div>;
   }
 
-  // පන්ති නොමැති විට
+  // 1. පන්ති නොමැති විට
   if (viewState === 'no-classes') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[70vh] bg-black text-white p-6">
@@ -260,7 +269,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // පැය 24 ට වඩා කල් ඇති පන්ති
+  // 2. පැය 24 ට වඩා කල් ඇති පන්ති (Calendar Events ටේබල් එකෙන්)
   if (viewState === 'upcoming-list') {
     return (
       <div className="flex flex-col items-center min-h-screen bg-black text-white p-4 md:p-8">
@@ -289,18 +298,18 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
     );
   }
 
-  // 3. Payment Verified Status Check
+  // --- Payment Validation State for Currently Target Class ---
   const isTargetClassPaid = targetClass ? isClassPaid(targetClass.target_month || targetClass.date.substring(0, 7)) : false;
 
-  // 4. Locked Message Component for Unpaid Users
+  // --- Locked Overlay Component for Unpaid Users ---
   const renderLockedOverlay = () => {
     if (isTargetClassPaid) return null;
     return (
-      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md rounded-2xl border border-red-500/30">
-         <Lock className="text-red-500 mb-4 w-12 h-12" />
-         <h2 className="text-xl md:text-2xl font-bold text-white mb-3 text-center">ප්‍රවේශය සීමා කර ඇත</h2>
-         <p className="text-red-400 font-medium text-center px-6 md:px-12 leading-relaxed">
-           මෙම සජීවී පන්තිය නැරඹීම සඳහා ඔබගේ ගෙවීම් තහවුරු වී නොමැත. කරුණාකර මුදල් ගෙවා පන්තියට සහභාගී වන්න.
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md rounded-2xl border border-red-500/30 p-6 text-center">
+         <Lock className="text-red-500 mb-4 w-12 h-12 md:w-16 md:h-16" />
+         <h2 className="text-xl md:text-2xl font-bold text-white mb-3">ප්‍රවේශය සීමා කර ඇත</h2>
+         <p className="text-red-400 font-medium text-sm md:text-base leading-relaxed max-w-md">
+           මෙම සජීවී පන්තිය නැරඹීම සඳහා ඔබගේ ගෙවීම් තහවුරු වී නොමැත. කරුණාකර අදාළ මාසය සඳහා මුදල් ගෙවා පන්තියට සහභාගී වන්න.
          </p>
       </div>
     );
@@ -309,7 +318,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
   return (
     <div className="w-full min-h-screen bg-black text-white flex flex-col p-4 md:p-8">
       
-      {/* පැය 24 කවුන්ඩවුන් එක */}
+      {/* 3. පැය 24 කවුන්ඩවුන් එක */}
       {viewState === 'waiting-24h' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl relative overflow-hidden">
           {renderLockedOverlay()}
@@ -335,7 +344,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* අවසන් විනාඩි 30 */}
+      {/* 4. අවසන් විනාඩි 30 */}
       {viewState === 'waiting-30m' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-900 border border-gray-800 shadow-2xl">
           {renderLockedOverlay()}
@@ -356,7 +365,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* තත්පර 0 වූ පසු */}
+      {/* 5. තත්පර 0 වූ පසු */}
       {viewState === 'waiting-0s' && targetClass && (
         <div className="flex flex-col items-center justify-center w-full h-[60vh] md:h-[75vh] relative rounded-2xl overflow-hidden bg-gray-950 border border-green-500/40">
           {renderLockedOverlay()}
@@ -375,7 +384,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
         </div>
       )}
 
-      {/* Live Zoom Player */}
+      {/* 6. Live Zoom Player (With CSS + API Fullscreen) */}
       {viewState === 'live' && targetClass && (
         <div 
           ref={playerContainerRef} 
@@ -409,6 +418,7 @@ const LiveClassPlayer = ({ currentUser }: { currentUser: Student | null }) => {
           </div>
           
           <div className={`w-full bg-white relative ${isFullscreen ? 'flex-1' : 'h-[70vh] md:h-[80vh]'} ${!isTargetClassPaid ? 'opacity-20 blur-sm pointer-events-none' : ''}`}>
+            {/* පන්තියට මුදල් ගෙවා ඇත්නම් පමණක් Zoom iframe එක render කරයි. (Bandwidth ඉතිරි කිරීම සඳහා) */}
             {isTargetClassPaid && (
               <iframe 
                 src={getEmbeddableZoomUrl(targetClass.zoom_join_url, studentName)} 
