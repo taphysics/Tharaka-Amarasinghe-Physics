@@ -769,10 +769,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         <main className="bg-slate-900/40 p-4 md:p-8 rounded-3xl border border-slate-800/50 min-h-[520px]">
           
           {dashboardTab === 'live' && (
-            <SafeComponent>
-              <LiveClassPlayer currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
-            </SafeComponent>
-          )}
+  <SafeComponent>
+    <LiveClassPlayer currentUser={liveStudentData} />
+  </SafeComponent>
+)}
           
           {dashboardTab === 'recordings' && liveStudentData && (
   <StudentRecordings 
