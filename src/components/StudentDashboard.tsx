@@ -1,5 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History } from 'lucide-react';
+import { 
+  Bell, AlertTriangle, Video, BookOpen, Download, LogOut, FileText, X, User, 
+  Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
+  ChevronLeft, ChevronRight, Clock, Calendar, Play, ExternalLink, Menu,
+  Trophy, Award, PenTool, Package, Radio, ArrowLeft, Check, Sparkles, Layers,
+  ChevronDown, AlertCircle, ShieldAlert
+} from 'lucide-react';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import StudentRecordings from './StudentRecordings';
@@ -24,8 +30,6 @@ interface StudentDashboardProps {
   isCurrentMonthPaid?: boolean;
   filterMonth?: string;
   setFilterMonth?: any;
-  
-  // 💡 App.tsx එකෙන් එවන supabase client එක පිළිගැනීමට මෙය අලුතින්ම එකතු කළා
   supabase: any; 
 }
 
@@ -38,7 +42,7 @@ const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         <AlertTriangle />
         <div>
           <p className="font-bold">Component එක ලෝඩ් වීමේ දෝෂයකි!</p>
-          <p className="text-xs text-slate-400">මෙම සෙක්ෂන් එකෙහි ඇති පරණ Database Table සම්බන්ධතා නිසා මෙය සිදුවේ.</p>
+          <p className="text-xs text-slate-400">Database සම්බන්ධතාවය පරික්ෂා කරන්න.</p>
         </div>
       </div>
     );
@@ -61,26 +65,33 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   isCurrentMonthPaid: parentPaidStatus,
   filterMonth,
   setFilterMonth,
-  supabase // 💡 Props වලින් supabase ලබා ගැනීම මෙතනට ඇතුලත් කළා
+  supabase
 }) => {
   const [dbReminders, setDbReminders] = useState<any[]>([]);
+  const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
+  const [recordingsCount, setRecordingsCount] = useState<number>(0);
+  const [examsCount, setExamsCount] = useState<number>(0);
+  const [availableExamsCount, setAvailableExamsCount] = useState<number>(0);
+  const [completedExamsCount, setCompletedExamsCount] = useState<number>(0);
+  const [tutesCount, setTutesCount] = useState<number>(0);
   const [isPaidCurrentMonth, setIsPaidCurrentMonth] = useState<boolean>(true);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
+  // Mobile sidebar and notifications modal drawer
+  const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
+  const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
+
   const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
-  // 💡 'Absent' කියන status එක අලුතින්ම එකතු කර ඇත
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
-
-  // 💡 Event Modal එක සහ තෝරාගත් දවසේ දත්ත ගබඩා කිරීමට අලුතින්ම එක්කළ State එක
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<any | null>(null);
 
   const mainContentRef = useRef<HTMLDivElement>(null);
 
-  // ශ්‍රී ලංකා වේලාවෙන් වත්මන් මාසය ලබා ගැනීම
+  // Sri Lanka Timezone calculation
   const getSLDateInfo = () => {
     const slDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
     const year = slDate.getFullYear();
@@ -98,7 +109,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const { year: cYear, monthNum: cMonthNum, monthPadded: cMonthPadded, monthName: cMonthName, key: currentMonthKey } = getSLDateInfo();
 
-  // 🔄 ඇඩ්මින් පැනලයෙන් කරන වෙනස්කම් ක්ෂණිකව (Realtime) අප්ඩේට් වන කොටස
+  const [calendarViewYear, setCalendarViewYear] = useState<number>(cYear);
+  const [calendarViewMonth, setCalendarViewMonth] = useState<number>(cMonthNum);
+
+  // Realtime Supabase Subscriptions
   useEffect(() => {
     fetchDashboardData();
 
@@ -113,13 +127,29 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => {
           fetchDashboardData();
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => {
+          fetchDashboardData();
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+          fetchDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => {
+          fetchDashboardData();
+        })
+        .subscribe();
+
+      const broadcastChannel = supabase.channel(`student_dashboard_${currentStudent.id}`)
+        .on('broadcast', { event: 'reminder_updated' }, () => {
+          fetchDashboardData();
+        })
+        .on('broadcast', { event: 'payment_updated' }, () => {
           fetchDashboardData();
         })
         .subscribe();
 
       return () => {
         supabase.removeChannel(channel);
+        supabase.removeChannel(broadcastChannel);
       };
     }
   }, [currentStudent.id, supabase]);
@@ -129,11 +159,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     
     if (supabase) {
       try {
-        // 1. සිසුවාගේ නැවුම් දත්ත ලබා ගැනීම (ID එකෙන්)
+        // 1. Fetch live student record
         const { data: freshStudentData } = await supabase
           .from('students')
           .select('*')
-          .eq('id', currentStudent.id) // 👈 username වෙනුවට id එකෙන් සොයයි
+          .eq('id', currentStudent.id)
           .single();
 
         const studentToUse = freshStudentData || currentStudent;
@@ -149,13 +179,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
-        // 2. Payments දත්ත කියවීම සහ සැසඳීම (student_id එකෙන්)
+        // 2. Fetch payments & reminders from `payments` table
         const { data: paymentData } = await supabase
           .from('payments')
           .select('*')
-          .eq('student_id', studentToUse.id); // 👈 username වෙනුවට student_id එකෙන් සොයයි
+          .or(`student_id.eq.${studentToUse.id},username.eq.${studentToUse.username}`);
 
-        // 💡 'Absent' type එක මෙතනටත් අනිවාර්යයෙන්ම එකතු කළ යුතුය
         let statuses: {name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[] = [];
         let extractedReminders: any[] = [];
         let pHistory: Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]> = {};
@@ -175,26 +204,58 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           );
         };
 
+        let explicitPaymentReminders: any[] = [];
         if (paymentData && paymentData.length > 0) {
-          // Reminders සහ Reminders Count එක එකතු කිරීම
           paymentData.forEach((p: any) => {
-            if (p.reminder_massage && p.reminder_massage.trim() !== '') {
+            const isUnpaid = p.status?.toLowerCase() === 'unpaid' || (!['paid', 'free', 'absent', 'disabled'].includes(p.status?.toLowerCase()));
+            const isReminderFlagged = p.reminder_sent === true || p.reminder_sent === 'true' || (p.reminder_massage && p.reminder_massage.trim() !== '');
+
+            if (isReminderFlagged && isUnpaid) {
+              const classType = p.class_type || p.class_name || 'පන්තිය';
+              const monthVal = p.month || p.target_month || currentMonthKey;
+
+              let monthDisplayName = monthVal;
+              if (monthVal && monthVal.includes('-')) {
+                const parts = monthVal.split('-');
+                const y = parts[0];
+                const mIdx = parseInt(parts[1], 10) - 1;
+                const mNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+                const sinhalaMNames = ["ජනවාරි", "පෙබරවාරි", "මාර්තු", "අප්‍රේල්", "මැයි", "ජූනි", "ජූලි", "අගෝස්තු", "සැප්තැම්බර්", "ඔක්තෝබර්", "නොවැම්බර්", "දෙසැම්බර්"];
+                if (mIdx >= 0 && mIdx < 12) {
+                  monthDisplayName = `${y} ${mNames[mIdx]} (${sinhalaMNames[mIdx]})`;
+                }
+              }
+
+              const reminderObj = {
+                id: p.record_id || `rem_${p.month}_${classType}`,
+                title: `⚠️ පන්ති ගාස්තු සිහිකැඳවීමයි! (${monthDisplayName})`,
+                message: p.reminder_massage?.trim() || `ඔබගේ ${monthDisplayName} මාසයේ [${classType}] පන්තිය සඳහා ගාස්තු ගෙවා නොමැත. කරුණාකර මුදල් ගෙවා සජීවී පන්තිය හා පහසුකම් ලබාගන්න.`,
+                classType: classType,
+                month: monthDisplayName,
+                monthKey: monthVal,
+                amount: p.amount || null,
+                isPaymentReminder: true,
+                count: p.reminders_count || 1
+              };
+              extractedReminders.push(reminderObj);
+              explicitPaymentReminders.push(reminderObj);
+              activeRemindersSum += p.reminders_count || 1;
+            } else if (p.reminder_massage && p.reminder_massage.trim() !== '') {
               extractedReminders.push({
                 title: `Payment Reminder`,
-                message: p.reminder_massage
+                message: p.reminder_massage,
+                isPaymentReminder: true
               });
               activeRemindersSum += p.reminders_count || 1;
             }
           });
 
-          // 📜 History එක සැකසීම සහ අනාගත මාස ඉවත් කිරීම (වත්මන් මාසය දක්වා පමණක් පෙන්වීම)
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
             return { key: `${cYear}-${pad}`, name, monthIndex: index + 1 };
           }).filter(m => m.monthIndex <= cMonthNum);
 
-          // ඇඩ්මින් විසින් ඩීඇක්ටිවේට් කරන ලද මාස ලැයිස්තුව කියවීම
           let deactivatedList: string[] = [];
           if (studentToUse.deactivated_months) {
             if (Array.isArray(studentToUse.deactivated_months)) deactivatedList = studentToUse.deactivated_months;
@@ -206,48 +267,38 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
-              // ඇඩ්මින් පැනලයෙන් ඩීඇක්ටිවේට් කර ඇත්නම් එම මාසය පෙන්වීම මඟ හරියි
               if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
                 return;
               }
-
-              // අදාළ පන්තියට සහ මාසයට ගෙවීම් වාර්තාවක් තිබේදැයි සෙවීම
-              const record = paymentData.find((p: any) => {
+              const paymentRecord = paymentData.find((p: any) => {
                 const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
+                const classMatches = pClass === sClass;
                 const pMonth = (p.month || p.target_month || '').toString().trim().toLowerCase();
-                return pClass === sClass && (pMonth === m.key || pMonth === m.name.toLowerCase() || pMonth.includes(m.name.toLowerCase()));
+                const monthMatches = pMonth === m.key.toLowerCase() || pMonth === m.name.toLowerCase();
+                return classMatches && monthMatches;
               });
 
               let statusValue: 'Paid' | 'Free' | 'Unpaid' | 'Absent' = 'Unpaid';
-              const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
+              if (paymentRecord) {
+                if (paymentRecord.status?.toLowerCase() === 'paid') statusValue = 'Paid';
+                else if (paymentRecord.status?.toLowerCase() === 'free') statusValue = 'Free';
+                else if (paymentRecord.status?.toLowerCase() === 'absent' || paymentRecord.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
+              } else {
+                const isMonthFree = isFreeStudent || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
+                if (isMonthFree) statusValue = 'Free';
+              }
+              pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
+            });
+          });
 
-              if (record) {
-                    if (record.status?.toLowerCase() === 'paid') statusValue = 'Paid';
-                    else if (record.status?.toLowerCase() === 'free') statusValue = 'Free';
-                    // 💡 Payment table එකේ Absent හෝ Disabled ලෙස තිබේ නම් එය ලබාගැනීම
-                    else if (record.status?.toLowerCase() === 'absent' || record.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
-                  } else if (isMonthFree) {
-                    statusValue = 'Free';
-                  }
-
-                  // 💡 වෙනස: statusValue එක 'Absent' නොවේ නම් පමණක් History එකට ඇතුලත් කරන්න
-                  if (statusValue !== 'Absent') {
-                    pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: statusValue });
-                  }
-                });
-              });
-
-          // වත්මන් මාසයේ ගෙවීම් පරීක්ෂාව
-          const currentMonthPayments = paymentData.filter((p: any) => 
-            isCurrentMonthMatch(p.month) || isCurrentMonthMatch(p.target_month)
-          );
-
-          if (isFreeStudent) {
-            statuses = enrolledClasses.map((cls) => ({ name: cls, status: 'Free' }));
-            setIsPaidCurrentMonth(true);
+          const currentMonthPayments = paymentData.filter((p: any) => isCurrentMonthMatch(p.month || p.target_month));
+          if (currentMonthPayments.length === 0) {
+            statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
+            setIsPaidCurrentMonth(isFreeStudent);
           } else {
-            statuses = enrolledClasses.map((cls) => {
+            statuses = enrolledClasses.map(cls => {
+              if (isFreeStudent) return { name: cls, status: 'Free' };
               const paymentRecord = currentMonthPayments.find((p: any) => {
                 const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
@@ -270,7 +321,6 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           statuses = enrolledClasses.map(cls => ({ name: cls, status: isFreeStudent ? 'Free' : 'Unpaid' }));
           setIsPaidCurrentMonth(isFreeStudent);
           
-          // පේමන්ට් කිසිවක් නැති විට මුළු අවුරුද්දම Unpaid/Free ලෙස සෑදීම
           const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
           const yearMonths = monthNames.map((name, index) => {
             const pad = String(index + 1).padStart(2, '0');
@@ -288,9 +338,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
-              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
-                return;
-              }
+              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) return;
               const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
               pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: isMonthFree ? 'Free' : 'Unpaid' });
             });
@@ -299,31 +347,145 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         
         setClassPaymentStatuses(statuses);
         setPaymentHistory(pHistory);
-        setTotalRemindersCount(activeRemindersSum);
 
-        // 3. Announcements කියවීම (පන්ති වර්ගය අනුව)
+        // 3. Announcements from `announcements` table
         const { data: announcementData } = await supabase
           .from('announcements')
           .select('*')
-          .or(`target_class_type.eq.${studentToUse.class},target_user.eq.all`);
+          .or(`target_user.eq.${studentToUse.username},target_user.eq.all`);
 
         if (announcementData) {
-          const generalAlerts = announcementData.map((a: any) => ({
-            title: a.title || 'විශේෂ නිවේදනයයි',
-            message: a.content
-          }));
-          extractedReminders = [...extractedReminders, ...generalAlerts];
+          announcementData.forEach((a: any) => {
+            const alreadyExists = extractedReminders.some(r => r.message === a.content);
+            if (!alreadyExists) {
+              const isFee = (a.title || '').includes('සිහිකැඳවීම') || (a.content || '').includes('ගාස්තු') || (a.content || '').includes('ගෙවා නොමැත');
+              const annObj = {
+                id: a.id || `ann_${Date.now()}_${Math.random()}`,
+                title: a.title || 'විශේෂ නිවේදනයයි',
+                message: a.content,
+                date: a.date,
+                isPaymentReminder: isFee,
+                classType: a.target_class_type || null,
+                month: null
+              };
+              extractedReminders.push(annObj);
+              if (isFee) {
+                explicitPaymentReminders.push(annObj);
+                activeRemindersSum += 1;
+              }
+            }
+          });
         }
-        setDbReminders(extractedReminders);
 
-        // 4. Calendar Events කියවීම (පන්ති වර්ගය අනුව)
-        const { data: eventsData } = await supabase
-          .from('calendar_events')
-          .select('*')
-          .like('date', `${currentMonthKey}%`)
-          .eq('target_class_type', studentToUse.class);
-        
-        if (eventsData) setCalendarEvents(eventsData);
+        setDbReminders(extractedReminders);
+        setPaymentReminders(explicitPaymentReminders);
+        setTotalRemindersCount(activeRemindersSum);
+
+        // 4. Fetch counts (Recordings, Exams, Completed Exam Results, Tutes, Calendar)
+        const [calRes, livesRes, recRes, examRes, tuteRes, resultsRes] = await Promise.all([
+          supabase.from('calendar_events').select('*').order('date', { ascending: true }),
+          supabase.from('scheduled_lives').select('*').order('date', { ascending: true }),
+          supabase.from('recordings').select('id, class_type'),
+          supabase.from('exams').select('id, title, status, class_type, target_class_type'),
+          supabase.from('class_resources').select('id, type, target_classes').in('type', ['tute', 'paper']),
+          supabase.from('exam_results').select('id, exam_id, score, submitted_at').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`)
+        ]);
+
+        // Recordings Count
+        if (recRes.data) {
+          const count = recRes.data.filter((r: any) => {
+            if (enrolledClasses.length === 0) return true;
+            return enrolledClasses.some(c => (r.class_type || '').toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes((r.class_type || '').toLowerCase()));
+          }).length;
+          setRecordingsCount(count);
+        }
+
+        // Exams & Completed calculation
+        let computedExamsCount = 0;
+        if (examRes.data) {
+          const matchingExams = examRes.data.filter((e: any) => {
+            if (enrolledClasses.length === 0) return true;
+            const tClass = (e.target_class_type || e.class_type || '').toLowerCase();
+            if (!tClass || tClass === 'all' || tClass === 'general') return true;
+            return enrolledClasses.some(c => tClass.includes(c.toLowerCase()) || c.toLowerCase().includes(tClass));
+          });
+          computedExamsCount = matchingExams.length;
+          setExamsCount(computedExamsCount);
+        }
+
+        let completedCount = 0;
+        if (resultsRes.data) {
+          const completedSet = new Set(resultsRes.data.map((r: any) => r.exam_id).filter(Boolean));
+          completedCount = completedSet.size;
+          setCompletedExamsCount(completedCount);
+        }
+        setAvailableExamsCount(Math.max(0, computedExamsCount - completedCount));
+
+        // Tutes Count
+        if (tuteRes.data) {
+          const count = tuteRes.data.filter((t: any) => {
+            if (enrolledClasses.length === 0) return true;
+            const tc = t.target_classes || [];
+            if (tc.length === 0) return true;
+            const tcArr = Array.isArray(tc) ? tc : [tc];
+            return tcArr.some((c: string) => enrolledClasses.some(ec => ec.toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes(ec.toLowerCase())));
+          }).length;
+          setTutesCount(count);
+        }
+
+        // Unified Calendar & Live Classes
+        const rawCalEvents = calRes.data || [];
+        const rawLives = livesRes.data || [];
+        const unifiedMap = new Map<string, any>();
+
+        rawLives.forEach((l: any) => {
+          const classType = l.target_class_type || (Array.isArray(l.target_classes) ? l.target_classes[0] : null) || l.class_type || 'General';
+          const eventKey = `${l.date}_${(l.title || 'Live').trim().toLowerCase()}`;
+          unifiedMap.set(eventKey, {
+            id: l.id,
+            title: l.title || 'Zoom Live Class',
+            date: l.date,
+            start_time: l.time || '18:00',
+            class_type: classType,
+            status: l.status || (l.is_active ? 'live' : 'scheduled'),
+            description: `Zoom Live Session - ${classType}`,
+            zoom_link: l.link || l.zoom_join_url,
+            meeting_id: l.zoom_meeting_id,
+            source: 'scheduled_lives'
+          });
+        });
+
+        rawCalEvents.forEach((c: any) => {
+          const classType = c.target_class_type || c.class_type || 'General';
+          const eventKey = `${c.date}_${(c.title || 'Event').trim().toLowerCase()}`;
+          if (!unifiedMap.has(eventKey)) {
+            unifiedMap.set(eventKey, {
+              id: c.id,
+              title: c.title,
+              date: c.date,
+              start_time: c.start_time || '18:00',
+              class_type: classType,
+              status: c.status || 'scheduled',
+              description: c.description || `Class Session - ${classType}`,
+              rescheduled_to: c.rescheduled_to,
+              warning_message: c.warning_message,
+              source: 'calendar_events'
+            });
+          }
+        });
+
+        const allUnifiedEvents = Array.from(unifiedMap.values());
+        const studentFilteredEvents = allUnifiedEvents.filter(ev => {
+          if (!enrolledClasses || enrolledClasses.length === 0) return true;
+          const evTypeLower = (ev.class_type || '').toLowerCase().trim();
+          if (evTypeLower === 'general' || evTypeLower === 'all') return true;
+          return enrolledClasses.some(c => {
+            const cLower = c.toLowerCase().trim();
+            return evTypeLower.includes(cLower) || cLower.includes(evTypeLower);
+          });
+        });
+
+        setCalendarEvents(studentFilteredEvents);
 
       } catch (error) {
         console.error("Dashboard Data Fetch Error:", error);
@@ -336,77 +498,215 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setDashboardTab(tab);
     setTimeout(() => {
       mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 150);
-  };
-
-  const handleBellClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setDashboardTab('history');
-    setTimeout(() => {
-      mainContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 150);
+    }, 100);
   };
 
   const capitalize = (str: string) => str ? str.charAt(0).toUpperCase() + str.slice(1).toLowerCase() : '';
   const fName = capitalize(liveStudentData?.first_name || liveStudentData?.name || '');
   const lName = capitalize(liveStudentData?.last_name || '');
-  const studentDisplayName = fName || lName ? `${fName} ${lName}`.trim() : liveStudentData?.username;
+  const studentDisplayName = fName || lName ? `${fName} ${lName}`.trim() : liveStudentData?.username || 'Student';
+  const studentInitials = (liveStudentData?.name || liveStudentData?.username || 'ST').substring(0, 2).toUpperCase();
+
+  const enrolledClasses: string[] = Array.isArray(liveStudentData?.class_types)
+    ? liveStudentData.class_types
+    : typeof liveStudentData?.class_types === 'string'
+    ? [liveStudentData.class_types]
+    : liveStudentData?.class ? [liveStudentData.class] : [];
 
   const allReminders = [...dbReminders, ...studentAlerts];
 
-  const generateProfileBorderGradient = () => {
-    if (!isPaidCurrentMonth) {
-      return 'conic-gradient(#ef4444 0% 100%)'; 
+  // Class Type Meta Helper
+  const getClassTypeMeta = (rawType: string) => {
+    const norm = (rawType || '').toLowerCase().trim();
+    if (norm.includes('2026') && norm.includes('theory')) {
+      return {
+        label: rawType || '2026 Theory',
+        sticker: '📘 2026 Theory',
+        stickerShort: '📘 Theory',
+        bgPill: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+        cellBadge: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-200 border-emerald-500/30',
+      };
     }
-    if (classPaymentStatuses.length === 0) {
-      return 'conic-gradient(#10b981 0% 100%)';
+    if (norm.includes('2026') && norm.includes('revision')) {
+      return {
+        label: rawType || '2026 Revision',
+        sticker: '⚡ 2026 Revision',
+        stickerShort: '⚡ Revision',
+        bgPill: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+        cellBadge: 'bg-amber-500/15 text-amber-700 dark:text-amber-200 border-amber-500/30',
+      };
     }
-    
-    const segmentPercentage = 100 / classPaymentStatuses.length;
-    const gradientParts = classPaymentStatuses.map((cls, index) => {
-      let color = '#ef4444'; 
-      if (cls.status === 'Paid') color = '#10b981'; 
-      else if (cls.status === 'Free') color = '#3b82f6'; 
-      
-      const start = (index * segmentPercentage).toFixed(2);
-      const end = ((index + 1) * segmentPercentage).toFixed(2);
-      return `${color} ${start}% ${end}%`;
-    });
-
-    return `conic-gradient(${gradientParts.join(', ')})`;
+    if (norm.includes('2027') && norm.includes('theory')) {
+      return {
+        label: rawType || '2027 Theory',
+        sticker: '🔭 2027 Theory',
+        stickerShort: '🔭 Theory',
+        bgPill: 'bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30',
+        cellBadge: 'bg-purple-500/15 text-purple-700 dark:text-purple-200 border-purple-500/30',
+      };
+    }
+    if (norm.includes('2027') && norm.includes('revision')) {
+      return {
+        label: rawType || '2027 Revision',
+        sticker: '🚀 2027 Revision',
+        stickerShort: '🚀 Revision',
+        bgPill: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30',
+        cellBadge: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-200 border-cyan-500/30',
+      };
+    }
+    if (norm.includes('paper')) {
+      return {
+        label: rawType || 'Paper Class',
+        sticker: '📝 Paper Class',
+        stickerShort: '📝 Paper',
+        bgPill: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+        cellBadge: 'bg-rose-500/15 text-rose-700 dark:text-rose-200 border-rose-500/30',
+      };
+    }
+    return {
+      label: rawType || 'Physics Session',
+      sticker: `🎓 ${rawType || 'Class'}`,
+      stickerShort: `🎓 ${rawType ? rawType.slice(0, 10) : 'Class'}`,
+      bgPill: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30',
+      cellBadge: 'bg-blue-500/15 text-blue-700 dark:text-blue-200 border-blue-500/30',
+    };
   };
 
+  const sinhalaMonths = [
+    "ජනවාරි (January)", "පෙබරවාරි (February)", "මාර්තු (March)", 
+    "අප්‍රේල් (April)", "මැයි (May)", "ජූනි (June)", 
+    "ජූලි (July)", "අගෝස්තු (August)", "සැප්තැම්බර් (September)", 
+    "ඔක්තෝබර් (October)", "නොවැම්බර් (November)", "දෙසැම්බර් (December)"
+  ];
+
+  const handlePrevMonth = () => {
+    if (calendarViewMonth === 1) {
+      setCalendarViewYear(y => y - 1);
+      setCalendarViewMonth(12);
+    } else {
+      setCalendarViewMonth(m => m - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (calendarViewMonth === 12) {
+      setCalendarViewYear(y => y + 1);
+      setCalendarViewMonth(1);
+    } else {
+      setCalendarViewMonth(m => m + 1);
+    }
+  };
+
+  const handleTodayMonth = () => {
+    setCalendarViewYear(cYear);
+    setCalendarViewMonth(cMonthNum);
+  };
+
+  // Nav Menu Definitions matching Screenshot requirements
+  const navMenuItems = [
+    { id: null, label: 'Hub Overview', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
+    { id: 'exams', label: 'Exams', sinhala: 'ඔන්ලයින් විභාග', icon: PenTool, badge: examsCount > 0 ? `${examsCount}` : null, color: 'blue' },
+    { id: 'recordings', label: 'Recordings', sinhala: 'පන්ති රෙකෝඩින්', icon: Video, badge: recordingsCount > 0 ? `${recordingsCount}` : null, color: 'amber' },
+    { id: 'tutes', label: 'Documents', sinhala: 'ටියුට් & Papers', icon: FileText, badge: tutesCount > 0 ? `${tutesCount}` : null, color: 'slate' },
+    { id: 'live', label: 'Live Classes', sinhala: 'සජීවී පන්තිය', icon: Radio, badge: 'LIVE', isLive: true, color: 'rose' },
+    { id: 'calendar', label: 'Class Timetable', sinhala: 'කාලසටහන', icon: CalendarDays, badge: null, color: 'purple' },
+    { id: 'history', label: 'Course Packages', sinhala: 'ගෙවීම් සහ පැකේජ', icon: Package, badge: isPaidCurrentMonth ? 'Paid' : 'Unpaid', color: 'emerald' },
+  ];
+
+  // Render Calendar View
   const renderCalendar = () => {
-    const daysInMonth = new Date(cYear, cMonthNum, 0).getDate();
-    const firstDayIndex = new Date(cYear, cMonthNum - 1, 1).getDay();
+    const daysInMonth = new Date(calendarViewYear, calendarViewMonth, 0).getDate();
+    const firstDayIndex = new Date(calendarViewYear, calendarViewMonth - 1, 1).getDay();
     
     const days = [];
     for (let i = 0; i < firstDayIndex; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
 
     return (
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl p-4 md:p-6 shadow-2xl max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-4 md:p-6 shadow-2xl max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-white">
         
-        {/* වම් සහ දකුණු පැති දෙක බෙදා වෙන් කිරීම (Responsive Grid) */}
+        {/* Top Calendar Header with Month Navigation */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-purple-500/15 border border-purple-500/30 rounded-xl text-purple-400">
+              <CalendarDays size={22} />
+            </div>
+            <div>
+              <h3 className="text-lg md:text-xl font-black text-white flex items-center gap-2">
+                පන්ති කාලසටහන (Timetable)
+              </h3>
+              <p className="text-xs text-slate-400 font-mono">
+                {sinhalaMonths[calendarViewMonth - 1]} {calendarViewYear}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrevMonth}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition cursor-pointer"
+              title="පෙර මාසය"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={handleTodayMonth}
+              className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-bold rounded-xl border border-purple-500/30 transition cursor-pointer"
+            >
+              අද (Today)
+            </button>
+            <button
+              onClick={handleNextMonth}
+              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition cursor-pointer"
+              title="ඊළඟ මාසය"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-950/60 rounded-2xl border border-slate-800/80 text-[11px]">
+          <span className="text-slate-400 font-semibold mr-1">පන්ති වර්ග:</span>
+          <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+            📘 2026 Theory
+          </span>
+          <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+            ⚡ 2026 Revision
+          </span>
+          <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+            🔭 2027 Theory
+          </span>
+          <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+            🚀 2027 Revision
+          </span>
+          <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+            📝 Paper Class
+          </span>
+        </div>
+        
+        {/* Responsive Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          {/* වම්පස කොටස: කුඩා කරන ලද කැලැන්ඩරය */}
           <div className="lg:col-span-8 border-b lg:border-b-0 lg:border-r border-slate-800 pb-6 lg:pb-0 lg:pr-6">
-            <h3 className="text-md font-bold mb-4 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
-              <CalendarDays size={18} className="text-purple-400" /> පන්ති කාලසටහන ({currentMonthKey})
-            </h3>
-            
-            <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-bold text-slate-400 mb-2">
-              <div className="text-rose-500">Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+            <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-extrabold text-slate-400 mb-2 uppercase tracking-wider">
+              <div className="text-rose-400">Sun</div>
+              <div>Mon</div>
+              <div>Tue</div>
+              <div>Wed</div>
+              <div>Thu</div>
+              <div>Fri</div>
+              <div className="text-cyan-400">Sat</div>
             </div>
             
-            <div className="grid grid-cols-7 gap-1.5">
+            <div className="grid grid-cols-7 gap-2">
               {days.map((day, index) => {
-                if (day === null) return <div key={`empty-${index}`} className="p-2"></div>;
+                if (day === null) return <div key={`empty-${index}`} className="p-2 min-h-[85px] bg-slate-950/20 rounded-xl border border-slate-900/50"></div>;
                 
-                const dateStr = `${cYear}-${cMonthPadded}-${String(day).padStart(2, '0')}`;
+                const paddedDay = String(day).padStart(2, '0');
+                const paddedMonth = String(calendarViewMonth).padStart(2, '0');
+                const dateStr = `${calendarViewYear}-${paddedMonth}-${paddedDay}`;
                 const dayEvents = calendarEvents.filter(e => e.date === dateStr);
-                const isToday = day === new Date().getDate();
+                const isToday = day === new Date().getDate() && calendarViewMonth === (new Date().getMonth() + 1) && calendarViewYear === new Date().getFullYear();
 
                 return (
                   <div 
@@ -414,29 +714,45 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     onClick={() => {
                       if (dayEvents.length > 0) setSelectedCalendarEvent(dayEvents[0]);
                     }}
-                    className={`min-h-[75px] p-1.5 rounded-xl border flex flex-col justify-between transition-all cursor-pointer ${
+                    className={`min-h-[85px] p-2 rounded-2xl border flex flex-col justify-between transition-all select-none ${
                       isToday 
-                        ? 'bg-purple-950/30 border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.15)]' 
-                        : 'bg-slate-800/20 border-slate-800 hover:border-slate-600 hover:bg-slate-800/50'
+                        ? 'bg-purple-950/40 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.25)] ring-1 ring-purple-400/50' 
+                        : dayEvents.length > 0
+                        ? 'bg-slate-800/40 border-slate-700 hover:border-slate-500 hover:bg-slate-800/70 cursor-pointer shadow-md'
+                        : 'bg-slate-950/30 border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-900/40'
                     }`}
                   >
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded self-start ${isToday ? 'bg-purple-500 text-white' : 'text-slate-400'}`}>{day}</span>
-                    <div className="mt-1 space-y-1 w-full overflow-y-auto max-h-[45px] custom-scrollbar">
-                      {dayEvents.map((ev, i) => (
-                        <div 
-                          key={i} 
-                          className={`text-[9px] px-1 py-0.5 rounded border truncate w-full text-center font-medium ${
-                            ev.status === 'cancelled' 
-                              ? 'bg-red-500/10 text-red-400 border-red-500/20' 
-                              : ev.status === 'Makeup_Class' 
-                              ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' 
-                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          }`}
-                          title={ev.title}
-                        >
-                          {ev.title}
-                        </div>
-                      ))}
+                    <div className="flex items-center justify-between w-full">
+                      <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-lg ${
+                        isToday ? 'bg-purple-500 text-white' : dayEvents.length > 0 ? 'bg-slate-700/80 text-white' : 'text-slate-400'
+                      }`}>
+                        {day}
+                      </span>
+                      {dayEvents.length > 0 && (
+                        <span className="flex h-2 w-2 relative">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-1 space-y-1 w-full overflow-y-auto max-h-[52px]">
+                      {dayEvents.map((ev, i) => {
+                        const meta = getClassTypeMeta(ev.class_type);
+                        return (
+                          <div 
+                            key={i} 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedCalendarEvent(ev);
+                            }}
+                            className={`text-[9px] px-1.5 py-0.5 rounded-md border font-bold flex items-center justify-between gap-1 transition-transform hover:scale-[1.02] cursor-pointer ${meta.cellBadge}`}
+                          >
+                            <span className="truncate flex-1 font-bold">{meta.stickerShort}</span>
+                            <span className="text-[8px] font-mono shrink-0 opacity-80">{ev.start_time || ''}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -444,97 +760,140 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
           </div>
 
-          {/* දකුණුපස කොටස: එදිනට ඇති පන්තිවල ඉක්මන් දර්ශනය (Quick View Section) */}
+          {/* Right Upcoming Stream */}
           <div className="lg:col-span-4 flex flex-col justify-start space-y-4">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Upcoming Schedule Stream</h4>
-            <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 scrollbar-thin">
-              {calendarEvents.slice(0, 4).map((ev, idx) => (
-                <div 
-                  key={idx} 
-                  onClick={() => setSelectedCalendarEvent(ev)}
-                  className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl hover:border-slate-700 transition cursor-pointer space-y-1.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] bg-slate-800 text-blue-400 px-1.5 py-0.5 rounded border border-slate-700 font-bold">{ev.class_type || 'General'}</span>
-                    <span className={`text-[9px] font-mono px-1 rounded uppercase font-bold ${ev.status === 'active' ? 'text-emerald-400' : ev.status === 'Makeup_Class' ? 'text-orange-400' : 'text-red-400'}`}>{ev.status}</span>
-                  </div>
-                  <h5 className="text-xs font-bold text-white truncate">{ev.title}</h5>
-                  <p className="text-[10px] text-slate-400 font-mono">📅 {ev.date} | 🕒 {ev.start_time || 'N/A'}</p>
-                </div>
-              ))}
-              {calendarEvents.length === 0 && (
-                <div className="text-xs text-slate-500 italic text-center py-8">No events lined up for this grid.</div>
-              )}
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock size={13} className="text-purple-400" /> ඉදිරි &amp; අද පන්ති
+              </h4>
+              <span className="text-[10px] text-purple-400 font-mono font-bold bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+                {(() => {
+                  const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+                  const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
+                  return calendarEvents.filter(ev => ev.date >= todayDateStr).length;
+                })()} Sessions
+              </span>
+            </div>
+
+            <div className="space-y-3 max-h-[460px] overflow-y-auto pr-1">
+              {(() => {
+                const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+                const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
+                const filteredUpcoming = calendarEvents
+                  .filter(ev => ev.date >= todayDateStr)
+                  .sort((a, b) => a.date.localeCompare(b.date) || (a.start_time || '').localeCompare(b.start_time || ''));
+
+                if (filteredUpcoming.length === 0) {
+                  return (
+                    <div className="text-xs text-slate-500 italic text-center py-12 bg-slate-950/30 rounded-2xl border border-slate-800/50">
+                      ඔබ තෝරාගෙන ඇති පන්ති සඳහා අද හෝ ඉදිරි දිනවල නියමිත පන්ති කිසිවක් හමු නොවීය.
+                    </div>
+                  );
+                }
+
+                return filteredUpcoming.map((ev, idx) => {
+                  const meta = getClassTypeMeta(ev.class_type);
+                  const isLive = ev.status === 'live' || ev.status === 'active';
+                  const isTodayClass = ev.date === todayDateStr;
+
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => setSelectedCalendarEvent(ev)}
+                      className={`p-3.5 bg-slate-950/70 border rounded-2xl transition cursor-pointer space-y-2 group ${
+                        isTodayClass ? 'border-purple-500/60 shadow-[0_0_15px_rgba(168,85,247,0.15)] ring-1 ring-purple-500/30' : 'border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 ${meta.bgPill}`}>
+                          {meta.sticker}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {isTodayClass && (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30 animate-pulse">
+                              🔴 TODAY
+                            </span>
+                          )}
+                          <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full uppercase font-bold border ${
+                            isLive ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                          }`}>
+                            {isLive ? '🔴 LIVE' : ev.status}
+                          </span>
+                        </div>
+                      </div>
+
+                      <h5 className="text-xs font-bold text-white group-hover:text-purple-300 transition truncate" title={ev.title}>
+                        {ev.title}
+                      </h5>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-900">
+                        <span className="font-mono flex items-center gap-1 text-slate-300">
+                          <Calendar size={11} className="text-purple-400" /> {ev.date}
+                        </span>
+                        <span className="font-mono font-bold flex items-center gap-1 text-purple-300">
+                          <Clock size={11} /> {ev.start_time || '18:00'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>
 
-        {/* ==================== POP-UP EVENT DETAIL MODAL ==================== */}
+        {/* Selected Event Modal */}
         {selectedCalendarEvent && (
-          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl relative animate-in zoom-in-95 duration-200 text-sm">
-              
-              <div className="flex justify-between items-start border-b border-slate-800 pb-3">
-                <div>
-                  <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide">
-                    {selectedCalendarEvent.class_type || 'General Physics Session'}
-                  </span>
-                  <h4 className="text-md font-bold text-white mt-1.5">{selectedCalendarEvent.title}</h4>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
+              <button 
+                onClick={() => setSelectedCalendarEvent(null)}
+                className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition"
+              >
+                <X size={16} />
+              </button>
+
+              <div>
+                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 mb-2 ${getClassTypeMeta(selectedCalendarEvent.class_type).bgPill}`}>
+                  {getClassTypeMeta(selectedCalendarEvent.class_type).sticker}
+                </span>
+                <h3 className="text-base font-extrabold text-white">
+                  {selectedCalendarEvent.title}
+                </h3>
+              </div>
+
+              <div className="p-3 bg-slate-950/60 rounded-2xl border border-slate-800 space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">දිනය:</span>
+                  <span className="text-white font-mono font-bold">{selectedCalendarEvent.date}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">වේලාව:</span>
+                  <span className="text-purple-300 font-mono font-bold">{selectedCalendarEvent.start_time || '18:00'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">තත්වය:</span>
+                  <span className="text-emerald-400 font-bold uppercase">{selectedCalendarEvent.status}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col gap-2">
+                <button 
+                  onClick={() => {
+                    setSelectedCalendarEvent(null);
+                    handleTabChange('live');
+                  }}
+                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/40"
+                >
+                  <Play size={15} /> සජීවී පන්තියට සම්බන්ධ වන්න (Join Live Player)
+                </button>
                 <button 
                   onClick={() => setSelectedCalendarEvent(null)}
-                  className="text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-1 rounded-lg transition text-xs px-2.5 py-1"
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-2xl text-xs transition cursor-pointer"
                 >
-                  ✕
+                  වසන්න (Close)
                 </button>
               </div>
-
-              <div className="space-y-3 font-sans text-xs text-slate-300">
-                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                  <span className="text-slate-400">Class Date (දිනය):</span>
-                  <span className="font-mono font-bold text-white">📅 {selectedCalendarEvent.date}</span>
-                </div>
-
-                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                  <span className="text-slate-400">Start Time (වේලාව):</span>
-                  <span className="font-mono font-bold text-white">🕒 {selectedCalendarEvent.start_time || 'N/A'}</span>
-                </div>
-
-                <div className="flex justify-between items-center bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/60">
-                  <span className="text-slate-400">Status (තත්ත්වය):</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                    selectedCalendarEvent.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 
-                    selectedCalendarEvent.status === 'Makeup_Class' ? 'bg-orange-500/20 text-orange-400' : 
-                    'bg-red-500/20 text-red-400'
-                  }`}>
-                    {selectedCalendarEvent.status}
-                  </span>
-                </div>
-
-                {/* කල් දැමූ පන්තියක් නම් විකල්ප දිනය පෙන්වීම */}
-                {selectedCalendarEvent.rescheduled_to && (
-                  <div className="p-3 bg-orange-500/10 border border-orange-500/20 text-orange-400 rounded-xl font-medium">
-                    🔄 Rescheduled To (නව දිනය): <span className="font-mono font-bold underline ml-1">{selectedCalendarEvent.rescheduled_to}</span>
-                  </div>
-                )}
-
-                {/* විශේෂ දැනුම්දීම් හෝ පණිවිඩ තිබේ නම් */}
-                {(selectedCalendarEvent.warning_message || selectedCalendarEvent.warningMessage) && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-[11px] leading-relaxed">
-                    {selectedCalendarEvent.warning_message || selectedCalendarEvent.warningMessage}
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-2">
-                <button 
-                  onClick={() => setSelectedCalendarEvent(null)}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-2 rounded-xl text-xs transition"
-                >
-                  Close Window
-                </button>
-              </div>
-
             </div>
           </div>
         )}
@@ -542,94 +901,130 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     );
   };
 
+  // Render Payment History View
+  const renderPaymentHistory = () => (
+    <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-white">
+      <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+        <History className="text-cyan-400" /> Payment History &amp; Course Packages (ගෙවීම් ඉතිහාසය)
+      </h3>
+      {Object.keys(paymentHistory).length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {Object.entries(paymentHistory).map(([className, months]) => (
+            <div key={className} className="p-4 bg-slate-800/40 rounded-2xl border border-slate-700/70 hover:border-slate-600 transition-all">
+              <p className="font-bold text-slate-200 mb-3 flex items-center gap-2">
+                <Book size={16} className="text-cyan-400" /> {className}
+              </p>
+              <div className="flex flex-col gap-2">
+                {months.map((m, idx) => (
+                  <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                    m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                    m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                    m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                    'bg-red-500/10 text-red-400 border-red-500/20'
+                  }`}>
+                    <span>{m.monthName} ({m.monthKey})</span>
+                    <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/30 font-medium">
+                      {m.status === 'Paid' && '🟢 Paid'}
+                      {m.status === 'Free' && '🔵 Free'}
+                      {m.status === 'Absent' && '🟡 Absent (පන්තියට පැමිණ නැත)'}
+                      {m.status === 'Unpaid' && '🔴 මෙම මාසය සදහා මුදල් ගෙවා නෑ'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <p className="text-slate-500 text-sm font-medium">මෙතෙක් කිසිදු ගෙවීම් වාර්තාවක් පද්ධතිය තුළ හමු නොවීය.</p>
+        </div>
+      )}
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8 font-sans selection:bg-blue-500/30">
+    <div className="min-h-screen bg-[#f0f4f9] dark:bg-slate-950 text-slate-900 dark:text-white font-sans transition-colors pb-12">
       
-      {/* Profile Modal */}
+      {/* 1. Student Profile Modal */}
       {isProfileOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 z-[100]">
-          <div className="bg-[#0b101e] border border-slate-800 rounded-2xl w-full max-w-[340px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            {/* Header */}
-            <div className="flex justify-between items-center p-4 border-b border-slate-800/60 bg-slate-900/30">
-              <h3 className="font-semibold text-[13px] text-white tracking-wide">Student Profile</h3>
-              <button onClick={() => setIsProfileOpen(false)} className="text-slate-400 hover:text-white transition bg-slate-800/50 p-1.5 rounded-lg">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-[#0b101e] border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-[360px] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-900/30">
+              <h3 className="font-bold text-sm text-slate-800 dark:text-white tracking-wide">Student Profile</h3>
+              <button onClick={() => setIsProfileOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white transition p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800">
                 <X size={16} />
               </button>
             </div>
             
             <div className="p-5">
-              {/* Avatar & ID */}
               <div className="flex flex-col items-center mb-5">
-                <div className="w-[64px] h-[64px] rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-2xl font-black text-white mb-3 shadow-[0_0_15px_rgba(168,85,247,0.4)] ring-4 ring-slate-900">
-                  {liveStudentData?.name ? liveStudentData.name.substring(0, 2).toUpperCase() : 'ST'}
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center text-2xl font-black text-white mb-2 shadow-lg shadow-blue-500/20 ring-4 ring-slate-100 dark:ring-slate-900">
+                  {studentInitials}
                 </div>
-                <h2 className="text-[15px] font-bold text-white text-center">
-                  {liveStudentData?.name 
-                    ? liveStudentData.name.split(' ').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') 
-                    : 'N/A'}
+                <h2 className="text-base font-extrabold text-slate-900 dark:text-white text-center">
+                  {studentDisplayName}
                 </h2>
-                <p className="text-[11px] text-fuchsia-400 font-bold tracking-widest mt-1 bg-fuchsia-500/10 px-3 py-1 rounded-full border border-fuchsia-500/20">
-                  {liveStudentData?.username || 'N/A'}
+                <p className="text-xs text-blue-600 dark:text-blue-400 font-bold tracking-wider mt-1 bg-blue-50 dark:bg-blue-500/10 px-3 py-1 rounded-full border border-blue-200 dark:border-blue-500/20 font-mono">
+                  ID: {liveStudentData?.username || 'ST-2222'}
                 </p>
               </div>
 
-              {/* Details List */}
-              <div className="space-y-0 text-[12px]">
-                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
-                  <span className="text-slate-400">Name:</span>
-                  <span className="text-slate-200 font-medium text-right">
-                    {liveStudentData?.name 
-                      ? liveStudentData.name.split(' ').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ') 
-                      : 'N/A'}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+              <div className="space-y-0 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800/60">
                   <span className="text-slate-400">NIC:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.nic || 'N/A'}</span>
+                  <span className="font-semibold text-slate-800 dark:text-white">{liveStudentData?.nic || 'N/A'}</span>
                 </div>
                 
-                {/* 💡 Class Types - ලේබල් ලෙස පෙන්වීම */}
-                <div className="flex flex-col py-3 border-b border-slate-800/60 gap-2.5">
-                  <span className="text-slate-400">Class :</span>
-                  <div className="flex flex-wrap gap-1.5 justify-start">
-                    {Array.isArray(liveStudentData?.class_types) && liveStudentData.class_types.length > 0 
-                      ? liveStudentData.class_types.map((c: string, i: number) => (
-                          <span key={i} className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
-                            {c}
-                          </span>
-                        ))
-                      : (liveStudentData?.class_types || liveStudentData?.class)
-                        ? <span className="bg-purple-600/20 text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap shadow-sm">
-                            {liveStudentData?.class_types || liveStudentData?.class}
-                          </span>
-                        : <span className="text-slate-500 text-[11px]">No Classes</span>
-                    }
+                <div className="flex flex-col py-2.5 border-b border-slate-100 dark:border-slate-800/60 gap-1.5">
+                  <span className="text-slate-400">Class:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {enrolledClasses.length > 0 ? (
+                      enrolledClasses.map((c: string, i: number) => (
+                        <span key={i} className="bg-blue-50 dark:bg-purple-600/20 text-blue-700 dark:text-purple-300 border border-blue-200 dark:border-purple-500/30 px-2.5 py-0.5 rounded-lg text-[11px] font-bold">
+                          {c}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">No Classes</span>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800/60">
                   <span className="text-slate-400">District:</span>
-                  <span className="text-slate-200 font-medium">{capitalize(liveStudentData?.district || 'N/A')}</span>
+                  <span className="font-semibold text-slate-800 dark:text-white">{capitalize(liveStudentData?.district || 'N/A')}</span>
                 </div>
                 
-                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800/60">
                   <span className="text-slate-400">WhatsApp:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.WhatsApp || liveStudentData?.whatsapp || 'N/A'}</span>
+                  <span className="font-semibold text-slate-800 dark:text-white font-mono">{liveStudentData?.WhatsApp || liveStudentData?.whatsapp || 'N/A'}</span>
                 </div>
                 
-                <div className="flex justify-between items-center py-2.5 border-b border-slate-800/60">
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800/60">
                   <span className="text-slate-400">Mobile:</span>
-                  <span className="text-slate-200 font-medium">{liveStudentData?.mobile || 'N/A'}</span>
+                  <span className="font-semibold text-slate-800 dark:text-white font-mono">{liveStudentData?.mobile || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center py-2.5 border-b border-slate-100 dark:border-slate-800/60">
+                  <span className="text-slate-400">Status:</span>
+                  <span className={`font-bold px-2 py-0.5 rounded-md text-[10px] ${isPaidCurrentMonth ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                    {isPaidCurrentMonth ? '🟢 Active (Paid)' : '🔴 Fees Due (Unpaid)'}
+                  </span>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="mt-6 flex justify-between gap-3">
-                <button onClick={() => setIsProfileOpen(false)} className="flex-1 py-2.5 rounded-xl border border-slate-700/80 bg-slate-800/40 text-slate-300 text-[12px] font-bold hover:bg-slate-700 transition duration-200">
+              <div className="mt-5 flex gap-2">
+                <button 
+                  onClick={() => setIsProfileOpen(false)} 
+                  className="flex-1 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 transition cursor-pointer"
+                >
                   Close
                 </button>
-                <button onClick={() => { setIsProfileOpen(false); handleStudentLogout(); }} className="flex-1 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-[12px] font-bold hover:bg-red-500 hover:text-white transition duration-200 flex items-center justify-center gap-2 shadow-lg shadow-red-500/10">
+                <button 
+                  onClick={() => { setIsProfileOpen(false); handleStudentLogout(); }} 
+                  className="flex-1 py-2.5 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold hover:bg-rose-600 hover:text-white transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
                   <LogOut size={14} /> Logout
                 </button>
               </div>
@@ -638,204 +1033,721 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
-      {/* Dashboard Header */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8 items-center bg-gradient-to-br from-slate-900/80 to-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-800 shadow-2xl relative z-10">
-        
-        {/* Profile Avatar Container */}
-        <div className="lg:col-span-3 flex flex-col items-center relative border-r-0 lg:border-r border-slate-800/60 lg:pr-4">
-          
-          <div onClick={() => setIsProfileOpen(true)} className="relative group mt-2 w-28 h-28 md:w-32 md:h-32 flex items-center justify-center cursor-pointer">
-            {!isPaidCurrentMonth && (
-              <div className="absolute inset-0 rounded-full bg-red-600 animate-ping opacity-25" />
-            )}
-
-            <div 
-              className={`absolute inset-0 rounded-full animate-[spin_8s_linear_infinite] ${
-                !isPaidCurrentMonth ? 'shadow-[0_0_30px_rgba(239,68,68,0.8)] border-2 border-red-500' : 'shadow-[0_0_25px_rgba(255,255,255,0.05)]'
-              }`}
-              style={{ 
-                background: generateProfileBorderGradient(),
-                padding: '5px' 
-              }}
-            >
-              <div className="w-full h-full bg-slate-950 rounded-full" />
-            </div>
-
-            <div className={`absolute inset-[5px] rounded-full bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center font-black text-4xl shadow-inner group-hover:scale-105 transition-transform duration-300 ${
-              !isPaidCurrentMonth ? 'border border-red-500/50' : ''
-            }`}>
-              <span className="text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
-                {studentDisplayName.slice(0, 1).toUpperCase()}
-              </span>
-            </div>
-
-            <div className="absolute bottom-0 right-1 bg-slate-900 rounded-full p-2 border border-slate-700 text-slate-300 group-hover:text-white transition-colors shadow-md z-10">
-              <User size={16} />
-            </div>
-
-            {totalRemindersCount > 0 && (
-              <div 
-                onClick={handleBellClick}
-                className="absolute -top-1 -right-1 bg-gradient-to-r from-red-500 to-amber-500 text-white font-black text-xs rounded-full h-7 w-7 flex items-center justify-center shadow-[0_0_15px_rgba(239,68,68,0.5)] border border-white/20 animate-[bounce_1s_infinite] cursor-pointer hover:scale-110 transition-transform z-20"
-                title={`${totalRemindersCount} ගෙවීම් මතක් කිරීම් ඇත. ක්ලික් කර බලන්න.`}
+      {/* 2. Notifications & Alerts Center Drawer */}
+      {isNotificationsDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-50 dark:bg-blue-950 text-blue-600 rounded-xl">
+                  <Bell size={18} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-900 dark:text-white">සිහිකැඳවීම් සහ නිවේදන</h3>
+                  <p className="text-[11px] text-slate-400">Database Realtime Notifications</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsNotificationsDrawerOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 transition"
               >
-                <Bell size={12} className="animate-pulse mr-[1px]" />
-                <span className="text-[10px]">{totalRemindersCount}</span>
-              </div>
-            )}
-          </div>
-
-          <h2 className="mt-4 font-bold text-lg text-center text-white tracking-wide">{studentDisplayName}</h2>
-          
-          <p className="text-slate-400 text-sm text-center font-medium mt-1 bg-slate-900/50 px-3 py-1 rounded-full border border-slate-800">
-            {cYear} {cMonthName}
-          </p>
-          
-          {/* Class Label Stickers */}
-          <div className="flex flex-wrap justify-center gap-2 mt-4 w-full">
-            {classPaymentStatuses.length > 0 ? classPaymentStatuses.map((cls, idx) => (
-              <span key={idx} className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-xl border shadow-lg transition-all ${
-                cls.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/40 shadow-[0_0_12px_rgba(16,185,129,0.15)] animate-[pulse_2.5s_infinite]' :
-                cls.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/40 shadow-[0_0_12px_rgba(59,130,246,0.15)] animate-[pulse_3s_infinite]' :
-                'bg-red-500/10 text-red-400 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.25)] animate-pulse'
-              }`}>
-                {cls.status === 'Paid' || cls.status === 'Free' ? (
-                  <CheckCircle2 size={11} className={cls.status === 'Paid' ? 'text-emerald-400' : 'text-blue-400'} />
-                ) : (
-                  <XCircle size={11} className="text-red-400" />
-                )}
-                {cls.name} : {cls.status}
-              </span>
-            )) : (
-              <span className="text-xs text-slate-500 bg-slate-800/50 px-3 py-1.5 rounded-xl border border-slate-700">පන්ති ඇතුලත් කර නොමැත</span>
-            )}
-          </div>
-        </div>
-
-        {/* Navigation Tab Controls Menu */}
-        <div className="lg:col-span-9 flex flex-wrap gap-3 justify-center lg:justify-start lg:pl-6 mt-4 lg:mt-0">
-          
-          <button 
-            onClick={fetchDashboardData} 
-            className={`flex items-center justify-center p-3 rounded-2xl bg-slate-800/80 border border-slate-700 hover:bg-slate-700 text-slate-300 transition-all ${isRefreshing ? 'animate-spin text-blue-400 border-blue-500/50' : ''}`}
-            title="දත්ත යාවත්කාලීන කරන්න"
-          >
-             <RefreshCw size={18} />
-          </button>
-          
-          <button onClick={() => handleTabChange('live')} className={`flex items-center gap-2 px-5 py-3.5 border rounded-2xl font-bold text-xs md:text-sm transition-all ${dashboardTab === 'live' ? 'bg-red-600 border-red-500 text-white shadow-[0_0_20px_rgba(220,38,38,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-red-950/30 text-slate-300'}`}>
-            <Video size={16} className={dashboardTab === 'live' ? 'animate-pulse' : ''} /> Live Classes
-          </button>
-
-          <button onClick={() => handleTabChange('recordings')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'recordings' ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-[0_0_20px_rgba(245,158,11,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-amber-950/20 text-slate-300'}`}>
-            <BookOpen size={16} /> Recordings
-          </button>
-
-          <button onClick={() => handleTabChange('tutes')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'tutes' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-blue-950/20 text-slate-300'}`}>
-            <Download size={16} /> Tutes & Papers
-          </button>
-
-          <button onClick={() => handleTabChange('exams')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'exams' ? 'bg-emerald-600 border-emerald-500 text-white shadow-[0_0_20px_rgba(5,150,105,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-emerald-950/20 text-slate-300'}`}>
-            <FileText size={16} /> Online Exams
-          </button>
-
-          <button onClick={() => handleTabChange('calendar')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'calendar' ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_20px_rgba(147,51,234,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-purple-950/20 text-slate-300'}`}>
-            <CalendarDays size={16} /> පන්ති කාලසටහන
-          </button>
-
-          <button onClick={() => handleTabChange('history')} className={`flex items-center gap-2 px-5 py-3.5 rounded-2xl font-bold text-xs md:text-sm border transition-all ${dashboardTab === 'history' ? 'bg-cyan-600 border-cyan-500 text-white shadow-[0_0_20px_rgba(8,145,178,0.35)]' : 'bg-slate-800/50 border-slate-700 hover:bg-cyan-950/20 text-slate-300'}`}>
-            <History size={16} /> Payment History
-          </button>
-        </div>
-      </div>
-
-      {/* Payment Reminders */}
-      {allReminders.length > 0 && (
-        <div className="mb-8 space-y-4">
-          {allReminders.map((reminder, index) => (
-            <div key={index} className="p-5 bg-gradient-to-r from-amber-950/50 to-slate-900 border-l-4 border-l-amber-500 border border-slate-800/60 rounded-r-2xl shadow-lg flex items-start gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
-              <AlertTriangle className="text-amber-500 shrink-0" size={22} />
-              <div>
-                <h3 className="font-bold text-amber-400 text-sm md:text-base">{reminder.title}</h3>
-                <p className="text-xs md:text-sm text-slate-300 mt-1 font-medium">{reminder.message}</p>
-              </div>
+                <X size={18} />
+              </button>
             </div>
-          ))}
+
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
+              {paymentReminders.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-[11px] font-black uppercase text-rose-600 tracking-wider">
+                    ⚠️ Payment Reminders ({paymentReminders.length})
+                  </h4>
+                  {paymentReminders.map((rem: any, idx: number) => (
+                    <div key={idx} className="p-3.5 bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-2xl space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-600 text-white uppercase">
+                          {rem.classType || 'Class'}
+                        </span>
+                        {rem.month && (
+                          <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                            {rem.month}
+                          </span>
+                        )}
+                      </div>
+                      <h5 className="text-xs font-bold text-slate-900 dark:text-white">{rem.title}</h5>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{rem.message}</p>
+                      <button 
+                        onClick={() => { setIsNotificationsDrawerOpen(false); handleTabChange('history'); }}
+                        className="mt-1 text-[11px] text-rose-600 dark:text-rose-400 font-extrabold hover:underline flex items-center gap-1"
+                      >
+                        ගෙවීම් තොරතුරු බලන්න →
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {allReminders.filter((r: any) => !r.isPaymentReminder).length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-[11px] font-black uppercase text-blue-600 tracking-wider">
+                    📢 Teacher Announcements
+                  </h4>
+                  {allReminders.filter((r: any) => !r.isPaymentReminder).map((a: any, idx: number) => (
+                    <div key={idx} className="p-3.5 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-2xl space-y-1">
+                      <h5 className="text-xs font-bold text-slate-900 dark:text-white">{a.title}</h5>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{a.message}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {paymentReminders.length === 0 && allReminders.length === 0 && (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  නව දැනුම්දීම් කිසිවක් නොමැත.
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+              <button
+                onClick={() => setIsNotificationsDrawerOpen(false)}
+                className="w-full py-2 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition"
+              >
+                වසන්න (Close)
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Main Interactive View Content */}
-      <div ref={mainContentRef} className="scroll-mt-6">
-        <main className="bg-slate-900/40 p-4 md:p-8 rounded-3xl border border-slate-800/50 min-h-[520px]">
-          
-          {dashboardTab === 'live' && (
-  <SafeComponent>
-    <LiveClassPlayer currentUser={liveStudentData} />
-  </SafeComponent>
-)}
-          
-          {dashboardTab === 'recordings' && liveStudentData && (
-  <StudentRecordings 
-    student={liveStudentData} 
-    onBack={() => handleTabChange(null)} 
-/>
-)}
-          
-          {dashboardTab === 'tutes' && (
-            <SafeComponent>
-              <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
-            </SafeComponent>
-          )}
-          
-          {dashboardTab === 'exams' && (
-            <SafeComponent>
-              <OnlineExamsHistory currentStudent={liveStudentData} />
-            </SafeComponent>
-          )}
-          
-          {dashboardTab === 'calendar' && renderCalendar()}
-          
-          {dashboardTab === 'history' && (
-            <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
-               <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
-                 <History className="text-cyan-400" /> Payment History (ගෙවීම් ඉතිහාසය)
-               </h3>
-               {Object.keys(paymentHistory).length > 0 ? (
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   {Object.entries(paymentHistory).map(([className, months]) => (
-                     <div key={className} className="p-4 bg-slate-800/40 rounded-2xl border border-slate-700/70 hover:border-slate-600 transition-all">
-                       <p className="font-bold text-slate-200 mb-3 flex items-center gap-2">
-                         <Book size={16} className="text-cyan-400" /> {className}
-                       </p>
-                       <div className="flex flex-col gap-2">
-                         {months.map((m, idx) => (
-                           <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
-                             m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                             m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                             m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                             'bg-red-500/10 text-red-400 border-red-500/20'
-                           }`}>
-                             <span>{m.monthName} ({m.monthKey})</span>
-                             <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/30 font-medium">
-                               {m.status === 'Paid' && '🟢 Paid'}
-                               {m.status === 'Free' && '🔵 Free'}
-                               {m.status === 'Absent' && '🟡 Absent (පන්තියට පැමිණ නැත)'}
-                               {m.status === 'Unpaid' && '🔴 මෙම මාසය සදහා මෙම පන්තියට මුදල් ගෙවා නෑ'}
-                             </span>
-                           </div>
-                         ))}
-                       </div>
-                     </div>
-                   ))}
-                 </div>
-               ) : (
-                 <div className="text-center py-12">
-                   <p className="text-slate-500 text-sm font-medium">මෙතෙක් කිසිදු ගෙවීම් වාර්තාවක් පද්ධතිය තුළ හමු නොවීය.</p>
-                 </div>
-               )}
+      {/* 3. Mobile Slide-out Drawer */}
+      {isSidebarOpenMobile && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          <div 
+            onClick={() => setIsSidebarOpenMobile(false)} 
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+          />
+          <div className="relative w-72 max-w-[80vw] bg-white dark:bg-slate-900 h-full p-5 shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
+            <div>
+              {/* Profile Card Header */}
+              <div 
+                onClick={() => { setIsSidebarOpenMobile(false); setIsProfileOpen(true); }}
+                className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-3 cursor-pointer mb-5"
+              >
+                <div className="relative">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-sm shadow-sm ring-2 ring-blue-500/20">
+                    {studentInitials}
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full"></span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                    {studentDisplayName}
+                  </h3>
+                  <p className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 truncate">
+                    ID: {liveStudentData?.username || 'ST-2222'}
+                  </p>
+                </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setIsSidebarOpenMobile(false); }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Navigation Menu List */}
+              <nav className="space-y-1">
+                {navMenuItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = dashboardTab === item.id;
+                  return (
+                    <button
+                      key={String(item.id)}
+                      onClick={() => {
+                        handleTabChange(item.id as TabType);
+                        setIsSidebarOpenMobile(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition text-left cursor-pointer ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon size={16} />
+                        <span>{item.label}</span>
+                      </div>
+                      {item.badge && (
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                          isActive 
+                            ? 'bg-white/20 text-white' 
+                            : item.isLive 
+                            ? 'bg-rose-500/15 text-rose-600 border border-rose-500/30 animate-pulse'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                        }`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
-          )}
-        </main>
+
+            {/* Logout Button */}
+            <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
+              <button
+                onClick={() => { setIsSidebarOpenMobile(false); handleStudentLogout(); }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/40 hover:bg-rose-600 hover:text-white transition shadow-sm cursor-pointer"
+              >
+                <LogOut size={16} /> Logout (පද්ධතියෙන් ඉවත් වන්න)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. MAIN LAYOUT: DESKTOP LEFT SIDEBAR + RIGHT CONTENT AREA */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-4 md:pt-6">
+        <div className="flex flex-col md:flex-row items-start gap-6">
+
+          {/* ======================================================== */}
+          {/* LEFT SIDEBAR (Desktop Fixed/Sticky)                     */}
+          {/* ======================================================== */}
+          <aside className="hidden md:flex flex-col justify-between w-64 lg:w-72 shrink-0 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 shadow-sm sticky top-6 min-h-[calc(100vh-3rem)]">
+            <div>
+              {/* TOP LEFT: Profile Photo & Student Name & ID (Clickable) */}
+              <div 
+                onClick={() => setIsProfileOpen(true)}
+                className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 flex items-center gap-3.5 cursor-pointer hover:bg-blue-50/70 dark:hover:bg-slate-800 transition group select-none shadow-sm"
+                title="ප්‍රොෆයිල් විස්තර බැලීමට ක්ලික් කරන්න"
+              >
+                <div className="relative shrink-0">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center text-white font-extrabold text-base shadow-sm ring-2 ring-blue-500/20 group-hover:scale-105 transition-transform">
+                    {studentInitials}
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full"></span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm font-bold text-slate-800 dark:text-white truncate group-hover:text-blue-600 transition leading-snug">
+                    {studentDisplayName}
+                  </h3>
+                  <p className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 truncate">
+                    ID: {liveStudentData?.username || 'ST-2222'}
+                  </p>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold group-hover:underline">
+                    View Profile →
+                  </span>
+                </div>
+              </div>
+
+              {/* VERTICAL MENU LIST */}
+              <div className="pt-5 pb-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 px-3">
+                  DASHBOARD MENU
+                </span>
+              </div>
+
+              <nav className="space-y-1.5 flex-1">
+                {navMenuItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = dashboardTab === item.id;
+                  return (
+                    <button
+                      key={String(item.id)}
+                      onClick={() => handleTabChange(item.id as TabType)}
+                      className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs sm:text-sm font-bold transition-all text-left cursor-pointer group ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30 font-extrabold'
+                          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-2 rounded-xl transition ${
+                          isActive 
+                            ? 'bg-white/20 text-white' 
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 group-hover:text-blue-600'
+                        }`}>
+                          <Icon size={16} />
+                        </div>
+                        <div className="truncate">
+                          <span className="block truncate">{item.label}</span>
+                          <span className={`block text-[10px] font-normal truncate ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
+                            {item.sinhala}
+                          </span>
+                        </div>
+                      </div>
+                      {item.badge && (
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ml-1 shrink-0 ${
+                          isActive 
+                            ? 'bg-white/20 text-white' 
+                            : item.isLive 
+                            ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 animate-pulse'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                        }`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* BOTTOM LEFT: LOGOUT BUTTON */}
+            <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800">
+              <button
+                onClick={handleStudentLogout}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/40 hover:bg-rose-600 hover:text-white dark:hover:bg-rose-600 dark:hover:text-white transition shadow-sm cursor-pointer"
+              >
+                <LogOut size={16} /> Logout (පද්ධතියෙන් ඉවත් වන්න)
+              </button>
+            </div>
+          </aside>
+
+          {/* ======================================================== */}
+          {/* RIGHT CONTENT AREA (Matches User Screenshots)           */}
+          {/* ======================================================== */}
+          <main ref={mainContentRef} className="flex-1 min-w-0 w-full space-y-6">
+
+            {/* Top Bar matching Screenshot 1 Top Bar */}
+            <header className="bg-white dark:bg-slate-900 rounded-3xl p-3 sm:p-4 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
+              {/* Left Profile Quick Avatar & Title */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsSidebarOpenMobile(true)}
+                  className="md:hidden p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 transition cursor-pointer"
+                  title="Menu"
+                >
+                  <Menu size={18} />
+                </button>
+                
+                <div 
+                  onClick={() => setIsProfileOpen(true)}
+                  className="flex items-center gap-3 cursor-pointer group select-none"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-xs shadow-sm ring-2 ring-blue-500/20 group-hover:scale-105 transition-transform">
+                    {studentInitials}
+                  </div>
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-white leading-tight group-hover:text-blue-600 transition">
+                      {siteConfig?.headerTitle || 'Physics Online Hub'}
+                    </h2>
+                    <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-bold">
+                      ID: {liveStudentData?.username || 'ST-2222'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Action Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={fetchDashboardData}
+                  className={`p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer ${isRefreshing ? 'animate-spin text-blue-600' : ''}`}
+                  title="Refresh Data"
+                >
+                  <RefreshCw size={15} />
+                </button>
+
+                <button
+                  onClick={() => setIsNotificationsDrawerOpen(true)}
+                  className={`relative p-2 sm:p-2.5 rounded-xl transition cursor-pointer ${
+                    totalRemindersCount > 0 
+                      ? 'bg-rose-50 text-rose-600 border border-rose-200 animate-pulse' 
+                      : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+                  }`}
+                  title="දැනුම්දීම් &amp; Alerts"
+                >
+                  <Bell size={15} />
+                  {totalRemindersCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-rose-600 text-white font-black text-[9px] rounded-full h-4 min-w-[16px] px-1 flex items-center justify-center border-2 border-white dark:border-slate-900 shadow">
+                      {totalRemindersCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* PDF/Report button matching Screenshot top right */}
+                <button
+                  onClick={() => handleTabChange('tutes')}
+                  className="p-2 sm:p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-900/40 hover:bg-emerald-100 transition cursor-pointer"
+                  title="Documents &amp; PDF Tutes"
+                >
+                  <FileText size={15} />
+                </button>
+
+                {/* Logout button shortcut */}
+                <button
+                  onClick={handleStudentLogout}
+                  className="p-2 sm:p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-900/40 hover:bg-rose-600 hover:text-white transition cursor-pointer"
+                  title="Logout"
+                >
+                  <LogOut size={15} />
+                </button>
+              </div>
+            </header>
+
+            {/* ======================================================== */}
+            {/* VIEW A: HUB OVERVIEW (When dashboardTab === null)         */}
+            {/* ======================================================== */}
+            {dashboardTab === null && (
+              <div className="space-y-6 animate-in fade-in duration-200">
+                
+                {/* 1. ROYAL BLUE GRADIENT HERO BANNER (Screenshot 1) */}
+                <div className="relative rounded-3xl p-6 sm:p-8 md:p-10 bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-800 text-white shadow-xl shadow-blue-900/15 overflow-hidden">
+                  <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+                  <div className="absolute right-20 -top-20 w-48 h-48 bg-blue-400/10 rounded-full blur-xl pointer-events-none" />
+
+                  <div className="relative z-10 space-y-2.5 max-w-2xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-[11px] font-bold tracking-wider uppercase text-blue-100">
+                      <span>환영합니다 • WELCOME BACK, {studentDisplayName}!</span>
+                    </div>
+                    <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight leading-tight">
+                      Your learning hub, all in one place
+                    </h1>
+                    <p className="text-xs sm:text-sm text-blue-100/90 font-medium leading-relaxed pt-1">
+                      Exams, recordings, live classes and study materials — everything you need for {siteConfig?.headerTitle || 'Physics Online Hub'}, built for your device.
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. OVERVIEW STATS CARDS (Screenshot 1: Total Exams, Available Now, Completed) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Card 1: Total Exams */}
+                  <div 
+                    onClick={() => handleTabChange('exams')}
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400/50 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
+                        <FileText size={18} />
+                      </div>
+                    </div>
+                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                      {examsCount}
+                    </div>
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
+                      Total Exams
+                    </p>
+                  </div>
+
+                  {/* Card 2: Available Now */}
+                  <div 
+                    onClick={() => handleTabChange('exams')}
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-emerald-400/50 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                        <CheckCircle2 size={18} />
+                      </div>
+                    </div>
+                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                      {availableExamsCount}
+                    </div>
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
+                      Available Now
+                    </p>
+                  </div>
+
+                  {/* Card 3: Completed */}
+                  <div 
+                    onClick={() => handleTabChange('exams')}
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-amber-400/50 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-2xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+                        <Trophy size={18} />
+                      </div>
+                    </div>
+                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                      {completedExamsCount}
+                    </div>
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
+                      Completed
+                    </p>
+                  </div>
+                </div>
+
+                {/* 3. HIGH-PRIORITY NOTIFICATIONS & PAYMENT REMINDERS (From Supabase DB) */}
+                {paymentReminders.length > 0 && (
+                  <div className="space-y-3">
+                    {paymentReminders.map((rem: any, idx: number) => (
+                      <div 
+                        key={idx}
+                        className="p-5 bg-gradient-to-r from-rose-500/10 via-amber-500/5 to-white dark:to-slate-900 border-2 border-rose-500/60 rounded-3xl shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4"
+                      >
+                        <div className="flex items-start gap-3.5">
+                          <div className="p-3 bg-rose-600 text-white rounded-2xl shrink-0 shadow-sm">
+                            <AlertTriangle size={22} />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2.5 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider">
+                                ⚠️ PAYMENT REMINDER
+                              </span>
+                              {rem.classType && (
+                                <span className="px-2.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold text-[11px]">
+                                  📘 {rem.classType}
+                                </span>
+                              )}
+                              {rem.month && (
+                                <span className="px-2.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-bold text-[11px]">
+                                  📅 {rem.month}
+                                </span>
+                              )}
+                              {rem.amount && (
+                                <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold text-[11px]">
+                                  Rs. {rem.amount}
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-extrabold text-slate-900 dark:text-white text-sm sm:text-base">
+                              {rem.title}
+                            </h4>
+                            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 font-medium">
+                              {rem.message}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleTabChange('history')}
+                          className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-bold text-xs shadow-md transition cursor-pointer whitespace-nowrap self-start md:self-auto"
+                        >
+                          ගෙවීම් තොරතුරු (Pay Now) →
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 4. "WHAT WOULD YOU LIKE TO DO?" SECTION & ACTION CARDS (Screenshot 1 & 2) */}
+                <div className="space-y-4">
+                  <h2 className="text-xs font-black uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                    WHAT WOULD YOU LIKE TO DO?
+                  </h2>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {/* Card 1: Exams */}
+                    <div
+                      onClick={() => handleTabChange('exams')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-md shadow-blue-600/30">
+                          <PenTool size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-blue-600 group-hover:bg-blue-50 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-blue-600 transition">
+                          Exams
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          Take exams, track scores, retry anytime
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Recordings */}
+                    <div
+                      onClick={() => handleTabChange('recordings')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-amber-400 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/30">
+                          <Video size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-amber-500 group-hover:bg-amber-50 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-amber-500 transition">
+                          Recordings
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          Watch past classes in HD, zero data charges
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Course Packages */}
+                    <div
+                      onClick={() => handleTabChange('history')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-emerald-400 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/30">
+                          <Package size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-emerald-600 group-hover:bg-emerald-50 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-emerald-600 transition">
+                          Course Packages
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          See your enrolled plan, validity &amp; fees
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 4: Documents */}
+                    <div
+                      onClick={() => handleTabChange('tutes')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-slate-600 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-800 text-white flex items-center justify-center shadow-md shadow-slate-800/30">
+                          <FileText size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-slate-700 group-hover:bg-slate-100 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-slate-700 transition">
+                          Documents
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          View and download your notes &amp; papers
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 5: Live Classes */}
+                    <div
+                      onClick={() => handleTabChange('live')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-rose-400 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/30">
+                          <Radio size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-rose-500 group-hover:bg-rose-50 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-rose-500 transition">
+                          Live Classes
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          Join live sessions with real-time Q&amp;A
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 6: Class Timetable */}
+                    <div
+                      onClick={() => handleTabChange('calendar')}
+                      className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-purple-400 transition cursor-pointer flex flex-col justify-between group"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-2xl bg-purple-600 text-white flex items-center justify-center shadow-md shadow-purple-600/30">
+                          <CalendarDays size={22} />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:text-purple-600 group-hover:bg-purple-50 transition flex items-center justify-center">
+                          <ChevronRight size={18} />
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-purple-600 transition">
+                          Class Timetable
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          Check dates, times &amp; upcoming sessions
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. FOOTER CARD (Screenshot 2) */}
+                <div className="mt-8 p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm text-center text-xs text-slate-500 dark:text-slate-400 space-y-1.5">
+                  <div className="flex items-center justify-center gap-2 text-rose-500 font-semibold">
+                    <Phone size={14} /> Contact: {siteConfig?.director_name || 'Thumula Liyanage'} - {siteConfig?.contact_phone || '0775176444'}
+                  </div>
+                  <div className="text-slate-700 dark:text-slate-300 font-medium">
+                    🏛️ Powered by {siteConfig?.headerTitle || 'Physics Online Hub'}
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    💻 Technology by <span className="font-extrabold text-blue-600">ECODES</span>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* ======================================================== */}
+            {/* VIEW B: INTERACTIVE SUB-VIEW (When dashboardTab !== null) */}
+            {/* ======================================================== */}
+            {dashboardTab !== null && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                {/* Back to Hub Header */}
+                <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
+                  <button
+                    onClick={() => handleTabChange(null)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-bold text-xs hover:bg-blue-600 hover:text-white transition cursor-pointer"
+                  >
+                    <ArrowLeft size={14} /> ආපසු ඩෑෂ්බෝඩයට (Back to Hub)
+                  </button>
+
+                  <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    {dashboardTab === 'live' && '🔴 Zoom Live Class'}
+                    {dashboardTab === 'recordings' && '📹 Class Recordings Library'}
+                    {dashboardTab === 'tutes' && '📚 Documents & Question Papers'}
+                    {dashboardTab === 'exams' && '✍️ Online Exams & Scores'}
+                    {dashboardTab === 'calendar' && '📅 Class Timetable'}
+                    {dashboardTab === 'history' && '💳 Payment History & Course Packages'}
+                  </div>
+                </div>
+
+                {/* Sub-view Viewport */}
+                <div className="rounded-3xl overflow-hidden">
+                  {dashboardTab === 'live' && (
+                    <SafeComponent>
+                      <LiveClassPlayer 
+                        currentUser={liveStudentData} 
+                        onNavigateToPayment={() => handleTabChange('history')}
+                      />
+                    </SafeComponent>
+                  )}
+
+                  {dashboardTab === 'recordings' && liveStudentData && (
+                    <SafeComponent>
+                      <StudentRecordings 
+                        student={liveStudentData} 
+                        onBack={() => handleTabChange(null)} 
+                      />
+                    </SafeComponent>
+                  )}
+
+                  {dashboardTab === 'tutes' && (
+                    <SafeComponent>
+                      <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
+                    </SafeComponent>
+                  )}
+
+                  {dashboardTab === 'exams' && (
+                    <SafeComponent>
+                      <OnlineExamsHistory currentStudent={liveStudentData} />
+                    </SafeComponent>
+                  )}
+
+                  {dashboardTab === 'calendar' && renderCalendar()}
+
+                  {dashboardTab === 'history' && renderPaymentHistory()}
+                </div>
+              </div>
+            )}
+
+          </main>
+        </div>
       </div>
 
     </div>

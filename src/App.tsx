@@ -193,7 +193,7 @@ export default function App() {
   }, [students, currentStudent, currentView]);
 
   // Dashboard inner tabs
-  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams'>('live');
+  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams' | 'calendar' | 'history' | null>('live');
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
@@ -234,7 +234,7 @@ useEffect(() => {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'live_classes' | 'resets' | 'qr_generator'>('registry');
+  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>('registry');
 
   // Manual Profile Code generator inside cockpit
   const [manFirst, setManFirst] = useState('');
@@ -321,7 +321,7 @@ useEffect(() => {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "live_classes" | "resets" | "qr_generator") => {
+  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
     setActiveAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -437,17 +437,21 @@ useEffect(() => {
 
   // NIC එක පරීක්ෂා කිරීමේ අලුත් කේතය
   const checkNICExists = async (nicValue: string) => {
-    if (!nicValue) return false;
+    if (!nicValue || !nicValue.trim()) return false;
     
-    const { data, error } = await supabase
-      .from('students')
-      .select('nic')
-      .eq('nic', nicValue)
-      .maybeSingle();
+    try {
+      const { data } = await supabase
+        .from('students')
+        .select('nic')
+        .eq('nic', nicValue.trim().toUpperCase())
+        .maybeSingle();
 
-    if (data) {
-      alert("මෙම NIC අංකයෙන් දැනටමත් ගිණුමක් ලියාපදිංචි කර ඇත!");
-      return true; 
+      if (data) {
+        alert("මෙම NIC අංකයෙන් දැනටමත් ගිණුමක් ලියාපදිංචි කර ඇත!");
+        return true; 
+      }
+    } catch (err) {
+      console.warn("NIC check warning:", err);
     }
     return false; 
   };
@@ -483,8 +487,16 @@ useEffect(() => {
     e.preventDefault(); 
     setIsSubmitButtonDisabled(true);
 
+    const cleanFirst = regFirst.trim();
+    const cleanLast = regLast.trim();
+    const cleanNIC = regNIC.trim().toUpperCase();
+    const cleanDistrict = regDistrict.trim();
+    const cleanWhatsApp = regWhatsApp.trim();
+    const cleanMobile = regMobile.trim();
+    const cleanClasses = [...regClassTypes];
+
     // 1. මුලින්ම NIC එක Database එකේ තියෙනවද බලනවා
-    const isDuplicate = await checkNICExists(regNIC); 
+    const isDuplicate = await checkNICExists(cleanNIC); 
     
     if (isDuplicate) {
       setIsSubmitButtonDisabled(false);
@@ -495,34 +507,34 @@ useEffect(() => {
     const errors: { [key: string]: boolean } = {};
     let firstInvalidRef: React.RefObject<HTMLDivElement | null> | null = null;
 
-    if (!regFirst.trim()) {
+    if (!cleanFirst) {
       errors.first = true;
       if (!firstInvalidRef) firstInvalidRef = grpFirstRef;
     }
-    if (!regLast.trim()) {
+    if (!cleanLast) {
       errors.last = true;
       if (!firstInvalidRef) firstInvalidRef = grpLastRef;
     }
-    if (!regNIC.trim() || regNIC.trim().length < 9) {
+    if (!cleanNIC || cleanNIC.length < 9) {
       errors.nic = true;
       if (!firstInvalidRef) firstInvalidRef = grpNIPRef;
     }
-    if (!regDistrict) {
+    if (!cleanDistrict) {
       errors.district = true;
       if (!firstInvalidRef) firstInvalidRef = grpDistRef;
     }
-    if (regClassTypes.length === 0) {
+    if (cleanClasses.length === 0) {
       errors.classes = true;
       if (!firstInvalidRef) firstInvalidRef = grpClassRef;
     }
     
     // Validation: Exactly 10 digits starting with 0
     const phoneRegex = /^0\d{9}$/;
-    if (!phoneRegex.test(regWhatsApp)) {
+    if (!phoneRegex.test(cleanWhatsApp)) {
       errors.whatsapp = true;
       if (!firstInvalidRef) firstInvalidRef = grpWhatsAppRef;
     }
-    if (!phoneRegex.test(regMobile)) {
+    if (!phoneRegex.test(cleanMobile)) {
       errors.mobile = true;
       if (!firstInvalidRef) firstInvalidRef = grpMobileRef;
     }
@@ -540,41 +552,68 @@ useEffect(() => {
 
     // Format secure message for Tutor/Admin on WhatsApp status
     const formattedMessage = `*New Student Registration - TA Physics Online Hub*\n\n` +
-      `• First Name: *${regFirst}*\n` +
-      `• Last Name: *${regLast}*\n` +
-      `• NIC Number: *${regNIC}*\n` +
-      `• District: *${regDistrict}*\n` +
-      `• Class Type(s): *${regClassTypes.join(', ')}*\n` +
-      `• WhatsApp Number: *${regWhatsApp}*\n` +
-      `• Mobile Number: *${regMobile}*\n\n` +
+      `• First Name: *${cleanFirst}*\n` +
+      `• Last Name: *${cleanLast}*\n` +
+      `• NIC Number: *${cleanNIC}*\n` +
+      `• District: *${cleanDistrict}*\n` +
+      `• Class Type(s): *${cleanClasses.join(', ')}*\n` +
+      `• WhatsApp Number: *${cleanWhatsApp}*\n` +
+      `• Mobile Number: *${cleanMobile}*\n\n` +
       `Please verify my details and provide my login username and password. Thank you!`;
 
     const encoded = encodeURIComponent(formattedMessage);
     const whatsappLink = `https://wa.me/94719152128?text=${encoded}`;
     
-    // Save to Supabase (async/await ක්‍රමයට වඩාත් නිවැරදිව සකසා ඇත)
-    const { error } = await supabase.from('students').insert([{
-      username: `PENDING_${Date.now()}`, // Temporary unique username
+    // Save to Supabase (සුරක්ෂිත හා සහතික ලියාපදිංචි කිරීමේ ක්‍රමවේදය)
+    const studentData = {
+      username: `PENDING_${Date.now()}`,
       password: '',
-      name: `${regFirst} ${regLast}`,
-      first_name: regFirst,
-      last_name: regLast,
-      nic: regNIC,
-      district: regDistrict,
-      class_types: regClassTypes, 
-      whatsapp: regWhatsApp,
-      mobile: regMobile,
+      name: `${cleanFirst} ${cleanLast}`,
+      first_name: cleanFirst,
+      last_name: cleanLast,
+      nic: cleanNIC,
+      district: cleanDistrict,
+      whatsapp: cleanWhatsApp,
+      mobile: cleanMobile,
       is_paid: false,
       is_approved: false,
+      plan_type: 'paid',
       active_months: [], 
       joined_at: new Date().toISOString()
+    };
+
+    // 1. ප්‍රථමයෙන් class_types සහිතව සෘජුව insert කිරීමට උත්සාහ කරයි
+    let { error } = await supabase.from('students').insert([{
+      ...studentData,
+      class_types: cleanClasses
     }]);
 
+    // 2. Database trigger එකක් හේතුවෙන් දෝෂයක් ආවහොත් (class_name vs class_type ගැටලුව) safe 2-step insert ක්‍රමය භාවිත කරයි
     if (error) {
-      console.error('Error saving to DB:', error);
-      alert('දත්ත ගබඩා කිරීමේ දෝෂයකි. කරුණාකර නැවත උත්සහ කරන්න.');
-      setIsSubmitButtonDisabled(false);
-      return; 
+      console.warn('Direct insert failed, attempting safe 2-step insert:', error.message);
+
+      const step1 = await supabase.from('students').insert([{
+        ...studentData,
+        class_types: []
+      }]).select();
+
+      if (step1.error) {
+        console.error('Error saving to DB (Step 1):', step1.error);
+        alert('දත්ත ගබඩා කිරීමේ දෝෂයකි: ' + (step1.error.message || 'කරුණාකර නැවත උත්සහ කරන්න.'));
+        setIsSubmitButtonDisabled(false);
+        return; 
+      }
+
+      // Step 2: ලියාපදිංචි වූ සිසුවාට අදාළ පන්ති වර්ග update කිරීම
+      if (step1.data && step1.data[0]?.id && cleanClasses.length > 0) {
+        const step2 = await supabase.from('students').update({
+          class_types: cleanClasses
+        }).eq('id', step1.data[0].id);
+
+        if (step2.error) {
+          console.warn('Warning updating class_types:', step2.error.message);
+        }
+      }
     }
 
     // Reset fields
@@ -588,39 +627,38 @@ useEffect(() => {
     setInvalidGroups({});
     setIsSubmitButtonDisabled(false);
 
-
-  // Prompt user with modal containing instructions
-  setModalTitle("ලියාපදිංචි වීමට අවශ්‍ය තොරතුරු!");
-  setModalContent(
-    <div className="space-y-4">
-      <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300">
-        ඔබගේ විස්තර Admin වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
+    // Prompt user with modal containing instructions
+    setModalTitle("ලියාපදිංචිය සාර්ථකයි!");
+    setModalContent(
+      <div className="space-y-4">
+        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300">
+          ඔබගේ ලියාපදිංචි විස්තර සාර්ථකව පද්ධතියට (Database) ඇතුළත් විය! Admin වෙත යැවීමට පහත බොත්තම ඔබන්න. ඔබව පෞද්ගලිකව WhatsApp ඔස්සේ සම්බන්ධ කර Username සහ Password ලබා දෙනු ඇත.
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button 
+            onClick={() => {
+              window.open(whatsappLink, '_blank');
+              setIsModalOpen(false);
+              setCurrentView('login');
+            }}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition"
+          >
+            <Send size={18} /> Send Data via WhatsApp
+          </button>
+          <button 
+            onClick={() => {
+              setIsModalOpen(false);
+              setCurrentView('login');
+            }}
+            className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2.5 px-4 rounded-lg transition"
+          >
+            Go to Login
+          </button>
+        </div>
       </div>
-      <div className="flex gap-3 pt-2">
-        <button 
-          onClick={() => {
-            window.open(whatsappLink, '_blank');
-            setIsModalOpen(false);
-            setCurrentView('login');
-          }}
-          className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition"
-        >
-          <Send size={18} /> Send Data via WhatsApp
-        </button>
-        <button 
-          onClick={() => {
-            setIsModalOpen(false);
-            setCurrentView('login');
-          }}
-          className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2.5 px-4 rounded-lg transition"
-        >
-          Go to Login
-        </button>
-      </div>
-    </div>
-  );
-  setIsModalOpen(true);
-};
+    );
+    setIsModalOpen(true);
+  };
 
 // Safe input changer to clear invalid styling
 const handleInputChange = (field: string, val: string) => {
@@ -969,28 +1007,34 @@ if (isLoading) {
         </div>
 
         {/* Navigation Elements */}
+        {/* Navigation Elements */}
         <nav className="hidden md:flex items-center gap-1.5">
-          <button 
-            onClick={() => setCurrentView('home')} 
-            className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'home' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            Home
-          </button>
-          <button 
-            onClick={() => setCurrentView('free-notes')} 
-            className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'free-notes' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            Free Notes
-          </button>
+          {/* Hide Home and Free Notes when student or admin is logged in. Free Notes removed completely per brief */}
+          {!(currentStudent || isAdminLoggedIn) && (
+            <button 
+              onClick={() => setCurrentView('home')} 
+              className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'home' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+            >
+              Home
+            </button>
+          )}
           
           {currentStudent ? (
-            <button 
-              onClick={() => setCurrentView('dashboard')} 
-              className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'dashboard' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
-            >
-              Dashboard
-            </button>
-          ) : (
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setCurrentView('dashboard')} 
+                className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
+              >
+                Dashboard
+              </button>
+              <button
+                onClick={handleStudentLogout}
+                className="px-3 py-1.5 rounded-full text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition cursor-pointer"
+              >
+                Logout
+              </button>
+            </div>
+          ) : !isAdminLoggedIn ? (
             <>
               <button 
                 onClick={() => setCurrentView('login')} 
@@ -1005,14 +1049,31 @@ if (isLoading) {
                 Register
               </button>
             </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setCurrentView('admin')} 
+                className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'admin' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
+              >
+                Admin Cockpit
+              </button>
+              <button
+                onClick={() => setIsAdminLoggedIn(false)}
+                className="px-3 py-1.5 rounded-full text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition cursor-pointer"
+              >
+                Logout
+              </button>
+            </div>
           )}
 
-          <button 
-            onClick={() => setCurrentView('admin')}
-            className={`ml-3 border border-dashed border-amber-500/30 text-amber-400 hover:text-amber-300 bg-amber-500/5 hover:bg-amber-500/10 px-3.5 py-1.5 rounded-full text-xs font-mono tracking-wider uppercase flex items-center gap-1`}
-          >
-            <Settings size={12} /> Cockpit
-          </button>
+          {!isAdminLoggedIn && (
+            <button 
+              onClick={() => setCurrentView('admin')}
+              className={`ml-3 border border-dashed border-amber-500/30 text-amber-400 hover:text-amber-300 bg-amber-500/5 hover:bg-amber-500/10 px-3.5 py-1.5 rounded-full text-xs font-mono tracking-wider uppercase flex items-center gap-1`}
+            >
+              <Settings size={12} /> Cockpit
+            </button>
+          )}
         </nav>
 
         {/* Mobile menu trigger */}
@@ -1024,7 +1085,15 @@ if (isLoading) {
             <Settings size={14} />
           </button>
           <button 
-            onClick={() => setCurrentView(currentView === 'home' ? 'free-notes' : 'home')}
+            onClick={() => {
+              if (currentStudent) {
+                setCurrentView('dashboard');
+              } else if (isAdminLoggedIn) {
+                setCurrentView('admin');
+              } else {
+                setCurrentView('home');
+              }
+            }}
             className="text-slate-400 p-2 rounded-lg border border-slate-800"
             title="Toggle Fast Menu"
           >
@@ -1035,10 +1104,19 @@ if (isLoading) {
 
       {/* Mobile Sticky Bar for quick links */}
       <div className="md:hidden bg-[#0F172A] border-b border-slate-850 py-2.5 px-4 flex justify-around text-xs text-slate-400">
-        <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-400 font-bold' : ''}>Home</button>
-        <button onClick={() => setCurrentView('free-notes')} className={currentView === 'free-notes' ? 'text-blue-400 font-bold' : ''}>Free Notes</button>
+        {!(currentStudent || isAdminLoggedIn) && (
+          <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-400 font-bold' : ''}>Home</button>
+        )}
         {currentStudent ? (
-          <button onClick={() => setCurrentView('dashboard')} className={currentView === 'dashboard' ? 'text-blue-400 font-bold' : ''}>Dashboard</button>
+          <>
+            <button onClick={() => setCurrentView('dashboard')} className={currentView === 'dashboard' ? 'text-blue-400 font-bold' : ''}>Dashboard</button>
+            <button onClick={handleStudentLogout} className="text-rose-400 font-semibold">Logout</button>
+          </>
+        ) : isAdminLoggedIn ? (
+          <>
+            <button onClick={() => setCurrentView('admin')} className={currentView === 'admin' ? 'text-amber-400 font-bold' : ''}>Admin Cockpit</button>
+            <button onClick={() => setIsAdminLoggedIn(false)} className="text-rose-400 font-semibold">Logout</button>
+          </>
         ) : (
           <>
             <button onClick={() => setCurrentView('login')} className={currentView === 'login' ? 'text-blue-400 font-bold' : ''}>Login</button>
@@ -1773,10 +1851,16 @@ if (isLoading) {
                     Live Scheduled
                   </button>
                   <button 
+                    onClick={() => handleAdminTabChange('tutes')}
+                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'tutes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                  >
+                    📚 Tutes (Google Drive)
+                  </button>
+                  <button 
                     onClick={() => handleAdminTabChange('resources')}
                     className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resources' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
                   >
-                    Tutes &amp; Records
+                    📹 Class Recordings
                   </button>
                   <button 
                     onClick={() => handleAdminTabChange('broadcast')}
@@ -1980,9 +2064,12 @@ if (isLoading) {
   </div>
 )}
 
-                  {/* අලුතින් සම්බන්ධ කළ නවීන Recordings Manager කොටස */}
+                  {/* අලුතින් සම්බන්ධ කළ නවීන Tutes සහ Recordings Manager කොටස් */}
+                  {activeAdminTab === 'tutes' && (
+                    <AdminRecordingsManager initialTab="tutes" />
+                  )}
                   {activeAdminTab === 'resources' && (
-                    <AdminRecordingsManager />
+                    <AdminRecordingsManager initialTab="recordings" />
                   )}
 
                   {activeAdminTab === 'site_configs' && (
@@ -2198,8 +2285,9 @@ if (isLoading) {
       {/* Elegant Standard XHTML Footer */}
       <footer className="bg-slate-950 border-t border-slate-900 py-8 px-4 mt-12 text-center text-xs text-slate-500 space-y-4 font-sans">
         <div className="flex justify-center gap-6 text-slate-400 font-bold">
-          <button onClick={() => { setCurrentView('home'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Home Page</button>
-          <button onClick={() => { setCurrentView('free-notes'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Free Notes</button>
+          {!(currentStudent || isAdminLoggedIn) && (
+            <button onClick={() => { setCurrentView('home'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Home Page</button>
+          )}
         </div>
         <div>
           <p className="font-sans">© 2026 Taraka Amarasinghe Physics Zone. All rights reserved.</p>

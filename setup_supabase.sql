@@ -156,6 +156,53 @@ ON CONFLICT (id) DO UPDATE SET
   hero_image4 = EXCLUDED.hero_image4,
   updated_at = now();
 
+-- 7. Class Types Config
+CREATE TABLE IF NOT EXISTS class_types_config (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  class_type text NOT NULL,
+  monthly_fee numeric DEFAULT 0,
+  is_active boolean DEFAULT true,
+  whatsapp_link text,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- Fix trigger compatibility if any trigger references class_name
+DO $$ 
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'class_types_config' AND column_name = 'class_name'
+  ) THEN
+    ALTER TABLE class_types_config ADD COLUMN class_name text GENERATED ALWAYS AS (class_type) STORED;
+  END IF;
+END $$;
+
+-- 8. Exams Table
+CREATE TABLE IF NOT EXISTS exams (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  title text NOT NULL,
+  class_type text,
+  target_class_type text,
+  pdf_url text,
+  duration_minutes integer DEFAULT 60,
+  total_questions integer DEFAULT 50,
+  correct_answer jsonb DEFAULT '{}',
+  correct_answers jsonb DEFAULT '{}',
+  status text DEFAULT 'pending',
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- 9. Exam Results Table
+CREATE TABLE IF NOT EXISTS exam_results (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  username text,
+  student_id uuid,
+  exam_id uuid,
+  score numeric DEFAULT 0,
+  meta_data jsonb,
+  submitted_at timestamp with time zone DEFAULT now()
+);
+
 -- Disable RLS for development
 ALTER TABLE students DISABLE ROW LEVEL SECURITY;
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
@@ -163,3 +210,6 @@ ALTER TABLE announcements DISABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_lives DISABLE ROW LEVEL SECURITY;
 ALTER TABLE class_resources DISABLE ROW LEVEL SECURITY;
 ALTER TABLE site_config DISABLE ROW LEVEL SECURITY;
+ALTER TABLE class_types_config DISABLE ROW LEVEL SECURITY;
+ALTER TABLE exams DISABLE ROW LEVEL SECURITY;
+ALTER TABLE exam_results DISABLE ROW LEVEL SECURITY;
