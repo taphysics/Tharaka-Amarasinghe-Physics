@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CalendarDays, Plus, Trash2, AlertCircle } from 'lucide-react';
-// 💡 ඔබගේ Supabase client එක import කරන ස්ථානය නිවැරදිදැයි බලන්න
 import { supabase } from '../supabaseClient'; 
+import SecurityPasswordModal from './SecurityPasswordModal';
 
 const AdminCalendarPlanner = () => {
   const [date, setDate] = useState('');
@@ -15,6 +15,8 @@ const AdminCalendarPlanner = () => {
   
   const [events, setEvents] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     fetchClassTypes();
@@ -48,7 +50,7 @@ const AdminCalendarPlanner = () => {
   const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClassType) {
-      alert("කරුණාකර පන්ති වර්ගයක් තෝරන්න!");
+      setToastMessage({ text: "කරුණාකර පන්ති වර්ගයක් තෝරන්න!", type: 'error' });
       return;
     }
     
@@ -65,19 +67,34 @@ const AdminCalendarPlanner = () => {
     const { error } = await supabase.from('calendar_events').insert([newEvent]);
 
     if (!error) {
-      alert('Event එක සාර්ථකව එකතු කරන ලදී!');
+      setToastMessage({ text: 'Event එක සාර්ථකව එකතු කරන ලදී!', type: 'success' });
       setDate(''); setTitle(''); setDescription(''); setWarningMessage(''); setSelectedClassType('');
       fetchEvents();
     } else {
-      alert('Error adding event: ' + error.message);
+      setToastMessage({ text: 'Error adding event: ' + error.message, type: 'error' });
     }
     setIsLoading(false);
   };
 
-  const handleDelete = async (id: string) => {
-    if (window.confirm("මෙම ඉවෙන්ට් එක මකා දැමීමට අවශ්‍යද?")) {
-      await supabase.from('calendar_events').delete().eq('id', id);
+  const executeDeleteEvent = async () => {
+    if (!deleteTarget) return;
+    try {
+      await supabase.from('calendar_events').delete().eq('id', deleteTarget.id);
+      // Clean up matching scheduled_lives if any
+      if (deleteTarget.title && deleteTarget.date) {
+        try {
+          await supabase.from('scheduled_lives').delete()
+            .eq('title', deleteTarget.title)
+            .eq('date', deleteTarget.date);
+        } catch {}
+      }
+      setEvents(prev => prev.filter(e => e.id !== deleteTarget.id));
+      setDeleteTarget(null);
+      setToastMessage({ text: 'ඉවෙන්ට් එක සාර්ථකව මකා දමන ලදී!', type: 'success' });
       fetchEvents();
+    } catch (err: any) {
+      console.error('Error deleting calendar event:', err);
+      setToastMessage({ text: 'ඉවෙන්ට් එක මකා දැමීම අසාර්ථක විය: ' + (err.message || 'Error'), type: 'error' });
     }
   };
 
@@ -85,9 +102,27 @@ const AdminCalendarPlanner = () => {
     <div className="w-full bg-slate-900/40 border border-slate-800 rounded-2xl p-4 md:p-6 shadow-xl transition-all duration-300">
       
       {/* Heading */}
-      <h3 className="text-lg md:text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
+      <h3 className="text-lg md:text-xl font-bold mb-4 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
         <CalendarDays className="text-blue-500" size={22} /> Class Calendar Planner Controls
       </h3>
+
+      {/* Toast Alert Banner */}
+      {toastMessage && (
+        <div className={`mb-6 p-3.5 rounded-xl border flex items-center justify-between text-xs font-bold transition shadow-lg ${
+          toastMessage.type === 'success' 
+            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' 
+            : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+        }`}>
+          <span>{toastMessage.text}</span>
+          <button 
+            type="button" 
+            onClick={() => setToastMessage(null)} 
+            className="text-slate-400 hover:text-white p-1 ml-2 transition"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Form Area - Responsive Grid */}
       <form onSubmit={handleAddEvent} className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8 bg-slate-900/60 p-4 md:p-6 rounded-xl border border-slate-800">
@@ -202,8 +237,8 @@ const AdminCalendarPlanner = () => {
                 <p className="text-[11px] text-slate-500 flex items-center gap-1">📅 {ev.date}</p>
               </div>
               <button 
-                onClick={() => handleDelete(ev.id)} 
-                className="self-end sm:self-center p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all duration-150 flex items-center gap-1 text-xs font-semibold"
+                onClick={() => setDeleteTarget(ev)} 
+                className="self-end sm:self-center p-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-xl transition-all duration-150 flex items-center gap-1 text-xs font-semibold cursor-pointer"
               >
                 <Trash2 size={14} /> Delete
               </button>
@@ -211,6 +246,81 @@ const AdminCalendarPlanner = () => {
           ))
         )}
       </div>
+
+      {/* Dedicated Confirmation Modal for Deleting Event */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-750 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden relative">
+            <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-rose-500 via-amber-500 to-rose-600" />
+            
+            <div className="flex justify-between items-center p-5 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                  <Trash2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">
+                    දින දර්ශන සටහන මකා දැමීම
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Delete Calendar Schedule Event
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setDeleteTarget(null)} 
+                className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1">
+                <div className="text-xs font-bold text-white">
+                  {deleteTarget.title || 'Event'}
+                </div>
+                <div className="text-[11px] text-slate-400 flex flex-wrap gap-2 pt-1 border-t border-slate-800">
+                  <span>📅 දිනය: <strong className="text-slate-200">{deleteTarget.date || '-'}</strong></span>
+                  <span>📚 <strong className="text-blue-300">{deleteTarget.class_type || 'General'}</strong></span>
+                  {deleteTarget.status && <span>⚡ {deleteTarget.status}</span>}
+                </div>
+              </div>
+
+              <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl leading-relaxed">
+                ⚠️ මෙම ඉවෙන්ට් එක දත්ත ගබඩාවෙන් ස්ථිරවම මකා දැමෙනු ඇත.
+              </p>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={isLoading}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+                >
+                  අවලංගු කරන්න (Cancel)
+                </button>
+                <button
+                  type="button"
+                  onClick={executeDeleteEvent}
+                  disabled={isLoading}
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 transition shadow-lg shadow-rose-900/30 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <Trash2 size={14} />
+                      <span>මකා දමන්න (Delete)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

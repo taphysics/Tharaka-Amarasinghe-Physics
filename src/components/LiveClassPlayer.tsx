@@ -18,6 +18,9 @@ import {
   UserCheck,
   Mic,
   Video,
+  Camera,
+  VideoOff,
+  Smartphone,
   ZoomIn,
   ZoomOut,
   RotateCcw,
@@ -67,15 +70,20 @@ interface ScheduledLive {
   pre_class_video_path?: string;
   status: string;
   zoom_join_url?: string;
+  zoom_start_url?: string;
   link?: string;
   platform?: string;
   is_exam_active?: boolean;
   active_exam_id?: string;
+  exam_push_mode?: 'pending_only' | 'allow_retake' | string;
+  exam_push_timestamp?: string;
+  exam_retake_timestamp?: string;
 }
 
 interface OnlineExam {
   id: string;
   title: string;
+  exam_code?: string;
   class_type?: string;
   target_class_type?: string;
   pdf_url: string;
@@ -110,24 +118,42 @@ const getMonthDisplayName = (monthStr: string) => {
   return clean;
 };
 
-// Generates embeddable Zoom Web Client URL pre-filling student's username
+// Extracts Meeting ID and Passcode reliably from various Zoom URL formats
+const extractZoomMeetingInfo = (joinUrl: string) => {
+  let meetingId = '';
+  let pwd = '';
+  if (!joinUrl) return { meetingId, pwd };
+  try {
+    const url = new URL(joinUrl);
+    const m = url.pathname.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || url.pathname.match(/\/(\d{9,11})/);
+    if (m && m[1]) meetingId = m[1];
+    pwd = url.searchParams.get('pwd') || url.searchParams.get('password') || '';
+  } catch {
+    const m = joinUrl.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || joinUrl.match(/(\d{9,11})/);
+    if (m && m[1]) meetingId = m[1];
+    const p = joinUrl.match(/[?&](?:pwd|password)=([a-zA-Z0-9_\.-]+)/i);
+    if (p && p[1]) pwd = p[1];
+  }
+  return { meetingId, pwd };
+};
+
+// Generates embeddable Zoom Web Client URL pre-filling student's username and passcode
 const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   if (!joinUrl) return '';
   try {
     const url = new URL(joinUrl);
+    const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl);
 
-    // Zoom Web Client URL structure: /wc/<meeting_id>/join
-    if (url.pathname.includes('/j/')) {
+    if (meetingId) {
+      url.pathname = `/wc/${meetingId}/join`;
+    } else if (url.pathname.includes('/j/')) {
       url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
-    } else if (!url.pathname.includes('/wc/')) {
-      const match = url.pathname.match(/\/(\d+)/);
-      if (match && match[1]) {
-        url.pathname = `/wc/${match[1]}/join`;
-      }
     }
 
-    const pwd = url.searchParams.get('pwd');
-    if (pwd) url.searchParams.set('pwd', pwd);
+    if (pwd) {
+      url.searchParams.set('pwd', pwd);
+      url.searchParams.set('password', pwd);
+    }
 
     // Automatically fill the student's username into Zoom Attendee Name
     if (userName) {
@@ -141,6 +167,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
       url.searchParams.set('uname', trimmedUser);
       url.searchParams.set('userName', trimmedUser);
       url.searchParams.set('name', trimmedUser);
+      url.searchParams.set('dn', trimmedUser);
     }
 
     url.searchParams.set('prefer', '1');
@@ -148,6 +175,44 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
   } catch (error) {
     return joinUrl;
   }
+};
+
+// Generates Direct Zoom Join URL (with embedded passcode so mobile/browser never prompts)
+const getDirectZoomJoinUrl = (joinUrl: string, userName: string) => {
+  if (!joinUrl) return '';
+  try {
+    const url = new URL(joinUrl);
+    const { pwd } = extractZoomMeetingInfo(joinUrl);
+    if (pwd) {
+      url.searchParams.set('pwd', pwd);
+      url.searchParams.set('password', pwd);
+    }
+    if (userName) {
+      const trimmedUser = userName.trim();
+      url.searchParams.set('uname', trimmedUser);
+      url.searchParams.set('userName', trimmedUser);
+      url.searchParams.set('name', trimmedUser);
+      url.searchParams.set('dn', trimmedUser);
+    }
+    return url.toString();
+  } catch {
+    return joinUrl;
+  }
+};
+
+// Generates direct mobile Zoom App link with embedded passcode
+const getMobileZoomAppUrl = (joinUrl: string, userName: string) => {
+  const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl);
+  if (!meetingId) return joinUrl;
+  const pwdParam = pwd ? `&pwd=${pwd}` : '';
+  const userParam = userName ? `&uname=${encodeURIComponent(userName.trim())}` : '';
+  return `zoomus://zoom.us/join?action=join&confno=${meetingId}${pwdParam}${userParam}`;
+};
+
+// Generates canonical exam code derived from title
+const getCanonicalExamCode = (title: string, id?: string) => {
+  const normTitle = (title || 'EXAM').trim().toUpperCase().replace(/[^A-Z0-9]/g, '_').slice(0, 32);
+  return `EXAM_${normTitle}`;
 };
 
 // Convert Google Drive Link to embed preview
@@ -201,12 +266,24 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   // Student username strictly used for Zoom auto-population
   const studentUsername = currentUser?.username || 'Student';
 
-  // Browser Media Permission state (Camera & Mic across Chrome, Firefox, Safari, Edge)
+  // Browser Media Permission & Active Stream states
   const [mediaPermissionGranted, setMediaPermissionGranted] = useState<boolean>(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isRequestingCamera, setIsRequestingCamera] = useState<boolean>(false);
+  const [showBrowserPermModal, setShowBrowserPermModal] = useState<boolean>(false);
+
+  // Fullscreen Auto-hide Controls States & Orientation
+  const [showFullscreenControls, setShowFullscreenControls] = useState<boolean>(true);
+  const [isMobilePortrait, setIsMobilePortrait] = useState<boolean>(false);
+  const fullscreenControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Pushed Online Exam States
   const [activeExam, setActiveExam] = useState<OnlineExam | null>(null);
   const [isExamOpen, setIsExamOpen] = useState<boolean>(false);
+  const [isExamStarted, setIsExamStarted] = useState<boolean>(false); // Started with or without camera
+  const [alreadyCompletedExam, setAlreadyCompletedExam] = useState<any | null>(null);
   const [examAnswers, setExamAnswers] = useState<Record<number, number>>({});
   const [examSecondsLeft, setExamSecondsLeft] = useState<number>(0);
   const [isExamSubmitted, setIsExamSubmitted] = useState<boolean>(false);
@@ -218,6 +295,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   } | null>(null);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState<boolean>(false);
   const [isZoomMinimized, setIsZoomMinimized] = useState<boolean>(false);
+
+  const examGateVideoRef = useRef<HTMLVideoElement>(null);
+  const floatingCameraVideoRef = useRef<HTMLVideoElement>(null);
 
   // Floating Player Drag and Drop State (Anywhere on screen)
   const [floatingPos, setFloatingPos] = useState<{ x: number; y: number } | null>(null);
@@ -325,31 +405,25 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
         return false;
       };
 
-      // 1. Calendar Events (Scheduled classes)
-      const { data: calData } = await supabase
-        .from('calendar_events')
-        .select('*')
-        .gte('date', today)
-        .eq('status', 'scheduled');
+      // Run parallel fast fetch across all tables in a single round-trip
+      const [calRes, liveRes, studentRes, payRes] = await Promise.all([
+        supabase.from('calendar_events').select('*').gte('date', today).eq('status', 'scheduled'),
+        supabase.from('scheduled_lives').select('*').in('status', ['scheduled', 'live']),
+        currentUser?.id ? supabase.from('students').select('*').eq('id', currentUser.id).maybeSingle() : Promise.resolve({ data: null }),
+        currentUser?.id ? supabase.from('payments').select('*').eq('student_id', currentUser.id) : Promise.resolve({ data: [] })
+      ]);
 
-      if (calData) {
-        const filteredCal = calData
-          .filter(ev => isMatch(ev.class_type, ev.target_class_type))
-          .sort((a, b) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
+      if (calRes.data) {
+        const filteredCal = calRes.data
+          .filter((ev: any) => isMatch(ev.class_type, ev.target_class_type))
+          .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         setCalendarEvents(filteredCal);
       }
 
-      // 2. Scheduled Lives (Zoom / YouTube Live Classes)
-      const { data: liveData } = await supabase
-        .from('scheduled_lives')
-        .select('*')
-        .in('status', ['scheduled', 'live']);
-
-      if (liveData) {
-        // Show live classes matching student classes, sorted: 'live' first, then nearest scheduled
-        const filteredLive = liveData
+      if (liveRes.data) {
+        const filteredLive = liveRes.data
           .filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
-          .sort((a, b) => {
+          .sort((a: any, b: any) => {
             if (a.status === 'live' && b.status !== 'live') return -1;
             if (b.status === 'live' && a.status !== 'live') return 1;
             return new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime();
@@ -357,19 +431,11 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
         setScheduledLives(filteredLive);
       }
 
-      // 3. Fresh Student Info & Payments Table (for accurate Paid / Free verification)
-      if (currentUser?.id) {
-        const [studentRes, payRes] = await Promise.all([
-          supabase.from('students').select('*').eq('id', currentUser.id).single(),
-          supabase.from('payments').select('*').eq('student_id', currentUser.id)
-        ]);
-
-        if (studentRes.data) {
-          setFreshStudent(studentRes.data);
-        }
-        if (payRes.data) {
-          setPaymentsList(payRes.data);
-        }
+      if (studentRes.data) {
+        setFreshStudent(studentRes.data);
+      }
+      if (payRes.data) {
+        setPaymentsList(payRes.data);
       }
     } catch (error) {
       console.error('Error fetching live class player data:', error);
@@ -440,11 +506,11 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     return { isPaidOrFree: false, reason: 'unpaid' };
   };
 
-  // 3. Countdown & Live State Timer Effect
+  // 3. Countdown & Live State Timer Effect (Evaluates immediately, no 1-second delay)
   useEffect(() => {
     if (isLoading) return;
 
-    const interval = setInterval(() => {
+    const evaluateState = () => {
       const live = scheduledLives.find(c => c.status === 'live');
       if (live) {
         setTargetClass(live);
@@ -478,24 +544,232 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
         setTargetClass(null);
         setViewState(calendarEvents.length > 0 ? 'upcoming-list' : 'no-classes');
       }
-    }, 1000);
+    };
+
+    // Evaluate immediately so student sees live status without waiting
+    evaluateState();
+    const interval = setInterval(evaluateState, 1000);
 
     return () => clearInterval(interval);
   }, [scheduledLives, calendarEvents, isLoading, freshStudent, paymentsList]);
 
+  // Active MediaStream and Video Preview Sync Effect
+  useEffect(() => {
+    if (cameraStream) {
+      if (examGateVideoRef.current && examGateVideoRef.current.srcObject !== cameraStream) {
+        examGateVideoRef.current.srcObject = cameraStream;
+      }
+      if (floatingCameraVideoRef.current && floatingCameraVideoRef.current.srcObject !== cameraStream) {
+        floatingCameraVideoRef.current.srcObject = cameraStream;
+      }
+    }
+  }, [cameraStream, isExamOpen, isExamStarted, isZoomMinimized]);
+
+  // Clean up media stream on component unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
+
+  // Request & Start Real Camera Stream (Cross-browser User Gesture Handler with Adaptive Device Fallbacks)
+  const startCameraStream = async (showPromptAlert = false): Promise<boolean> => {
+    setIsRequestingCamera(true);
+    setCameraError(null);
+    try {
+      if (typeof window === 'undefined') return false;
+
+      const hasGetUserMedia = !!(
+        navigator?.mediaDevices?.getUserMedia ||
+        (navigator as any)?.webkitGetUserMedia ||
+        (navigator as any)?.mozGetUserMedia
+      );
+
+      if (!hasGetUserMedia) {
+        setCameraError("ඔබගේ බ්‍රවුසරය කැමරා තාක්ෂණයට සහය නොදක්වයි. කැමරාව නොමැතිවද ඔබට පහතින් විභාගය ආරම්භ කළ හැක.");
+        return false;
+      }
+
+      let stream: MediaStream | null = null;
+      let lastErr: any = null;
+
+      // Adaptive Cascading Constraints for Maximum Device & Browser Compatibility
+      const constraintTiers: MediaStreamConstraints[] = [
+        // Tier 1: Ideal user-facing camera + microphone
+        {
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true
+        },
+        // Tier 2: Flexible camera + microphone without strict resolution constraints
+        {
+          video: true,
+          audio: true
+        },
+        // Tier 3: User camera only (for PCs without microphone or where mic is blocked)
+        {
+          video: { facingMode: 'user' }
+        },
+        // Tier 4: Generic camera only (any connected webcam)
+        {
+          video: true
+        },
+        // Tier 5: Audio only (if device has no camera at all but has mic)
+        {
+          audio: true
+        }
+      ];
+
+      for (const constraints of constraintTiers) {
+        try {
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+          } else {
+            const legacyGetUserMedia = (navigator as any).webkitGetUserMedia || (navigator as any).mozGetUserMedia;
+            stream = await new Promise((resolve, reject) => {
+              legacyGetUserMedia.call(navigator, constraints, resolve, reject);
+            });
+          }
+          if (stream) break;
+        } catch (e) {
+          lastErr = e;
+          // Continue to next tier fallback
+        }
+      }
+
+      if (!stream) {
+        throw lastErr || new Error("Camera stream could not be acquired");
+      }
+
+      setCameraStream(stream);
+      setIsCameraActive(true);
+      setMediaPermissionGranted(true);
+
+      if (examGateVideoRef.current) {
+        examGateVideoRef.current.srcObject = stream;
+      }
+      if (floatingCameraVideoRef.current) {
+        floatingCameraVideoRef.current.srcObject = stream;
+      }
+
+      if (showPromptAlert) {
+        alert("✅ කැමරාව සාර්ථකව සක්‍රීය විය! දැන් ඔබට විභාගය ආරම්භ කළ හැක.");
+      }
+      return true;
+    } catch (err: any) {
+      console.warn("Camera stream request info:", err);
+      setIsCameraActive(false);
+
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        setCameraError("බ්‍රවුසරයේ කැමරා අවසරය (Permission) ලබා දී නොමැත. කැමරාව On කර ගැනීමට Address Bar හි Lock/Camera අයිකනයෙන් Allow කරන්න. (කැමරාව නොමැතිවද විභාගය ආරම්භ කළ හැක).");
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        setCameraError("මෙම ඩිවයිස් එකෙහි කැමරාවක් හෝ මයික්‍රෆෝනයක් සොයාගත නොහැකි විය. කැමරාව රහිතවද විභාගය ආරම්භ කළ හැක.");
+      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
+        setCameraError("කැමරාව වෙනත් මෘදුකාංගයක් මගින් භාවිතා වේ. කැමරාව රහිතවද විභාගය ආරම්භ කළ හැක.");
+      } else {
+        setCameraError("කැමරාව ක්‍රියාත්මක කිරීමට නොහැකි විය. කැමරාව නොමැතිවද ඔබට පහතින් විභාගය ආරම්භ කළ හැක.");
+      }
+      return false;
+    } finally {
+      setIsRequestingCamera(false);
+    }
+  };
+
+  // Helper: Verify whether student has already completed this exam, taking lecturer retake mode into account
+  const verifyExamCompletion = async (exam: any, liveSession: ScheduledLive | null): Promise<any | null> => {
+    if (!exam) return null;
+    const examId = exam.id;
+    const cleanTitle = (exam.title || '').trim().toLowerCase();
+    const canonicalCode = getCanonicalExamCode(exam.title, exam.id);
+
+    // 1. Check local storage cache
+    let localRecord: any = null;
+    try {
+      const localKey = `online_exams_history_${currentUser?.username}`;
+      const localList = JSON.parse(localStorage.getItem(localKey) || '[]');
+      localRecord = localList.find((r: any) => 
+        r.exam_id === examId || 
+        r.exam_code === canonicalCode ||
+        (r.meta_data?.exam_title && r.meta_data.exam_title.trim().toLowerCase() === cleanTitle) ||
+        (r.meta_data?.exam_code && r.meta_data.exam_code === canonicalCode)
+      );
+    } catch (e) {}
+
+    // 2. Check Supabase exam_results table
+    let dbRecord: any = null;
+    try {
+      const { data: dbData } = await supabase
+        .from('exam_results')
+        .select('*')
+        .or(`username.eq.${studentUsername},student_id.eq.${currentUser?.id || ''}`)
+        .order('submitted_at', { ascending: false });
+
+      if (dbData && dbData.length > 0) {
+        dbRecord = dbData.find((r: any) => 
+          r.exam_id === examId || 
+          r.exam_code === canonicalCode ||
+          (r.meta_data?.exam_title && r.meta_data.exam_title.trim().toLowerCase() === cleanTitle) ||
+          (r.meta_data?.exam_code && r.meta_data.exam_code === canonicalCode)
+        );
+      }
+    } catch (e) {
+      console.warn("DB check exam_results warning:", e);
+    }
+
+    const existing = dbRecord || localRecord;
+    if (!existing) return null;
+
+    // 3. Check if Lecturer specifically authorized a RETAKE:
+    // If exam_push_mode === 'allow_retake' and exam_retake_timestamp is newer than student's submission
+    if (liveSession?.exam_push_mode === 'allow_retake' && liveSession.exam_retake_timestamp) {
+      const submitTime = new Date(existing.submitted_at || 0).getTime();
+      const retakeTime = new Date(liveSession.exam_retake_timestamp).getTime();
+      if (retakeTime > submitTime) {
+        // Lecturer granted RETAKE for all students!
+        return null;
+      }
+    }
+
+    return existing;
+  };
+
   // 4. Check for Pushed Active Exam in Current Live Class
   useEffect(() => {
     if (targetClass?.is_exam_active && targetClass.active_exam_id && !isExamSubmitted) {
-      fetchPushedExam(targetClass.active_exam_id);
+      fetchPushedExam(targetClass.active_exam_id, targetClass);
+    } else if (!targetClass?.is_exam_active) {
+      setIsExamOpen(false);
+      setIsExamStarted(false);
     }
-  }, [targetClass?.is_exam_active, targetClass?.active_exam_id]);
+  }, [
+    targetClass?.is_exam_active, 
+    targetClass?.active_exam_id, 
+    targetClass?.exam_push_mode, 
+    targetClass?.exam_push_timestamp, 
+    targetClass?.exam_retake_timestamp
+  ]);
 
-  const fetchPushedExam = async (examId: string) => {
+  const fetchPushedExam = async (examId: string, liveSession: ScheduledLive | null) => {
     try {
       const { data, error } = await supabase.from('exams').select('*').eq('id', examId).single();
       if (!error && data) {
         setActiveExam(data);
+
+        // Check if student already completed this exam
+        const completedRecord = await verifyExamCompletion(data, liveSession);
+        if (completedRecord) {
+          // Student already completed and retake is NOT authorized
+          setAlreadyCompletedExam(completedRecord);
+          setIsExamOpen(false);
+          setIsExamStarted(false);
+          return;
+        }
+
+        // Student has NOT completed, OR lecturer explicitly granted Retake!
+        setAlreadyCompletedExam(null);
         setIsExamOpen(true);
+        setIsExamStarted(false); // MUST pass camera verification before start!
         setIsZoomMinimized(true);
 
         // Initialize exam countdown timer if not already running
@@ -509,9 +783,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     }
   };
 
-  // 5. Exam Countdown Timer Effect (Auto-Submit when Time Expires)
+  // 5. Exam Countdown Timer Effect (Auto-Submit when Time Expires - Runs only once Exam is Started)
   useEffect(() => {
-    if (!isExamOpen || isExamSubmitted || examSecondsLeft <= 0) return;
+    if (!isExamOpen || !isExamStarted || isExamSubmitted || examSecondsLeft <= 0) return;
 
     const timerInt = setInterval(() => {
       setExamSecondsLeft(prev => {
@@ -525,7 +799,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     }, 1000);
 
     return () => clearInterval(timerInt);
-  }, [isExamOpen, isExamSubmitted, examSecondsLeft]);
+  }, [isExamOpen, isExamStarted, isExamSubmitted, examSecondsLeft]);
 
   // Handle Auto Submit upon countdown expiration
   const handleAutoSubmitExam = () => {
@@ -539,6 +813,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
     const totalQuestions = activeExam.total_questions || 50;
     const correctAnswers = activeExam.correct_answer || activeExam.correct_answers || {};
+    const canonicalExamCode = getCanonicalExamCode(activeExam.title, activeExam.id);
 
     let score = 0;
     const summary: { questionNumber: number; userAnswer: number | null; correctAnswer: number; isCorrect: boolean }[] = [];
@@ -566,7 +841,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     setIsExamSubmitted(true);
     setShowSubmitConfirmModal(false);
 
-    // Save record to Supabase `exam_results` table
+    // Save record to Supabase `exam_results` table with canonical exam identifier
     const resultPayload = {
       username: currentUser?.username || 'Student',
       student_id: currentUser?.id || null,
@@ -575,6 +850,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       submitted_at: new Date().toISOString(),
       meta_data: {
         exam_title: activeExam.title,
+        exam_code: canonicalExamCode,
         class_type: activeExam.class_type || targetClass?.target_class_type || 'Theory',
         total_questions: totalQuestions,
         percentage: percentage,
@@ -597,20 +873,28 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       console.warn('Supabase exam results insert warning:', e);
     }
 
-    // Also cache in local storage with deduplication (keyed by exam_id)
+    // Also cache in local storage with deduplication (keyed by exam_id / canonical code)
     try {
       const localKey = `online_exams_history_${currentUser?.username}`;
       const existing = JSON.parse(localStorage.getItem(localKey) || '[]');
-      const filtered = existing.filter((item: any) => item.exam_id !== activeExam.id);
+      const filtered = existing.filter((item: any) => 
+        item.exam_id !== activeExam.id && 
+        item.meta_data?.exam_title !== activeExam.title &&
+        item.meta_data?.exam_code !== canonicalExamCode
+      );
       localStorage.setItem(localKey, JSON.stringify([savedRecord, ...filtered]));
     } catch (e) {
       console.warn('Local storage save error:', e);
     }
+
+    // Set already completed exam record to prevent popup on subsequent re-open
+    setAlreadyCompletedExam(savedRecord);
   };
 
   // Close Exam Overlay & Auto Fullscreen Zoom Class
   const handleCloseExamAndRestoreZoom = () => {
     setIsExamOpen(false);
+    setIsExamStarted(false);
     setIsZoomMinimized(false);
     setIsFullscreen(true); // Automatically return Zoom class to full screen
     if (playerContainerRef.current?.requestFullscreen) {
@@ -620,41 +904,89 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
   // Camera & Mic Permission Requester (Cross-browser User Gesture Handler)
   const requestBrowserMediaPermissions = async () => {
+    await startCameraStream(true);
+  };
+
+  // Auto-hide Fullscreen Controls Reset Timer
+  const resetFullscreenControlsTimer = () => {
+    setShowFullscreenControls(true);
+    if (fullscreenControlsTimeoutRef.current) {
+      clearTimeout(fullscreenControlsTimeoutRef.current);
+    }
+    fullscreenControlsTimeoutRef.current = setTimeout(() => {
+      setShowFullscreenControls(false);
+    }, 3500);
+  };
+
+  // Lock mobile screen orientation to landscape (16:9)
+  const lockLandscapeOrientation = async () => {
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        stream.getTracks().forEach(track => track.stop()); // Release hardware immediately after approval
-        setMediaPermissionGranted(true);
-        alert("✅ කැමරා සහ මයික්‍රෆෝන් අවසරය සාර්ථකව ලබා දෙන ලදී! දැන් සූම් පන්තිය තුළදී ඔබගේ කැමරාව සහ මයික්‍රෆෝනය නිසි පරිදි ක්‍රියා කරනු ඇත.");
-      } else {
-        alert("ඔබගේ බ්‍රවුසරය mediaDevices සහය නොදක්වයි.");
+      if ((window.screen?.orientation as any)?.lock) {
+        await (window.screen.orientation as any).lock('landscape').catch(() => {});
+      } else if ((window.screen as any)?.lockOrientation) {
+        (window.screen as any).lockOrientation('landscape');
+      } else if ((window.screen as any)?.mozLockOrientation) {
+        (window.screen as any).mozLockOrientation('landscape');
+      } else if ((window.screen as any)?.msLockOrientation) {
+        (window.screen as any).msLockOrientation('landscape');
       }
-    } catch (err: any) {
-      console.warn("Media permission prompt warning:", err);
-      alert("බ්‍රවුසරයේ කැමරා හෝ මයික්‍රෆෝන අවසරය (Allow) ලබා දෙන්න.");
+    } catch (e) {
+      console.warn("Screen orientation lock info:", e);
     }
   };
 
-  // Fullscreen support
+  // Unlock orientation on exiting fullscreen
+  const unlockOrientation = () => {
+    try {
+      if (window.screen?.orientation?.unlock) {
+        window.screen.orientation.unlock();
+      } else if ((window.screen as any)?.unlockOrientation) {
+        (window.screen as any).unlockOrientation();
+      } else if ((window.screen as any)?.mozUnlockOrientation) {
+        (window.screen as any).mozUnlockOrientation();
+      } else if ((window.screen as any)?.msUnlockOrientation) {
+        (window.screen as any).msUnlockOrientation();
+      }
+    } catch (e) {
+      console.warn("Screen orientation unlock info:", e);
+    }
+  };
+
+  // Monitor device portrait/landscape orientation
+  useEffect(() => {
+    const checkOrientation = () => {
+      const isPortrait = window.innerHeight > window.innerWidth && window.innerWidth < 850;
+      setIsMobilePortrait(isPortrait);
+    };
+    checkOrientation();
+    window.addEventListener('resize', checkOrientation);
+    window.addEventListener('orientationchange', checkOrientation);
+    return () => {
+      window.removeEventListener('resize', checkOrientation);
+      window.removeEventListener('orientationchange', checkOrientation);
+    };
+  }, []);
+
+  // Fullscreen support with automatic Landscape Rotation (16:9)
   const toggleFullscreen = async () => {
     if (!playerContainerRef.current) return;
 
     if (!isFullscreen) {
-      setIsFullscreen(true);
       try {
         if (playerContainerRef.current.requestFullscreen) {
           await playerContainerRef.current.requestFullscreen();
         } else if ((playerContainerRef.current as any).webkitRequestFullscreen) {
           await (playerContainerRef.current as any).webkitRequestFullscreen();
-        }
-        if ((window.screen?.orientation as any)?.lock) {
-          await (window.screen.orientation as any).lock('landscape').catch(() => {});
+        } else if ((playerContainerRef.current as any).msRequestFullscreen) {
+          await (playerContainerRef.current as any).msRequestFullscreen();
         }
       } catch (err) {
-        console.warn("Fullscreen API fallback active");
+        console.warn("Fullscreen request warning:", err);
       }
+      setIsFullscreen(true);
+      await lockLandscapeOrientation();
+      resetFullscreenControlsTimer();
     } else {
-      setIsFullscreen(false);
       try {
         if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
           if (document.exitFullscreen) {
@@ -663,24 +995,83 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             await (document as any).webkitExitFullscreen();
           }
         }
-        if (window.screen?.orientation?.unlock) {
-          window.screen.orientation.unlock();
-        }
       } catch (err) {
         console.warn("Exit fullscreen error", err);
       }
+      setIsFullscreen(false);
+      unlockOrientation();
+      setShowFullscreenControls(true);
     }
   };
 
+  // Browser fullscreen change listeners
   useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(!!(document.fullscreenElement || (document as any).webkitFullscreenElement));
+    const handleFullscreenChange = () => {
+      const isFs = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).mozFullScreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isFs);
+      if (isFs) {
+        lockLandscapeOrientation();
+        resetFullscreenControlsTimer();
+      } else {
+        unlockOrientation();
+        setShowFullscreenControls(true);
+        if (fullscreenControlsTimeoutRef.current) {
+          clearTimeout(fullscreenControlsTimeoutRef.current);
+        }
+      }
+    };
+
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
     };
   }, []);
+
+  // Fullscreen Mouse/Touch Movement Activity Listener (Auto-hide on idle, reveal on movement)
+  useEffect(() => {
+    if (!isFullscreen) {
+      setShowFullscreenControls(true);
+      if (fullscreenControlsTimeoutRef.current) {
+        clearTimeout(fullscreenControlsTimeoutRef.current);
+      }
+      return;
+    }
+
+    resetFullscreenControlsTimer();
+
+    const handleUserActivity = () => {
+      resetFullscreenControlsTimer();
+    };
+
+    window.addEventListener('mousemove', handleUserActivity);
+    window.addEventListener('touchstart', handleUserActivity, { passive: true });
+    window.addEventListener('touchmove', handleUserActivity, { passive: true });
+    window.addEventListener('pointerdown', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+
+    return () => {
+      if (fullscreenControlsTimeoutRef.current) {
+        clearTimeout(fullscreenControlsTimeoutRef.current);
+      }
+      window.removeEventListener('mousemove', handleUserActivity);
+      window.removeEventListener('touchstart', handleUserActivity);
+      window.removeEventListener('touchmove', handleUserActivity);
+      window.removeEventListener('pointerdown', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+    };
+  }, [isFullscreen]);
 
   const handleManualPaymentRefresh = async () => {
     setIsRefreshingPayment(true);
@@ -710,7 +1101,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] bg-slate-950 rounded-2xl border border-slate-800 text-white font-semibold gap-3">
         <RefreshCw size={24} className="animate-spin text-blue-500" />
-        <span className="text-sm text-slate-400">සජීවී පන්ති සහ ගෙවීම් දත්ත පූරණය වෙමින් පවතී...</span>
+        <span className="text-sm text-slate-400">සජීවී පන්ති සොයමින්...</span>
       </div>
     );
   }
@@ -854,9 +1245,11 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     );
   }
 
-  // Direct Zoom fallback URL & Embed URL
+  // Direct Zoom fallback URL & Embed URL (strictly student Join link)
   const zoomDirectUrl = targetClass ? (targetClass.zoom_join_url || targetClass.link || '') : '';
   const zoomEmbedUrl = targetClass ? getEmbeddableZoomUrl(zoomDirectUrl, studentUsername) : '';
+  const zoomMeetingInfo = extractZoomMeetingInfo(zoomDirectUrl);
+  const mobileZoomAppUrl = getMobileZoomAppUrl(zoomDirectUrl, studentUsername);
 
   // Google Drive PDF embed link
   const drivePdfEmbedUrl = activeExam ? getEmbeddableDriveUrl(activeExam.pdf_url) : '';
@@ -878,6 +1271,53 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
   return (
     <div className="w-full bg-slate-950 text-white flex flex-col p-2 md:p-4 rounded-2xl border border-slate-800 relative">
+
+      {/* =========================================================================
+          FEATURE: ALREADY COMPLETED EXAM BANNER (PREVENTS RE-POPUP ON REFRESH)
+         ========================================================================= */}
+      {alreadyCompletedExam && (
+        <div className="w-full mb-4 bg-emerald-950/40 border-2 border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+              <CheckCircle2 size={24} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
+                  විභාගය අවසන් කර ඇත
+                </span>
+                <span className="text-xs text-slate-300 font-mono font-bold">
+                  {alreadyCompletedExam.meta_data?.exam_title || activeExam?.title || 'Online Exam'}
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm font-semibold text-white mt-1">
+                ඔබ මෙම සජීවී විභාගය සාර්ථකව අවසන් කර ඇත &bull; ලකුණු: <span className="text-emerald-400 font-bold">{alreadyCompletedExam.score} / {alreadyCompletedExam.meta_data?.total_questions || 50}</span> ({alreadyCompletedExam.meta_data?.percentage ?? Math.round((alreadyCompletedExam.score / 50) * 100)}%)
+              </p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                ගුරුභවතා විසින් නැවත Retake අවසරයක් (Re-Push) ලබා දුනහොත් පමණක් ඔබට මෙම විභාගය නැවත කළ හැක.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              if (alreadyCompletedExam.meta_data?.results_summary) {
+                setExamResult({
+                  score: alreadyCompletedExam.score,
+                  total: alreadyCompletedExam.meta_data.total_questions || 50,
+                  percentage: alreadyCompletedExam.meta_data.percentage || 0,
+                  summary: alreadyCompletedExam.meta_data.results_summary
+                });
+                setIsExamSubmitted(true);
+                setIsExamOpen(true);
+              }
+            }}
+            className="px-4 py-2 bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+          >
+            <Award size={14} /> ප්‍රතිඵල සටහන බලන්න
+          </button>
+        </div>
+      )}
 
       {/* =========================================================================
           FEATURE: PUSHED ONLINE EXAM FULL-STAGE SPLIT VIEW (PDF + MCQ ANSWER SHEET)
@@ -927,18 +1367,124 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             </div>
           </div>
 
-          {/* If Exam is NOT Submitted yet: SHOW SPLIT STAGE (Google Drive PDF Viewer + Answer Sheet) */}
+          {/* If Exam is NOT Submitted yet: Check Camera Verification First */}
           {!isExamSubmitted ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[680px]">
-              
-              {/* SIDE 1: GOOGLE DRIVE PDF VIEWER (Interactive Zoom, Pan, Drag, Scroll) */}
-              <div className="lg:col-span-7 flex flex-col bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-inner">
-                {/* PDF Interactive Toolbar */}
-                <div className="bg-slate-900/90 border-b border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-1 text-slate-300 font-semibold">
-                    <span>PDF පත්‍රිකා පාලනය:</span>
-                    <span className="text-[11px] font-mono text-amber-400 ml-1">{Math.round(pdfZoom * 100)}%</span>
+            !isExamStarted ? (
+              /* EXAM START & CAMERA VERIFICATION NOTICE (කැමරාව On කර විභාගය ආරම්භ කිරීමට උපදෙස් ලබා දෙන අතර කැමරාව නොමැතිවද ආරම්භ කළ හැක) */
+              <div className="w-full bg-slate-950/95 border-2 border-emerald-500/30 rounded-3xl p-6 sm:p-10 flex flex-col items-center text-center max-w-2xl mx-auto shadow-2xl my-4 animate-in fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-4 shadow-lg shadow-emerald-950/40">
+                  <FileText size={32} />
+                </div>
+
+                <h3 className="text-xl sm:text-2xl font-black text-white mb-2">
+                  සජීවී විභාගය ආරම්භ කිරීම (Start Live Exam)
+                </h3>
+
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 max-w-lg mb-6 text-left sm:text-center">
+                  <p className="text-blue-300 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 mb-1">
+                    <Camera size={18} className="shrink-0 text-cyan-400" />
+                    කරුණාකර කැමරාව On කර විභාගය ආරම්භ කරන්න
+                  </p>
+                  <p className="text-slate-300 text-xs leading-relaxed">
+                    සමහර උපාංග (Devices) වල කැමරා පහසුකම් නොමැති අවස්ථාවන්ද පැවතිය හැකි බැවින්, කැමරාව On කර තිබීම අනිවාර්ය නොවේ. කැමරාව On කළද නැතද ඔබට විභාගය ආරම්භ කළ හැක.
+                  </p>
+                </div>
+
+                {/* Real-time Video Stream Preview */}
+                <div className="relative w-full max-w-sm rounded-2xl overflow-hidden border-2 border-slate-700 bg-slate-900 shadow-xl mb-5 aspect-video flex items-center justify-center">
+                  {isCameraActive ? (
+                    <video
+                      ref={examGateVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-slate-500 p-4">
+                      <VideoOff size={38} className="mb-2 text-slate-600" />
+                      <span className="text-xs font-semibold text-slate-300">කැමරාව ක්‍රියා විරහිතයි (Camera OFF)</span>
+                      <span className="text-[11px] text-slate-400 mt-1">කැමරා පහසුකම නැතත් ඔබට පහතින් විභාගය ආරම්භ කළ හැක</span>
+                    </div>
+                  )}
+
+                  {/* Camera Status Badge */}
+                  <div className="absolute top-2.5 left-2.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold flex items-center gap-1.5 bg-black/80 backdrop-blur border border-white/10">
+                    {isCameraActive ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span className="text-emerald-400">CAMERA ACTIVE</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                        <span className="text-amber-400">CAMERA OFF / NOT DETECTED</span>
+                      </>
+                    )}
                   </div>
+                </div>
+
+                {cameraError && (
+                  <div className="text-xs text-amber-300 bg-amber-950/40 border border-amber-800/60 rounded-xl p-3 mb-4 max-w-md">
+                    {cameraError}
+                  </div>
+                )}
+
+                {/* Gate Action Buttons: Support Turn Cam On AND Start Exam whether Cam is on or off */}
+                <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
+                  {!isCameraActive ? (
+                    <>
+                      <button
+                        onClick={() => startCameraStream(true)}
+                        disabled={isRequestingCamera}
+                        className="flex-1 py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-blue-300 hover:text-white border border-blue-500/40 font-bold text-xs sm:text-sm rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                        title="කැමරාව On කිරීමට උත්සාහ කරන්න"
+                      >
+                        <Camera size={16} />
+                        {isRequestingCamera ? 'කැමරාව සොයමින්...' : 'කැමරාව On කරන්න'}
+                      </button>
+
+                      <button
+                        onClick={() => setIsExamStarted(true)}
+                        className="flex-1 py-3.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl shadow-emerald-900/40 transition hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
+                        title="කැමරාව නොමැතිව වුවද විභාගය ආරම්භ කරන්න"
+                      >
+                        <Play size={16} />
+                        විභාගය ආරම්භ කරන්න
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setIsExamStarted(true)}
+                      className="w-full py-3.5 px-5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-xl shadow-emerald-900/40 transition hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Play size={16} />
+                      විභාගය ආරම්භ කරන්න (Start Exam)
+                    </button>
+                  )}
+                </div>
+
+                {!isCameraActive && (
+                  <button
+                    onClick={() => setShowBrowserPermModal(true)}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 mt-3.5 underline cursor-pointer"
+                  >
+                    බ්‍රවුසරයේ කැමරා සහ මයික් අවසර ලබා දෙන ආකාරය බලන්න
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* SIDE 1 & SIDE 2: FULL STAGE SPLIT VIEW (Google Drive PDF Viewer + Answer Sheet) */
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[680px]">
+                
+                {/* SIDE 1: GOOGLE DRIVE PDF VIEWER (Interactive Zoom, Pan, Drag, Scroll) */}
+                <div className="lg:col-span-7 flex flex-col bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-inner">
+                  {/* PDF Interactive Toolbar */}
+                  <div className="bg-slate-900/90 border-b border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1 text-slate-300 font-semibold">
+                      <span>PDF පත්‍රිකා පාලනය:</span>
+                      <span className="text-[11px] font-mono text-amber-400 ml-1">{Math.round(pdfZoom * 100)}%</span>
+                    </div>
 
                   {/* PDF Controls */}
                   <div className="flex items-center gap-1.5">
@@ -1139,6 +1685,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               </div>
 
             </div>
+            )
           ) : (
             // =========================================================================
             // INSTANT RESULTS & SCORE BREAKDOWN DISPLAY (Green for correct, Red for wrong)
@@ -1391,16 +1938,27 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             right: 'auto', 
             bottom: 'auto' 
           } : undefined}
-          className={`flex flex-col bg-slate-950 border-emerald-500/40 overflow-hidden transition-all duration-150 ${
+          className={`flex flex-col bg-slate-950 border-emerald-500/40 overflow-hidden transition-all duration-150 relative ${
             isFullscreen
-              ? 'fixed inset-0 z-[999999] w-full h-full m-0 p-0 rounded-none'
+              ? 'fixed inset-0 z-[999999] w-screen h-screen m-0 p-0 rounded-none bg-black'
               : isExamOpen && isZoomMinimized
               ? `fixed z-[99999] ${!floatingPos ? 'bottom-4 right-4' : ''} ${isFloatingCollapsed ? 'w-44' : 'w-56 sm:w-64'} rounded-2xl border-2 border-emerald-500 shadow-2xl shadow-emerald-950/80 backdrop-blur select-none ${isFloatingDragging ? 'cursor-grabbing opacity-90' : ''}`
               : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(16,185,129,0.15)] min-h-[600px]'
           }`}
         >
-          {/* Top Player Control Header */}
+          {/* Top Player Control Header (Auto-hides in Fullscreen on both Desktop & Mobile; reveals on movement/touch) */}
           <div 
+            onMouseEnter={() => {
+              if (fullscreenControlsTimeoutRef.current) {
+                clearTimeout(fullscreenControlsTimeoutRef.current);
+              }
+              setShowFullscreenControls(true);
+            }}
+            onMouseLeave={() => {
+              if (isFullscreen) {
+                resetFullscreenControlsTimer();
+              }
+            }}
             onMouseDown={isExamOpen && isZoomMinimized ? (e) => {
               if ((e.target as HTMLElement).closest('button, a')) return;
               e.preventDefault();
@@ -1431,11 +1989,17 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 setIsFloatingDragging(true);
               }
             } : undefined}
-            className={`bg-slate-900/95 text-slate-200 border-b border-slate-800 text-xs z-10 ${
-              isExamOpen && isZoomMinimized 
-                ? 'px-2 py-1.5 flex items-center justify-between cursor-grab active:cursor-grabbing hover:bg-slate-800/90 select-none' 
-                : 'px-4 py-2.5 flex flex-wrap items-center justify-between md:text-sm gap-2'
-            }`}
+            className={
+              isFullscreen
+                ? `absolute top-0 inset-x-0 z-40 transition-all duration-300 ease-in-out px-4 py-2.5 flex flex-wrap items-center justify-between text-xs md:text-sm gap-2 bg-gradient-to-b from-slate-950/95 via-slate-900/90 to-transparent backdrop-blur-md border-b border-slate-800/50 shadow-2xl ${
+                    showFullscreenControls
+                      ? 'opacity-100 translate-y-0 pointer-events-auto'
+                      : 'opacity-0 -translate-y-full pointer-events-none'
+                  }`
+                : isExamOpen && isZoomMinimized 
+                ? 'px-2 py-1.5 flex items-center justify-between cursor-grab active:cursor-grabbing hover:bg-slate-800/90 select-none bg-slate-900/95 text-slate-200 border-b border-slate-800 text-xs z-10' 
+                : 'px-4 py-2.5 flex flex-wrap items-center justify-between md:text-sm gap-2 bg-slate-900/95 text-slate-200 border-b border-slate-800 text-xs z-10'
+            }
             title={isExamOpen && isZoomMinimized ? "Drag to move anywhere on screen (තිරයේ ඕනෑම තැනකට ගෙන යන්න)" : undefined}
           >
             {/* Live Indicator & Class Title or Drag Handle */}
@@ -1464,45 +2028,43 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               )}
             </div>
 
-            {/* Student Username Badge, Cam/Mic Perms & Controls */}
-            <div className="flex items-center gap-1 shrink-0">
-              {/* Media permission button (hidden on floating minibar to save space) */}
+            {/* Student Username Badge, Cam/Mic Perms, & Controls */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Camera & Mic Hardware Toggle / Verification */}
               {!isExamOpen && (
                 <button
-                  onClick={requestBrowserMediaPermissions}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border transition cursor-pointer ${
-                    mediaPermissionGranted
+                  onClick={() => startCameraStream(true)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition cursor-pointer ${
+                    isCameraActive
                       ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                      : 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                      : 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-300'
                   }`}
-                  title="බ්‍රවුසරයේ කැමරා සහ මයික්‍රෆෝන් අවසරය ලබා ගන්න"
+                  title={isCameraActive ? "කැමරාව සාර්ථකව ක්‍රියාත්මකයි" : "බ්‍රවුසරයේ කැමරා සහ මයික්‍රෆෝන් අවසරය ලබා ගන්න"}
                 >
-                  {mediaPermissionGranted ? (
-                    <><Check size={14} className="text-emerald-400" /> <span className="hidden sm:inline">Cam/Mic OK</span></>
+                  {isCameraActive ? (
+                    <><Camera size={13} className="text-emerald-400" /> <span className="hidden sm:inline">Camera ON</span></>
                   ) : (
-                    <><Mic size={13} /> <span className="hidden sm:inline">Cam & Mic Access</span></>
+                    <><VideoOff size={13} className="text-amber-400" /> <span className="hidden sm:inline">Turn Cam ON</span></>
                   )}
                 </button>
               )}
 
+              {/* Mobile Phone Native Zoom App Direct Launch */}
+              {mobileZoomAppUrl && !isExamOpen && (
+                <a
+                  href={mobileZoomAppUrl}
+                  className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border border-blue-500/30 transition"
+                  title="Mobile Phone එකෙන් Zoom App එක හරහා පාස්කෝඩ් නොමැතිව Auto Open කරන්න"
+                >
+                  <Smartphone size={13} /> <span className="hidden sm:inline">Zoom App</span>
+                </a>
+              )}
+
               {!isExamOpen && (
-                <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs border border-slate-700">
+                <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs border border-slate-700">
                   <UserCheck size={14} className="text-emerald-400" />
                   <span><strong className="text-white">{studentUsername}</strong></span>
                 </div>
-              )}
-
-              {/* Direct Zoom App Link */}
-              {zoomDirectUrl && !isExamOpen && (
-                <a
-                  href={zoomDirectUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="bg-slate-800 hover:bg-slate-700 text-blue-400 hover:text-blue-300 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border border-slate-700 transition"
-                  title="Zoom App එක හරහා සම්බන්ධ වන්න"
-                >
-                  <ExternalLink size={13} /> <span className="hidden sm:inline">App</span>
-                </a>
               )}
 
               {/* Toggle Collapse on Floating Player */}
@@ -1527,25 +2089,151 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             </div>
           </div>
 
-          {/* Embedded Zoom Web Client Iframe with Full Media Permissions */}
+          {/* Invisible Top Edge Hover / Touch Area to trigger controls in Fullscreen */}
+          {isFullscreen && !showFullscreenControls && (
+            <div
+              onMouseEnter={resetFullscreenControlsTimer}
+              onTouchStart={resetFullscreenControlsTimer}
+              onClick={resetFullscreenControlsTimer}
+              className="absolute top-0 inset-x-0 h-14 z-30 pointer-events-auto cursor-pointer"
+              title="Click or Touch to show controls"
+            />
+          )}
+
+          {/* Floating Show Controls Icon in Fullscreen when hidden */}
+          {isFullscreen && !showFullscreenControls && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                resetFullscreenControlsTimer();
+              }}
+              className="absolute top-3 right-3 z-30 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 backdrop-blur-md shadow-lg transition cursor-pointer"
+              title="පාලක පුවරුව පෙන්වන්න (Show Controls)"
+            >
+              <ChevronDown size={16} />
+            </button>
+          )}
+
+          {/* Mobile Landscape Guidance Notice if held in portrait while Fullscreen */}
+          {isFullscreen && isMobilePortrait && (
+            <div className="absolute top-16 inset-x-4 max-w-sm mx-auto z-40 bg-slate-900/95 border border-amber-500/50 backdrop-blur-md rounded-2xl p-3 shadow-2xl text-center pointer-events-none animate-in fade-in">
+              <p className="text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5">
+                <RotateCcw size={14} className="animate-spin text-amber-400 shrink-0" />
+                16:9 සම්පූර්ණ තිරය සඳහා දුරකථනය හරහට (Landscape) හරවන්න
+              </p>
+            </div>
+          )}
+
+          {/* Embedded Zoom Web Client Iframe or Exam Floating Camera Preview */}
           {!isFloatingCollapsed && (
             <div className={`w-full bg-slate-900 relative ${
               isExamOpen && isZoomMinimized 
-                ? 'h-32 sm:h-36' 
+                ? 'h-36 sm:h-40' 
                 : isFullscreen 
-                ? 'flex-1' 
+                ? 'flex-1 h-full w-full' 
                 : 'h-[75vh] min-h-[500px]'
             }`}>
+              {/* If exam is ongoing and camera is active, render active proctor camera monitor */}
+              {isExamOpen && isZoomMinimized && isCameraActive && (
+                <div className="absolute top-1 left-1 z-20 w-24 h-16 rounded-lg overflow-hidden border border-emerald-500/60 shadow-lg bg-black">
+                  <video
+                    ref={floatingCameraVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                  <div className="absolute bottom-0 inset-x-0 bg-black/80 text-[8px] font-mono text-emerald-400 text-center font-bold">
+                    CAM ACTIVE
+                  </div>
+                </div>
+              )}
+
               <iframe
                 src={zoomEmbedUrl}
                 allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *; clipboard-write *; clipboard-read *"
                 allowFullScreen={true}
-                sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads"
+                sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads allow-presentation"
                 className={`absolute inset-0 w-full h-full border-0 ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}
                 title="Zoom Live Class Web Client"
               />
             </div>
           )}
+        </div>
+      )}
+
+      {/* =========================================================================
+          FEATURE: BROWSER CAMERA & MIC PERMISSION ASSISTANCE MODAL
+         ========================================================================= */}
+      {showBrowserPermModal && (
+        <div className="fixed inset-0 z-[9999999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Camera size={20} className="text-amber-400" />
+                <h3 className="font-bold text-base text-white">බ්‍රවුසරයේ කැමරා සහ මයික් අවසර ලබා දීම</h3>
+              </div>
+              <button onClick={() => setShowBrowserPermModal(false)} className="text-slate-400 hover:text-white">
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              සමහර බ්‍රවුසර ආරක්ෂක හේතූන් මත ස්වයංක්‍රීයව කැමරාව සහ මයික්‍රෆෝනය අවහිර (Block) කරයි. ඔබගේ බ්‍රවුසරය අනුව පහත පියවර අනුගමනය කරන්න:
+            </p>
+
+            <div className="space-y-3 text-xs bg-slate-950 p-4 rounded-2xl border border-slate-800">
+              <div className="space-y-1">
+                <span className="font-bold text-amber-300">📱 Mobile Phone / Chrome:</span>
+                <p className="text-slate-400 text-[11px]">
+                  URL එකේ වම්පස ඇති 🔒 (Lock) හෝ Settings අයිකනය ඔබන්න &rarr; <strong>Permissions</strong> &rarr; <strong>Camera & Microphone</strong> &rarr; <strong>Allow</strong> කරන්න.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="font-bold text-cyan-300">🍎 Apple Safari (iPhone / Mac):</span>
+                <p className="text-slate-400 text-[11px]">
+                  Address bar එකේ <strong>AA</strong> අයිකනය ඔබන්න &rarr; <strong>Website Settings</strong> &rarr; Camera සහ Microphone &rarr; <strong>Allow</strong> කරන්න.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="font-bold text-indigo-300">💻 PC / Laptop (Chrome / Edge / Firefox):</span>
+                <p className="text-slate-400 text-[11px]">
+                  URL තීරුවේ වම්පස ඇති 🔒 හෝ View Site Info ඔබා <strong>Camera / Microphone Toggle එක On කරන්න</strong>. අනතුරුව පිටුව Refresh කරන්න.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+              <button
+                onClick={async () => {
+                  setShowBrowserPermModal(false);
+                  await startCameraStream(true);
+                }}
+                className="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                නැවත උත්සාහ කරන්න (Retry)
+              </button>
+              {isExamOpen && !isExamStarted && (
+                <button
+                  onClick={() => {
+                    setShowBrowserPermModal(false);
+                    setIsExamStarted(true);
+                  }}
+                  className="flex-1 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  කැමරාව රහිතව විභාගය ආරම්භ කරන්න
+                </button>
+              )}
+              <button
+                onClick={() => setShowBrowserPermModal(false)}
+                className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl border border-slate-700 transition cursor-pointer"
+              >
+                වසන්න (Close)
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

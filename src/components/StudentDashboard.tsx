@@ -4,8 +4,15 @@ import {
   Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
   ChevronLeft, ChevronRight, Clock, Calendar, Play, ExternalLink, Menu,
   Trophy, Award, PenTool, Package, Radio, ArrowLeft, Check, Sparkles, Layers,
-  ChevronDown, AlertCircle, ShieldAlert
+  ChevronDown, AlertCircle, ShieldAlert, CreditCard, QrCode, Copy, Maximize2, MessageCircle
 } from 'lucide-react';
+import { 
+  PendingPaymentRequest, 
+  fetchAllPendingPayments, 
+  submitClassJoinPayment 
+} from '../pendingPaymentsService';
+import { BankAccount, fetchBankAccounts } from '../bankAccountsService';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import StudentRecordings from './StudentRecordings';
@@ -31,6 +38,8 @@ interface StudentDashboardProps {
   filterMonth?: string;
   setFilterMonth?: any;
   supabase: any; 
+  lang?: 'si' | 'en';
+  setLang?: (l: 'si' | 'en') => void;
 }
 
 const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -65,8 +74,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   isCurrentMonthPaid: parentPaidStatus,
   filterMonth,
   setFilterMonth,
-  supabase
+  supabase,
+  lang = 'si',
+  setLang
 }) => {
+  const activeLang = lang || ((localStorage.getItem('physics_hub_lang') as 'si' | 'en') || 'si');
   const [dbReminders, setDbReminders] = useState<any[]>([]);
   const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
@@ -112,9 +124,194 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [calendarViewYear, setCalendarViewYear] = useState<number>(cYear);
   const [calendarViewMonth, setCalendarViewMonth] = useState<number>(cMonthNum);
 
-  // Realtime Supabase Subscriptions
+  // Pending Class Payments State & Cart Modal
+  const [studentPendingRequests, setStudentPendingRequests] = useState<PendingPaymentRequest[]>([]);
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [selectedClassToJoin, setSelectedClassToJoin] = useState<{ id: string; name: string; fee: number } | null>(null);
+  const [joinPaymentMethod, setJoinPaymentMethod] = useState<'bank' | 'qr'>('bank');
+  const [joinTransactionId, setJoinTransactionId] = useState('');
+  const [joinSubmitting, setJoinSubmitting] = useState(false);
+  const [joinSuccessMessage, setJoinSuccessMessage] = useState<string | null>(null);
+  const [joinErrorMessage, setJoinErrorMessage] = useState<string | null>(null);
+  const [copiedBankInfo, setCopiedBankInfo] = useState<string | null>(null);
+
+  // Dynamic Bank Accounts & Database Class Types
+  const [bankAccountsList, setBankAccountsList] = useState<BankAccount[]>([]);
+  const [dbClassTypes, setDbClassTypes] = useState<any[]>([]);
+  const [isQrZoomModalOpen, setIsQrZoomModalOpen] = useState(false);
+
+  // Real-time live notifications for payment approval/rejection
+  interface LiveAlert {
+    id: string;
+    type: 'approved' | 'rejected';
+    title: string;
+    message: string;
+    time: string;
+  }
+  const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+
+  const handleDismissAlert = (id: string) => {
+    setLiveAlerts(prev => prev.filter(a => a.id !== id));
+    dismissNotification(id);
+  };
+
+  // Dismissed notifications (in sessionStorage so it disappears when student leaves)
+  const [dismissedNotifIds, setDismissedNotifIds] = useState<string[]>(() => {
+    try {
+      const raw = sessionStorage.getItem('physics_hub_dismissed_notifications');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const dismissNotification = (id: string) => {
+    setDismissedNotifIds(prev => {
+      const updated = [...prev, id];
+      try {
+        sessionStorage.setItem('physics_hub_dismissed_notifications', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  };
+
+  // Calendar real-time check interval so that finished class on current date is automatically removed
+  const [, setCalendarTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCalendarTick(t => t + 1);
+    }, 30000); // Check every 30 seconds
+    return () => clearInterval(timer);
+  }, []);
+
+  const loadStudentPendingPayments = async () => {
+    try {
+      const allReqs = await fetchAllPendingPayments();
+      const sUsername = liveStudentData?.username || currentStudent?.username;
+      const mine = allReqs.filter(r => r.username === sUsername);
+      setStudentPendingRequests(mine);
+
+      // Check for approved or rejected alerts that haven't been dismissed in this session
+      const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
+      const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+
+      const newAlerts: LiveAlert[] = [];
+      mine.forEach(m => {
+        if (m.status === 'approved') {
+          const aId = `app_${m.id}`;
+          if (!dismissed.includes(aId)) {
+            newAlerts.push({
+              id: aId,
+              type: 'approved',
+              title: '🎉 පන්ති ලියාපදිංචිය අනුමත විය! (Class Approved)',
+              message: `ඔබගේ [${m.class_type}] පන්තිය සඳහා සිදුකළ ගෙවීම ඇඩ්මින් විසින් අනුමත කර ඇත. පන්තිය දැන් සක්‍රියයි!`,
+              time: new Date(m.created_at).toLocaleTimeString()
+            });
+          }
+        } else if (m.status === 'rejected') {
+          const aId = `rej_${m.id}`;
+          if (!dismissed.includes(aId)) {
+            newAlerts.push({
+              id: aId,
+              type: 'rejected',
+              title: '⚠️ පන්ති ගෙවීම ප්‍රතික්ෂේප විය (Payment Rejected)',
+              message: `ඔබගේ [${m.class_type}] පන්තිය සඳහා සිදුකළ ගෙවීම ප්‍රතික්ෂේප විය. ${m.admin_notes ? `හේතුව: ${m.admin_notes}` : 'කරුණාකර නැවත උත්සාහ කරන්න.'}`,
+              time: new Date(m.created_at).toLocaleTimeString()
+            });
+          }
+        }
+      });
+
+      if (newAlerts.length > 0) {
+        setLiveAlerts(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const toAdd = newAlerts.filter(a => !existingIds.has(a.id));
+          return [...prev, ...toAdd];
+        });
+      }
+    } catch (e) {}
+  };
+
+  const loadBankAccounts = async () => {
+    try {
+      const accounts = await fetchBankAccounts();
+      setBankAccountsList(accounts.filter(a => a.is_active));
+    } catch (e) {}
+  };
+
+  const fetchDbClassConfigs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('class_types_config')
+        .select('*');
+      if (!error && data && data.length > 0) {
+        setDbClassTypes(data);
+      }
+    } catch (e) {}
+  };
+
+  // Realtime Subscriptions (Both Supabase & BroadcastChannel)
   useEffect(() => {
     fetchDashboardData();
+    loadStudentPendingPayments();
+    loadBankAccounts();
+    fetchDbClassConfigs();
+
+    const unsubRealtime = subscribeRealtimeEvents((type, payload) => {
+      fetchDashboardData();
+      loadStudentPendingPayments();
+
+      if (type === 'bank_accounts_updated') {
+        loadBankAccounts();
+      }
+      if (type === 'class_types_updated') {
+        fetchDbClassConfigs();
+      }
+
+      const sUsername = liveStudentData?.username || currentStudent?.username;
+      const sId = liveStudentData?.id || currentStudent?.id;
+      const p = payload as any;
+
+      if (type === 'payment_approved' && p) {
+        if (p.username === sUsername || p.student_id === sId) {
+          const aId = `app_${p.id || Date.now()}`;
+          const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
+          const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+          if (!dismissed.includes(aId)) {
+            setLiveAlerts(prev => [
+              {
+                id: aId,
+                type: 'approved',
+                title: '🎉 පන්ති ලියාපදිංචිය අනුමත විය! (Class Approved)',
+                message: `ඔබගේ [${p.class_type || 'පන්තිය'}] පන්තිය සඳහා සිදුකළ ගෙවීම ඇඩ්මින් විසින් අනුමත කර ඇත. පන්තිය දැන් සක්‍රියයි!`,
+                time: new Date().toLocaleTimeString()
+              },
+              ...prev.filter(a => a.id !== aId)
+            ]);
+          }
+        }
+      }
+
+      if (type === 'payment_rejected' && p) {
+        if (p.username === sUsername || p.student_id === sId) {
+          const aId = `rej_${p.id || Date.now()}`;
+          const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
+          const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+          if (!dismissed.includes(aId)) {
+            setLiveAlerts(prev => [
+              {
+                id: aId,
+                type: 'rejected',
+                title: '⚠️ පන්ති ගෙවීම ප්‍රතික්ෂේප විය (Payment Rejected)',
+                message: `ඔබගේ [${p.class_type || 'පන්තිය'}] පන්තිය සඳහා සිදුකළ ගෙවීම ප්‍රතික්ෂේප විය. ${p.reason ? `හේතුව: ${p.reason}` : 'කරුණාකර නැවත උත්සාහ කරන්න.'}`,
+                time: new Date().toLocaleTimeString()
+              },
+              ...prev.filter(a => a.id !== aId)
+            ]);
+          }
+        }
+      }
+    });
 
     if (supabase) {
       const channel = supabase.channel('student_dashboard_realtime')
@@ -136,6 +333,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => {
           fetchDashboardData();
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_payments' }, () => {
+          loadStudentPendingPayments();
+        })
         .subscribe();
 
       const broadcastChannel = supabase.channel(`student_dashboard_${currentStudent.id}`)
@@ -148,10 +348,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .subscribe();
 
       return () => {
+        unsubRealtime();
         supabase.removeChannel(channel);
         supabase.removeChannel(broadcastChannel);
       };
     }
+
+    return () => {
+      unsubRealtime();
+    };
   }, [currentStudent.id, supabase]);
 
   const fetchDashboardData = async () => {
@@ -267,9 +472,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
-              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) {
-                return;
-              }
+              const isDeactivatedForClass = deactivatedList.some((d: any) => {
+                if (typeof d === 'string') return d.toLowerCase() === m.key.toLowerCase() || d.toLowerCase() === m.name.toLowerCase();
+                if (typeof d === 'object' && d !== null) {
+                  const matchesMonth = (d.month || '').toLowerCase() === m.key.toLowerCase() || (d.month || '').toLowerCase() === m.name.toLowerCase();
+                  const matchesClass = !d.class || d.class.toString().trim().toLowerCase() === cls.toString().trim().toLowerCase();
+                  return matchesMonth && matchesClass;
+                }
+                return false;
+              });
+
               const paymentRecord = paymentData.find((p: any) => {
                 const pClass = (p.class_name || p.class_type || '').toString().trim().toLowerCase();
                 const sClass = cls.toString().trim().toLowerCase();
@@ -284,6 +496,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 if (paymentRecord.status?.toLowerCase() === 'paid') statusValue = 'Paid';
                 else if (paymentRecord.status?.toLowerCase() === 'free') statusValue = 'Free';
                 else if (paymentRecord.status?.toLowerCase() === 'absent' || paymentRecord.status?.toLowerCase() === 'disabled') statusValue = 'Absent';
+              } else if (isDeactivatedForClass) {
+                statusValue = 'Absent';
               } else {
                 const isMonthFree = isFreeStudent || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
                 if (isMonthFree) statusValue = 'Free';
@@ -338,9 +552,22 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           enrolledClasses.forEach((cls) => {
             pHistory[cls] = [];
             yearMonths.forEach((m) => {
-              if (deactivatedList.includes(m.key) || deactivatedList.includes(m.name)) return;
-              const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
-              pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: isMonthFree ? 'Free' : 'Unpaid' });
+              const isDeactivatedForClass = deactivatedList.some((d: any) => {
+                if (typeof d === 'string') return d.toLowerCase() === m.key.toLowerCase() || d.toLowerCase() === m.name.toLowerCase();
+                if (typeof d === 'object' && d !== null) {
+                  const matchesMonth = (d.month || '').toLowerCase() === m.key.toLowerCase() || (d.month || '').toLowerCase() === m.name.toLowerCase();
+                  const matchesClass = !d.class || d.class.toString().trim().toLowerCase() === cls.toString().trim().toLowerCase();
+                  return matchesMonth && matchesClass;
+                }
+                return false;
+              });
+
+              if (isDeactivatedForClass) {
+                pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: 'Absent' });
+              } else {
+                const isMonthFree = studentToUse.is_paid === false || studentToUse.free_months?.includes(m.key) || studentToUse.free_months?.includes(m.name);
+                pHistory[cls].push({ monthKey: m.key, monthName: m.name, status: isMonthFree ? 'Free' : 'Unpaid' });
+              }
             });
           });
         }
@@ -602,7 +829,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setCalendarViewMonth(cMonthNum);
   };
 
-  // Nav Menu Definitions matching Screenshot requirements
+  // Nav Menu Definitions
   const navMenuItems = [
     { id: null, label: 'Hub Overview', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
     { id: 'exams', label: 'Exams', sinhala: 'ඔන්ලයින් විභාග', icon: PenTool, badge: examsCount > 0 ? `${examsCount}` : null, color: 'blue' },
@@ -610,8 +837,74 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     { id: 'tutes', label: 'Documents', sinhala: 'ටියුට් & Papers', icon: FileText, badge: tutesCount > 0 ? `${tutesCount}` : null, color: 'slate' },
     { id: 'live', label: 'Live Classes', sinhala: 'සජීවී පන්තිය', icon: Radio, badge: 'LIVE', isLive: true, color: 'rose' },
     { id: 'calendar', label: 'Class Timetable', sinhala: 'කාලසටහන', icon: CalendarDays, badge: null, color: 'purple' },
-    { id: 'history', label: 'Course Packages', sinhala: 'ගෙවීම් සහ පැකේජ', icon: Package, badge: isPaidCurrentMonth ? 'Paid' : 'Unpaid', color: 'emerald' },
+    { id: 'history', label: 'Other Classes', sinhala: 'වෙනත් පන්ති (Other Classes)', icon: Package, badge: null, color: 'emerald' },
   ];
+
+  // Dynamically resolve custom menu tab names configured by admin and respect active language
+  const getMenuItemLabel = (item: { id: string | null; label: string; sinhala: string }) => {
+    const key = item.id === null ? 'overview' : item.id;
+    const custom = siteConfig?.menuNames?.[key] || siteConfig?.[`menu_${key}`];
+    if (custom && String(custom).trim()) {
+      return String(custom).trim();
+    }
+    return activeLang === 'si' ? item.sinhala : item.label;
+  };
+
+  // Helper to check if a class session has ended (removes past dates & finished class on current date)
+  const isClassSessionFinished = (ev: any): boolean => {
+    if (!ev || !ev.date) return false;
+    const statusLower = (ev.status || '').toLowerCase().trim();
+    if (statusLower === 'ended' || statusLower === 'finished' || statusLower === 'completed' || statusLower === 'past') {
+      return true;
+    }
+
+    const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+    const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
+
+    // If date is before today, it is strictly in the past
+    if (ev.date < todayDateStr) return true;
+
+    // If date is today, check if class session time has finished
+    if (ev.date === todayDateStr) {
+      const currentMinutes = slNow.getHours() * 60 + slNow.getMinutes();
+
+      // 1. Explicit end_time exists e.g. "20:30"
+      if (ev.end_time) {
+        const [endH, endM] = String(ev.end_time).split(':').map(Number);
+        if (!isNaN(endH)) {
+          const finishMinutes = endH * 60 + (endM || 0);
+          if (currentMinutes >= finishMinutes) return true;
+        }
+      }
+
+      // 2. start_time contains range e.g. "18:00 - 20:30"
+      const timeStr = String(ev.start_time || '');
+      if (timeStr.includes('-')) {
+        const endPart = timeStr.split('-')[1].trim();
+        const endParts = endPart.split(':');
+        const endH = parseInt(endParts[0], 10);
+        const endM = parseInt(endParts[1] || '0', 10);
+        if (!isNaN(endH)) {
+          let finishMinutes = endH * 60 + endM;
+          if (endPart.toLowerCase().includes('pm') && endH < 12) finishMinutes += 12 * 60;
+          if (currentMinutes >= finishMinutes) return true;
+        }
+      } else if (timeStr) {
+        // 3. start_time single value e.g. "18:00" -> standard physics class runs for 2.5 hours (150 min)
+        const startParts = timeStr.split(':');
+        const startH = parseInt(startParts[0], 10);
+        const startM = parseInt(startParts[1] || '0', 10);
+        if (!isNaN(startH)) {
+          let classStartMinutes = startH * 60 + startM;
+          if (timeStr.toLowerCase().includes('pm') && startH < 12) classStartMinutes += 12 * 60;
+          const finishMinutes = classStartMinutes + 150;
+          if (currentMinutes >= finishMinutes) return true;
+        }
+      }
+    }
+
+    return false;
+  };
 
   // Render Calendar View
   const renderCalendar = () => {
@@ -621,6 +914,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const days = [];
     for (let i = 0; i < firstDayIndex; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
+
+    // Filter out finished classes so calendar automatically removes finished classes on current date
+    const activeCalendarEvents = calendarEvents.filter(ev => !isClassSessionFinished(ev));
 
     return (
       <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-4 md:p-6 shadow-2xl max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-white">
@@ -705,7 +1001,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 const paddedDay = String(day).padStart(2, '0');
                 const paddedMonth = String(calendarViewMonth).padStart(2, '0');
                 const dateStr = `${calendarViewYear}-${paddedMonth}-${paddedDay}`;
-                const dayEvents = calendarEvents.filter(e => e.date === dateStr);
+                const dayEvents = activeCalendarEvents.filter(e => e.date === dateStr);
                 const isToday = day === new Date().getDate() && calendarViewMonth === (new Date().getMonth() + 1) && calendarViewYear === new Date().getFullYear();
 
                 return (
@@ -770,7 +1066,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {(() => {
                   const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
                   const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
-                  return calendarEvents.filter(ev => ev.date >= todayDateStr).length;
+                  return activeCalendarEvents.filter(ev => ev.date >= todayDateStr).length;
                 })()} Sessions
               </span>
             </div>
@@ -779,7 +1075,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {(() => {
                 const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
                 const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
-                const filteredUpcoming = calendarEvents
+                const filteredUpcoming = activeCalendarEvents
                   .filter(ev => ev.date >= todayDateStr)
                   .sort((a, b) => a.date.localeCompare(b.date) || (a.start_time || '').localeCompare(b.start_time || ''));
 
@@ -848,7 +1144,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
               <button 
                 onClick={() => setSelectedCalendarEvent(null)}
-                className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition"
+                className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -878,20 +1174,47 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
 
               <div className="pt-2 flex flex-col gap-2">
-                <button 
-                  onClick={() => {
-                    setSelectedCalendarEvent(null);
-                    handleTabChange('live');
-                  }}
-                  className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/40"
-                >
-                  <Play size={15} /> සජීවී පන්තියට සම්බන්ධ වන්න (Join Live Player)
-                </button>
+                {(() => {
+                  const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
+                  const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
+                  const isFutureDate = selectedCalendarEvent.date > todayDateStr;
+                  const isTodayDate = selectedCalendarEvent.date === todayDateStr;
+                  const isCurrentlyLive = selectedCalendarEvent.status === 'live' || selectedCalendarEvent.status === 'active';
+
+                  if (isFutureDate || (!isCurrentlyLive && !isTodayDate)) {
+                    return (
+                      <div className="p-3.5 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-1.5">
+                        <div className="flex items-center justify-center gap-1.5 text-purple-300 font-bold text-xs">
+                          <Clock size={15} />
+                          <span>{activeLang === 'si' ? 'ඉදිරියේදී පැවැත්වීමට නියමිත පන්තියකි' : 'Upcoming Scheduled Class'}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-300 leading-relaxed">
+                          {activeLang === 'si' 
+                            ? `මෙම පන්තිය නියමිත දිනයේදී (${selectedCalendarEvent.date} ${selectedCalendarEvent.start_time || ''}) සජීවීව ආරම්භ වනු ඇත.`
+                            : `This class is scheduled for ${selectedCalendarEvent.date} at ${selectedCalendarEvent.start_time || ''}.`}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <button 
+                      onClick={() => {
+                        setSelectedCalendarEvent(null);
+                        handleTabChange('live');
+                      }}
+                      className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/40"
+                    >
+                      <Play size={15} /> {activeLang === 'si' ? 'සජීවී පන්තියට සම්බන්ධ වන්න (Join Live Player)' : 'Join Live Class Player'}
+                    </button>
+                  );
+                })()}
+
                 <button 
                   onClick={() => setSelectedCalendarEvent(null)}
                   className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-2xl text-xs transition cursor-pointer"
                 >
-                  වසන්න (Close)
+                  {activeLang === 'si' ? 'වසන්න (Close)' : 'Close'}
                 </button>
               </div>
             </div>
@@ -901,47 +1224,229 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     );
   };
 
-  // Render Payment History View
-  const renderPaymentHistory = () => (
-    <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 shadow-2xl max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-white">
-      <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-white border-b border-slate-800 pb-3">
-        <History className="text-cyan-400" /> Payment History &amp; Course Packages (ගෙවීම් ඉතිහාසය)
-      </h3>
-      {Object.keys(paymentHistory).length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Object.entries(paymentHistory).map(([className, months]) => (
-            <div key={className} className="p-4 bg-slate-800/40 rounded-2xl border border-slate-700/70 hover:border-slate-600 transition-all">
-              <p className="font-bold text-slate-200 mb-3 flex items-center gap-2">
-                <Book size={16} className="text-cyan-400" /> {className}
-              </p>
-              <div className="flex flex-col gap-2">
-                {months.map((m, idx) => (
-                  <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
-                    m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                    m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                    m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                    'bg-red-500/10 text-red-400 border-red-500/20'
-                  }`}>
-                    <span>{m.monthName} ({m.monthKey})</span>
-                    <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/30 font-medium">
-                      {m.status === 'Paid' && '🟢 Paid'}
-                      {m.status === 'Free' && '🔵 Free'}
-                      {m.status === 'Absent' && '🟡 Absent (පන්තියට පැමිණ නැත)'}
-                      {m.status === 'Unpaid' && '🔴 මෙම මාසය සදහා මුදල් ගෙවා නෑ'}
-                    </span>
-                  </div>
-                ))}
-              </div>
+  // Join Class Enrollment Handlers
+  const handleOpenJoinModal = (cls: { id: string; name: string; fee: number }) => {
+    setSelectedClassToJoin(cls);
+    setJoinPaymentMethod('bank');
+    setJoinTransactionId('');
+    setJoinSuccessMessage(null);
+    setJoinErrorMessage(null);
+    setIsJoinModalOpen(true);
+  };
+
+  const handleJoinFormSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedClassToJoin) return;
+    if (!joinTransactionId.trim()) {
+      setJoinErrorMessage('කරුණාකර රිසීට් පතේ Transaction ID එක ඇතුළත් කරන්න.');
+      return;
+    }
+
+    setJoinSubmitting(true);
+    setJoinErrorMessage(null);
+    setJoinSuccessMessage(null);
+
+    try {
+      const newReq = await submitClassJoinPayment({
+        student: liveStudentData,
+        classType: selectedClassToJoin.name,
+        amount: selectedClassToJoin.fee,
+        paymentMethod: joinPaymentMethod,
+        transactionId: joinTransactionId.trim()
+      });
+
+      setStudentPendingRequests(prev => [newReq, ...prev.filter(p => p.id !== newReq.id)]);
+      setJoinSuccessMessage(`ඔබගේ [${selectedClassToJoin.name}] පන්ති ගෙවීම් තොරතුරු සාර්ථකව යොමු කරන ලදී! ඇඩ්මින් විසින් අනුමත කළ විගස පන්තිය සක්‍රිය වේ.`);
+      
+      setTimeout(() => {
+        setIsJoinModalOpen(false);
+        setJoinSuccessMessage(null);
+      }, 2500);
+    } catch (err: any) {
+      setJoinErrorMessage('සබ්මිට් කිරීමේදී දෝෂයක් මතු විය: ' + (err.message || ''));
+    } finally {
+      setJoinSubmitting(false);
+    }
+  };
+
+  // Render Other Classes & Course Packages View (With Join Class Cart)
+  const renderOtherClasses = () => {
+    const defaultClasses = [
+      { id: '1', name: '2026 Theory', fee: 3500 },
+      { id: '2', name: '2026 Revision', fee: 3500 },
+      { id: '3', name: '2027 Theory', fee: 3500 },
+      { id: '4', name: '2027 Revision', fee: 3500 },
+      { id: '5', name: '2027 Paper Class', fee: 3500 },
+      { id: '6', name: '2028 Theory', fee: 3500 },
+      { id: '7', name: '2028 Revision', fee: 3500 },
+      { id: '8', name: '2028 Paper Class', fee: 3500 },
+    ];
+
+    // Read directly from Supabase class_types_config table with fallback
+    const systemClasses = dbClassTypes.length > 0
+      ? dbClassTypes
+          .filter(c => c.is_active !== false)
+          .map(c => ({
+            id: c.id,
+            name: (c.class_types || c.class_type || '').trim(),
+            fee: Number(c.monthly_fee ?? 3500),
+            whatsapp_link: c.whatsapp_link
+          }))
+          .filter(c => c.name)
+      : defaultClasses;
+
+    const unenrolledClasses = systemClasses.filter(sc => {
+      return !enrolledClasses.some(ec => ec.toLowerCase().trim() === sc.name.toLowerCase().trim());
+    });
+
+    const sinhalaMonths = [
+      'ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි',
+      'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'
+    ];
+    const now = new Date();
+    const currentMonthSinhala = sinhalaMonths[now.getMonth()];
+    const currentYear = now.getFullYear();
+    const currentMonthDisplay = `${currentYear} ${currentMonthSinhala}`;
+
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
+        
+        {/* Top Header */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-emerald-400">
+              <Package size={26} />
             </div>
-          ))}
+            <div>
+              <h3 className="text-xl font-black text-white flex items-center gap-2">
+                වෙනත් පන්ති (Other Classes)
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                ඔබ තවමත් ලියාපදිංචි වී නොමැති අනෙකුත් පන්ති සඳහා මෙතැනින් පහසුවෙන් සම්බන්ධ වන්න.
+              </p>
+            </div>
+          </div>
         </div>
-      ) : (
-        <div className="text-center py-12">
-          <p className="text-slate-500 text-sm font-medium">මෙතෙක් කිසිදු ගෙවීම් වාර්තාවක් පද්ධතිය තුළ හමු නොවීය.</p>
+
+        {/* SECTION 1: UNENROLLED CLASSES (JOIN BUTTON & PENDING BADGES) */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
+          <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+            <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+              <Sparkles size={16} className="text-amber-400" /> ලියාපදිංචි විය හැකි නව පන්ති (Available Classes to Join)
+            </h4>
+            <span className="text-[11px] font-mono text-slate-400">
+              {unenrolledClasses.length} Classes Available
+            </span>
+          </div>
+
+          {unenrolledClasses.length === 0 ? (
+            <div className="py-10 text-center text-slate-500 text-xs">
+              🎉 ඔබ පද්ධතියේ පවතින සියලුම පන්ති වර්ග සඳහා දැනටමත් ලියාපදිංචි වී ඇත!
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {unenrolledClasses.map((cls) => {
+                const pendingReq = studentPendingRequests.find(
+                  p => p.class_type.toLowerCase().trim() === cls.name.toLowerCase().trim() && p.status === 'pending'
+                );
+
+                return (
+                  <div
+                    key={cls.id}
+                    className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-2xl flex flex-col justify-between gap-4 transition shadow-md"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                          {cls.name}
+                        </span>
+                        <span className="text-sm font-black font-mono text-emerald-400">
+                          රු. {cls.fee.toLocaleString()}/= <span className="text-[10px] font-sans text-slate-400 font-normal">/ මසකට</span>
+                        </span>
+                      </div>
+
+                      <h4 className="text-base font-extrabold text-white">
+                        {cls.name} Class Session
+                      </h4>
+                      <p className="text-xs text-slate-300 dark:text-slate-300 font-medium leading-relaxed">
+                        <span className="text-emerald-400 font-bold">{currentMonthDisplay}</span> මාසය සඳහා සජීවී Zoom පන්ති, පන්ති රෙකෝඩින් සහ නිල Google Drive ටියුට්ස් සියල්ලම ඇතුළත් වේ.
+                      </p>
+                    </div>
+
+                    {/* Pending State or Join Button */}
+                    {pendingReq ? (
+                      <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
+                        <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                          <Clock size={14} className="animate-spin" /> ⏳ අනුමැතිය පොරොත්තුවෙන් (Pending Approval)
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono">
+                          Transaction ID: <span className="text-amber-300 font-bold">{pendingReq.transaction_id}</span>
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          ඇඩ්මින් විසින් ගෙවීම් තහවුරු කළ විගස පන්තිය සක්‍රිය වේ.
+                        </p>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleOpenJoinModal(cls)}
+                        className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Sparkles size={14} /> සම්බන්ධ වන්න (Join Class) →
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
-    </div>
-  );
+
+        {/* SECTION 2: ENROLLED CLASSES & PAYMENT STATUS */}
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="border-b border-slate-800 pb-3">
+            <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-400" /> ඔබ දැනට ලියාපදිංචි වී ඇති පන්ති (Enrolled Classes)
+            </h4>
+          </div>
+
+          {Object.keys(paymentHistory).length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {Object.entries(paymentHistory).map(([className, months]) => (
+                <div key={className} className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80">
+                  <p className="font-bold text-slate-200 mb-3 flex items-center gap-2 text-sm">
+                    <Book size={15} className="text-cyan-400" /> {className}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    {months.map((m, idx) => (
+                      <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                        m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                        m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                        m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                        'bg-red-500/10 text-red-400 border-red-500/20'
+                      }`}>
+                        <span>{m.monthName} ({m.monthKey})</span>
+                        <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/40 font-medium">
+                          {m.status === 'Paid' && '🟢 Paid'}
+                          {m.status === 'Free' && '🔵 Free Card'}
+                          {m.status === 'Absent' && '🟡 Absent (ඇබ්සන්)'}
+                          {m.status === 'Unpaid' && '🔴 Unpaid (ගෙවා නැත)'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-6 text-slate-500 text-xs">
+              මෙතෙක් කිසිදු පන්තියක් සඳහා ලියාපදිංචි වී නොමැත.
+            </div>
+          )}
+        </div>
+
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#f0f4f9] dark:bg-slate-950 text-slate-900 dark:text-white font-sans transition-colors pb-12">
@@ -1119,6 +1624,231 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
+      {/* 2.5 Join Class Cart & Payment Modal */}
+      {isJoinModalOpen && selectedClassToJoin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-5 my-8 animate-in fade-in zoom-in duration-200">
+            {/* Close Button */}
+            <button
+              onClick={() => setIsJoinModalOpen(false)}
+              className="absolute top-5 right-5 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+
+            {/* Header info */}
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[11px] font-bold mb-2">
+                <Sparkles size={13} className="text-amber-400" /> පන්ති ලියාපදිංචි කාට් එක (Checkout Cart)
+              </div>
+              <h3 className="text-lg font-black text-white">
+                {selectedClassToJoin.name} - නව පන්තියට සම්බන්ධ වන්න
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                ගෙවීම් සිදුකර රිසීට් පතේ Transaction ID එක සදහන් කර සබ්මිට් කරන්න.
+              </p>
+            </div>
+
+            {/* Bill summary box */}
+            <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">පන්තිය (Class):</span>
+                <span className="font-bold text-white text-sm">{selectedClassToJoin.name}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">අදාළ මාසය:</span>
+                <span className="font-bold text-emerald-400 font-mono">
+                  {new Date().getFullYear()} {['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'][new Date().getMonth()]}
+                </span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
+                <span className="text-slate-300 font-bold">ගෙවිය යුතු මාසික ගාස්තුව:</span>
+                <span className="font-mono font-black text-base text-emerald-400">
+                  රු. {selectedClassToJoin.fee.toLocaleString()}/=
+                </span>
+              </div>
+            </div>
+
+            {/* Payment Method Switcher */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setJoinPaymentMethod('bank')}
+                className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  joinPaymentMethod === 'bank'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-400 ring-1 ring-blue-500/40'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <CreditCard size={15} /> බැංකු තැන්පතු (Bank)
+              </button>
+              <button
+                type="button"
+                onClick={() => setJoinPaymentMethod('qr')}
+                className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  joinPaymentMethod === 'qr'
+                    ? 'bg-blue-600/20 border-blue-500 text-blue-400 ring-1 ring-blue-500/40'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <QrCode size={15} /> LankaQR Pay
+              </button>
+            </div>
+
+            {/* Method Details: Bank Deposit */}
+            {joinPaymentMethod === 'bank' && (
+              <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                {(bankAccountsList.length > 0 ? bankAccountsList : [
+                  {
+                    id: 'def_peoples',
+                    bank_name: "People's Bank (මහජන බැංකුව)",
+                    account_name: 'S K S Tharaka Amarasinghe',
+                    account_number: '015200130036285',
+                    branch: 'Ampara (අම්පාර)',
+                    bank_logo: '/Peoples-bank-logo.jpg',
+                    instructions: 'Online Banking හෝ CDM මඟින් තැන්පත් කළ හැක.'
+                  }
+                ]).map((acc: any) => (
+                  <div key={acc.id} className="p-3 bg-slate-950 rounded-2xl border border-slate-800/80 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white text-xs flex items-center gap-2">
+                        {acc.bank_name}
+                      </span>
+                      {acc.bank_logo && (
+                        <img src={acc.bank_logo} alt={acc.bank_name} className="h-4.5 w-auto object-contain rounded" />
+                      )}
+                    </div>
+
+                    <div className="bg-slate-900 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-slate-500 block">Account Number</span>
+                        <span className="text-sm font-bold font-mono text-emerald-400 select-all tracking-wider">
+                          {acc.account_number}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(acc.account_number);
+                          setCopiedBankInfo(acc.id);
+                          setTimeout(() => setCopiedBankInfo(null), 2000);
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold rounded-lg border border-slate-700 flex items-center gap-1 transition cursor-pointer"
+                      >
+                        {copiedBankInfo === acc.id ? (
+                          <>
+                            <Check size={12} className="text-emerald-400" /> Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={12} /> Copy අංකය
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1 text-[11px] text-slate-400">
+                      <div>නම: <span className="text-slate-200 font-medium">{acc.account_name}</span></div>
+                      <div>ශාඛාව: <span className="text-slate-200">{acc.branch}</span></div>
+                    </div>
+
+                    {acc.instructions && (
+                      <p className="text-[10px] text-slate-500 bg-slate-900/50 p-1.5 rounded border border-slate-800/40">
+                        ℹ️ {acc.instructions}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Method Details: LankaQR */}
+            {joinPaymentMethod === 'qr' && (
+              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center space-y-2">
+                <div className="relative inline-block bg-white p-2.5 rounded-2xl border border-slate-800 mx-auto group">
+                  <img
+                    src="/qr-payment.PNG"
+                    alt="LankaQR"
+                    className="w-40 h-40 object-contain cursor-zoom-in"
+                    onClick={() => setIsQrZoomModalOpen(true)}
+                  />
+                  <div
+                    onClick={() => setIsQrZoomModalOpen(true)}
+                    className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] transition rounded-2xl cursor-pointer"
+                  >
+                    <Maximize2 size={16} />
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  iPay, People's Wave, BOC, Commercial Q+ ආදී ඕනෑම LankaQR සහය දක්වන බැංකු ඇප් එකකින් ස්කෑන් කර ගෙවන්න.
+                </p>
+              </div>
+            )}
+
+            {/* Transaction ID input & Submit Form */}
+            <form onSubmit={handleJoinFormSubmit} className="space-y-3 pt-1">
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  මුදල් ගෙවූ රිසීට් පත්‍රයේ Transaction ID / Invoice අංකය *
+                </label>
+                <input
+                  type="text"
+                  value={joinTransactionId}
+                  onChange={(e) => setJoinTransactionId(e.target.value)}
+                  placeholder="උදා: TXN-89472619 / REF-12345"
+                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs px-3.5 py-2.5 rounded-xl font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-600"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  රිසීට් පතේ ඇති Reference / Transaction අංකය නිවැරදිව මෙහි සදහන් කරන්න.
+                </span>
+              </div>
+
+              {joinErrorMessage && (
+                <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl text-rose-400 text-xs font-bold flex items-center gap-2">
+                  <AlertCircle size={15} /> {joinErrorMessage}
+                </div>
+              )}
+
+              {joinSuccessMessage && (
+                <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle2 size={15} /> {joinSuccessMessage}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsJoinModalOpen(false)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  අවලංගු කරන්න (Cancel)
+                </button>
+                <button
+                  type="submit"
+                  disabled={joinSubmitting || !joinTransactionId.trim()}
+                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-950/40 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles size={14} className={joinSubmitting ? 'animate-spin' : ''} />
+                  {joinSubmitting ? 'යොමු වෙමින් පවතී...' : 'ගෙවීම් තහවුරු කරන්න'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* QR Zoom Modal */}
+      {isQrZoomModalOpen && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4" onClick={() => setIsQrZoomModalOpen(false)}>
+          <button className="absolute top-4 right-4 text-slate-400 hover:text-white p-2" onClick={() => setIsQrZoomModalOpen(false)}>
+            <X size={24} />
+          </button>
+          <div className="bg-white p-4 rounded-3xl max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <img src="/qr-payment.PNG" alt="QR Large" className="w-full h-auto object-contain rounded-xl" />
+          </div>
+        </div>
+      )}
+
       {/* 3. Mobile Slide-out Drawer */}
       {isSidebarOpenMobile && (
         <div className="fixed inset-0 z-50 flex md:hidden">
@@ -1128,6 +1858,25 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           />
           <div className="relative w-72 max-w-[80vw] bg-white dark:bg-slate-900 h-full p-5 shadow-2xl flex flex-col justify-between z-10 animate-in slide-in-from-left duration-200">
             <div>
+              {/* Branding: Logo & Name */}
+              <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-200 dark:border-slate-800">
+                {siteConfig?.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
+                  <img src={siteConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20" />
+                ) : (
+                  <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-black text-base flex items-center justify-center shadow-sm">
+                    Ω
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
+                    Smart Physics
+                  </h2>
+                  <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 truncate">
+                    තාරක අමරසිංහ
+                  </p>
+                </div>
+              </div>
+
               {/* Profile Card Header */}
               <div 
                 onClick={() => { setIsSidebarOpenMobile(false); setIsProfileOpen(true); }}
@@ -1175,7 +1924,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <Icon size={16} />
-                        <span>{item.label}</span>
+                        <span>{getMenuItemLabel(item)}</span>
                       </div>
                       {item.badge && (
                         <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
@@ -1216,6 +1965,25 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* ======================================================== */}
           <aside className="hidden md:flex flex-col justify-between w-64 lg:w-72 shrink-0 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 shadow-sm sticky top-6 min-h-[calc(100vh-3rem)]">
             <div>
+              {/* BRANDING: Website Logo & Name */}
+              <div className="flex items-center gap-3 px-1 mb-5 pb-4 border-b border-slate-200/80 dark:border-slate-800">
+                {siteConfig?.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
+                  <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20" />
+                ) : (
+                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black text-lg flex items-center justify-center shadow-sm">
+                    Ω
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
+                    Smart Physics
+                  </h2>
+                  <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 truncate">
+                    තාරක අමරසිංහ
+                  </p>
+                </div>
+              </div>
+
               {/* TOP LEFT: Profile Photo & Student Name & ID (Clickable) */}
               <div 
                 onClick={() => setIsProfileOpen(true)}
@@ -1271,9 +2039,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <Icon size={16} />
                         </div>
                         <div className="truncate">
-                          <span className="block truncate">{item.label}</span>
+                          <span className="block truncate">{getMenuItemLabel(item)}</span>
                           <span className={`block text-[10px] font-normal truncate ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                            {item.sinhala}
+                            {activeLang === 'si' ? item.label : item.sinhala}
                           </span>
                         </div>
                       </div>
@@ -1310,82 +2078,77 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* ======================================================== */}
           <main ref={mainContentRef} className="flex-1 min-w-0 w-full space-y-6">
 
-            {/* Top Bar matching Screenshot 1 Top Bar */}
-            <header className="bg-white dark:bg-slate-900 rounded-3xl p-3 sm:p-4 border border-slate-200/80 dark:border-slate-800 shadow-sm flex items-center justify-between gap-3">
-              {/* Left Profile Quick Avatar & Title */}
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setIsSidebarOpenMobile(true)}
-                  className="md:hidden p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 transition cursor-pointer"
-                  title="Menu"
-                >
-                  <Menu size={18} />
-                </button>
-                
-                <div 
-                  onClick={() => setIsProfileOpen(true)}
-                  className="flex items-center gap-3 cursor-pointer group select-none"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-xs shadow-sm ring-2 ring-blue-500/20 group-hover:scale-105 transition-transform">
-                    {studentInitials}
-                  </div>
-                  <div>
-                    <h2 className="text-xs sm:text-sm font-extrabold text-slate-800 dark:text-white leading-tight group-hover:text-blue-600 transition">
-                      {siteConfig?.headerTitle || 'Physics Online Hub'}
-                    </h2>
-                    <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-bold">
-                      ID: {liveStudentData?.username || 'ST-2222'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Action Buttons */}
+            {/* Mobile Sidebar Trigger (Clean, space-efficient) */}
+            <div className="md:hidden flex items-center justify-between bg-white dark:bg-slate-900 px-4 py-2.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
+              <button
+                onClick={() => setIsSidebarOpenMobile(true)}
+                className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-blue-600 transition cursor-pointer"
+              >
+                <Menu size={16} />
+                <span>මෙනුව (Menu)</span>
+              </button>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={fetchDashboardData}
-                  className={`p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer ${isRefreshing ? 'animate-spin text-blue-600' : ''}`}
-                  title="Refresh Data"
-                >
-                  <RefreshCw size={15} />
-                </button>
-
-                <button
                   onClick={() => setIsNotificationsDrawerOpen(true)}
-                  className={`relative p-2 sm:p-2.5 rounded-xl transition cursor-pointer ${
-                    totalRemindersCount > 0 
-                      ? 'bg-rose-50 text-rose-600 border border-rose-200 animate-pulse' 
-                      : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                  title="දැනුම්දීම් &amp; Alerts"
+                  className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 relative"
+                  title="Notifications"
                 >
-                  <Bell size={15} />
+                  <Bell size={14} />
                   {totalRemindersCount > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-rose-600 text-white font-black text-[9px] rounded-full h-4 min-w-[16px] px-1 flex items-center justify-center border-2 border-white dark:border-slate-900 shadow">
+                    <span className="absolute -top-1 -right-1 bg-rose-600 text-white font-black text-[8px] rounded-full h-3.5 min-w-[14px] px-1 flex items-center justify-center">
                       {totalRemindersCount}
                     </span>
                   )}
                 </button>
-
-                {/* PDF/Report button matching Screenshot top right */}
                 <button
-                  onClick={() => handleTabChange('tutes')}
-                  className="p-2 sm:p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-900/40 hover:bg-emerald-100 transition cursor-pointer"
-                  title="Documents &amp; PDF Tutes"
+                  onClick={() => setIsProfileOpen(true)}
+                  className="text-[11px] font-bold text-blue-600 dark:text-blue-400"
                 >
-                  <FileText size={15} />
-                </button>
-
-                {/* Logout button shortcut */}
-                <button
-                  onClick={handleStudentLogout}
-                  className="p-2 sm:p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-900/40 hover:bg-rose-600 hover:text-white transition cursor-pointer"
-                  title="Logout"
-                >
-                  <LogOut size={15} />
+                  Profile
                 </button>
               </div>
-            </header>
+            </div>
+
+            {/* Real-time Approval/Rejection Notifications Stream (Dismissible & Disappears on Leave) */}
+            {liveAlerts.length > 0 && (
+              <div className="space-y-3">
+                {liveAlerts.map(alert => (
+                  <div
+                    key={alert.id}
+                    className={`p-4 md:p-5 rounded-3xl border flex items-start justify-between gap-3 shadow-xl animate-in fade-in slide-in-from-top-3 duration-300 ${
+                      alert.type === 'approved'
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100 dark:bg-emerald-950/40'
+                        : 'bg-rose-500/15 border-rose-500/40 text-rose-100 dark:bg-rose-950/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2.5 rounded-2xl mt-0.5 shrink-0 ${
+                        alert.type === 'approved' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+                      }`}>
+                        {alert.type === 'approved' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-black text-sm text-slate-900 dark:text-white">{alert.title}</h4>
+                          <span className="text-[10px] opacity-70 font-mono text-slate-600 dark:text-slate-400">{alert.time}</span>
+                        </div>
+                        <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-semibold">
+                          {alert.message}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleDismissAlert(alert.id)}
+                      className="p-1.5 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition cursor-pointer shrink-0"
+                      title="මෙම නිවේදනය ඉවත් කරන්න (Dismiss)"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* ======================================================== */}
             {/* VIEW A: HUB OVERVIEW (When dashboardTab === null)         */}
@@ -1400,7 +2163,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   <div className="relative z-10 space-y-2.5 max-w-2xl">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-[11px] font-bold tracking-wider uppercase text-blue-100">
-                      <span>환영합니다 • WELCOME BACK, {studentDisplayName}!</span>
+                      <span>WELCOME BACK, {studentDisplayName}!</span>
                     </div>
                     <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight leading-tight">
                       Your learning hub, all in one place
@@ -1667,16 +2430,29 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* 5. FOOTER CARD (Screenshot 2) */}
-                <div className="mt-8 p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm text-center text-xs text-slate-500 dark:text-slate-400 space-y-1.5">
-                  <div className="flex items-center justify-center gap-2 text-rose-500 font-semibold">
-                    <Phone size={14} /> Contact: {siteConfig?.director_name || 'Thumula Liyanage'} - {siteConfig?.contact_phone || '0775176444'}
+                {/* 5. FOOTER CARD */}
+                <div className="mt-8 p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm text-center text-xs space-y-2">
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 text-blue-600 dark:text-blue-400 font-bold">
+                    <span>Contact: Smart Physics Support Team - 0779630100</span>
+                    <a 
+                      href="tel:0779630100" 
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] transition"
+                      title="Call Support Hotline"
+                    >
+                      <Phone size={12} /> Call Hotline
+                    </a>
+                    <a 
+                      href="https://wa.me/94779630100" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-[11px] transition"
+                      title="WhatsApp Support Team"
+                    >
+                      <MessageCircle size={12} /> WhatsApp
+                    </a>
                   </div>
-                  <div className="text-slate-700 dark:text-slate-300 font-medium">
-                    🏛️ Powered by {siteConfig?.headerTitle || 'Physics Online Hub'}
-                  </div>
-                  <div className="text-[11px] text-slate-400">
-                    💻 Technology by <span className="font-extrabold text-blue-600">ECODES</span>
+                  <div className="text-slate-700 dark:text-slate-300 font-semibold">
+                    🏛️ Powered by Amarasinghe Digital
                   </div>
                 </div>
 
@@ -1741,7 +2517,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   {dashboardTab === 'calendar' && renderCalendar()}
 
-                  {dashboardTab === 'history' && renderPaymentHistory()}
+                  {dashboardTab === 'history' && renderOtherClasses()}
                 </div>
               </div>
             )}

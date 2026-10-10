@@ -3,8 +3,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import screenfull from 'screenfull';
 import { 
   Play, Lock, ArrowLeft, Pause, Maximize, X, 
-  Rewind, FastForward, Settings, Volume2, VolumeX, RotateCcw, ChevronRight 
+  Rewind, FastForward, Settings, Volume2, VolumeX, RotateCcw, ChevronRight,
+  Search, Calendar, Filter, Sparkles, CheckCircle, RefreshCw
 } from 'lucide-react';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 
 interface StudentRecordingsProps {
   student: any; 
@@ -14,7 +16,11 @@ interface StudentRecordingsProps {
 export default function StudentRecordings({ student, onBack }: StudentRecordingsProps) {
   const [recordings, setRecordings] = useState<any[]>([]);
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
-  const [selectedFilter, setSelectedFilter] = useState<string>('current');
+  const [selectedFilter, setSelectedFilter] = useState<string>('all');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
+  const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
+  const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
   const [watchHistory, setWatchHistory] = useState<Record<string, any>>({});
   
@@ -50,7 +56,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const currentMonthNumStr = (new Date().getMonth() + 1).toString().padStart(2, '0');
   const currentMonthName = new Date().toLocaleString('default', { month: 'long' });
 
-  // Load YouTube Iframe API
+  // Load YouTube Iframe API and subscribe to realtime updates
   useEffect(() => {
     if (!(window as any).YT) {
       const tag = document.createElement('script');
@@ -58,6 +64,17 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
       const firstScriptTag = document.getElementsByTagName('script')[0];
       firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
     }
+
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (
+        type === 'recording_added' || 
+        type === 'recording_deleted' || 
+        type === 'payment_approved' || 
+        type === 'payment_status_changed'
+      ) {
+        fetchRecordingsAndPayments();
+      }
+    });
 
     const handleOutsideClose = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -68,6 +85,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     document.addEventListener('touchstart', handleOutsideClose);
     
     return () => {
+      unsub();
       document.removeEventListener('mousedown', handleOutsideClose);
       document.removeEventListener('touchstart', handleOutsideClose);
     };
@@ -222,23 +240,38 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return;
       }
 
-      const { data: recData, error: recError } = await supabase
-        .from('recordings') 
-        .select('*')
-        .in('class_type', studentClasses)
-        .order('created_at', { ascending: true }); 
-      
-      if (recError) throw recError;
+      let recDataToUse: any[] = [];
+      try {
+        const { data: recData, error: recError } = await supabase
+          .from('recordings') 
+          .select('*')
+          .in('class_type', studentClasses)
+          .order('created_at', { ascending: true }); 
+        
+        if (!recError && recData && recData.length > 0) {
+          recDataToUse = recData;
+        }
+      } catch (e) {}
 
-      if (recData) {
-        setRecordings(recData);
-        const monthsList = Array.from(new Set<string>(recData.map((r: any) => `${r.year}-${r.month}`)))
-          .map((str: string) => {
-            const [y, m] = str.split('-');
-            return { year: y, month: m };
-          });
-        setAvailableMonths(monthsList);
+      if (recDataToUse.length === 0) {
+        try {
+          const local = localStorage.getItem('physics_hub_recordings');
+          if (local) {
+            const allLocal: any[] = JSON.parse(local);
+            recDataToUse = allLocal.filter(r => 
+              studentClasses.some(sc => sc.toLowerCase().trim() === (r.class_type || '').toLowerCase().trim())
+            );
+          }
+        } catch (e) {}
       }
+
+      setRecordings(recDataToUse);
+      const monthsList = Array.from(new Set<string>(recDataToUse.map((r: any) => `${r.year}-${r.month}`)))
+        .map((str: string) => {
+          const [y, m] = str.split('-');
+          return { year: y, month: m };
+        });
+      setAvailableMonths(monthsList);
 
       const { data: viewsData, error: viewsError } = await supabase
         .from('recording_views')
@@ -277,8 +310,8 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         return `${yStr}-${mappedMonth}`;
       };
 
-      if (recData) {
-        recData.forEach((rec: any) => {
+      if (recDataToUse && recDataToUse.length > 0) {
+        recDataToUse.forEach((rec: any) => {
           const recMonthStr = String(rec.month).trim();
           const recYearMonthStr = `${rec.year}-${rec.month}`;
           const standardizedDbMonth = formatYearMonth(rec.year, rec.month); 
@@ -511,19 +544,55 @@ const startWatchTimeTracking = async () => {
     resetControlsTimeout();
   };
 
+  const studentClasses = student.class_types || [];
+
   const filteredRecordings = recordings.filter((r: any) => {
-    if (selectedFilter === 'current') {
-        return r.year === currentYear && (
-            r.month === currentMonthNumStr || r.month === currentMonthName || r.month === String(new Date().getMonth() + 1)
-        );
+    // 1. Class filter
+    if (selectedClassFilter !== 'all') {
+      if ((r.class_type || '').toLowerCase() !== selectedClassFilter.toLowerCase()) return false;
     }
-    const [fYear, fMonth] = selectedFilter.split('-');
-    return r.year === fYear && r.month === fMonth;
+
+    // 2. Year filter
+    if (selectedYearFilter !== 'all') {
+      if (String(r.year) !== selectedYearFilter) return false;
+    }
+
+    // 3. Month filter
+    if (selectedMonthFilter !== 'all') {
+      const rMonth = String(r.month || '').toLowerCase();
+      const selMonth = selectedMonthFilter.toLowerCase();
+      if (!rMonth.includes(selMonth) && !selMonth.includes(rMonth)) return false;
+    }
+
+    // 4. Quick filter (Current Month vs Specific)
+    if (selectedFilter !== 'all') {
+      if (selectedFilter === 'current') {
+        const isCurYear = r.year === currentYear;
+        const isCurMonth = r.month === currentMonthNumStr || r.month === currentMonthName || r.month === String(new Date().getMonth() + 1);
+        if (!isCurYear || !isCurMonth) return false;
+      } else {
+        const [fYear, fMonth] = selectedFilter.split('-');
+        if (r.year !== fYear || r.month !== fMonth) return false;
+      }
+    }
+
+    // 5. Search keyword
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const titleMatch = (r.title || '').toLowerCase().includes(q);
+      const classMatch = (r.class_type || '').toLowerCase().includes(q);
+      const yearMatch = String(r.year || '').includes(q);
+      const monthMatch = String(r.month || '').toLowerCase().includes(q);
+      if (!titleMatch && !classMatch && !yearMatch && !monthMatch) return false;
+    }
+
+    return true;
   });
 
   const groupedRecordings = filteredRecordings.reduce((acc: any, video: any) => {
-    acc[video.class_type] = acc[video.class_type] || [];
-    acc[video.class_type].push(video);
+    const key = video.class_type || 'General';
+    acc[key] = acc[key] || [];
+    acc[key].push(video);
     return acc;
   }, {} as Record<string, any[]>);
 
@@ -541,6 +610,21 @@ const startWatchTimeTracking = async () => {
   const playerLineStyle = {
     background: `linear-gradient(to right, #64748b 0%, #64748b ${sliderPercentage}%, #3b82f6 ${sliderPercentage}%, #3b82f6 100%)`
   };
+
+  const sinhalaMonthOptions = [
+    { num: 'January', label: 'January (ජනවාරි)' },
+    { num: 'February', label: 'February (පෙබරවාරි)' },
+    { num: 'March', label: 'March (මාර්තු)' },
+    { num: 'April', label: 'April (අප්‍රේල්)' },
+    { num: 'May', label: 'May (මැයි)' },
+    { num: 'June', label: 'June (ජූනි)' },
+    { num: 'July', label: 'July (ජූලි)' },
+    { num: 'August', label: 'August (අගෝස්තු)' },
+    { num: 'September', label: 'September (සැප්තැම්බර්)' },
+    { num: 'October', label: 'October (ඔක්තෝබර්)' },
+    { num: 'November', label: 'November (නොවැම්බර්)' },
+    { num: 'December', label: 'December (දෙසැම්බර්)' }
+  ];
 
   return (
     <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
@@ -569,32 +653,102 @@ const startWatchTimeTracking = async () => {
         .custom-slider::-webkit-slider-thumb:hover { transform: scale(1.25); }
       `}</style>
 
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-        <div className="flex items-center gap-4">
-          <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full transition flex items-center justify-center">
-            <ArrowLeft size={24} />
-          </button>
-          <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-blue-400">Class Recordings</h1>
-            <p className="text-slate-400 text-sm mt-1">ඔබේ පන්තිවල මඟහැරුණු කොටස් මෙතැනින් නරඹන්න</p>
+      {/* Header & Filter Bar */}
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 mb-8 shadow-xl space-y-4">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white p-2.5 rounded-2xl transition flex items-center justify-center cursor-pointer">
+              <ArrowLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-xl md:text-2xl font-black text-amber-400">Class Recordings (පන්ති රෙකෝඩින්)</h1>
+              <p className="text-slate-400 text-xs mt-0.5">ඔබේ පන්තිවල වීඩියෝ රෙකෝඩින් අවුරුද්ද සහ මාසය අනුව පිළිවෙළින් නරඹන්න.</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setSelectedFilter('all');
+                setSelectedClassFilter('all');
+                setSelectedYearFilter('all');
+                setSelectedMonthFilter('all');
+                setSearchQuery('');
+              }}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+            >
+              Reset Filters
+            </button>
           </div>
         </div>
 
-        <select 
-          value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)}
-          className="bg-slate-900 border border-slate-700 text-white px-4 py-2 rounded-xl focus:outline-none focus:border-blue-500"
-        >
-          <option value="current">මෙම මාසය ({currentYear} {currentMonthName})</option>
-          {availableMonths.map((m, idx) => (
-            <option key={idx} value={`${m.year}-${m.month}`}>{m.year} - {m.month}</option>
-          ))}
-        </select>
+        {/* Multi-Filters: Class Type, Year, Month, Search */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+          {/* Class Filter */}
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">පන්ති වර්ගය (Class)</label>
+            <select
+              value={selectedClassFilter}
+              onChange={(e) => setSelectedClassFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+            >
+              <option value="all">සියලුම ලියාපදිංචි පන්ති</option>
+              {studentClasses.map((cls: string, idx: number) => (
+                <option key={idx} value={cls}>{cls}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Year Filter */}
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">වසර (Year)</label>
+            <select
+              value={selectedYearFilter}
+              onChange={(e) => setSelectedYearFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+            >
+              <option value="all">සියලුම වසර (All Years)</option>
+              {['2024', '2025', '2026', '2027', '2028'].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Month Filter */}
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">මාසය (Month)</label>
+            <select
+              value={selectedMonthFilter}
+              onChange={(e) => setSelectedMonthFilter(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+            >
+              <option value="all">සියලුම මාස (All Months)</option>
+              {sinhalaMonthOptions.map(m => (
+                <option key={m.num} value={m.num}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Search Query */}
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">සෙවුම (Search)</label>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-3 text-slate-500" />
+              <input
+                type="text"
+                placeholder="රෙකෝඩින් මාතෘකාව..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 text-slate-200 pl-9 pr-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Grid Dashboard */}
 {Object.keys(groupedRecordings).length === 0 ? (
-  <div className="text-center py-20 text-slate-500">මෙම මාසය සඳහා වීඩියෝ කිසිවක් ලබා දී නොමැත.</div>
+  <div className="text-center py-20 text-slate-500">තෝරාගත් පන්ති වර්ගය, වසර හෝ මාසය සඳහා වීඩියෝ කිසිවක් හමු නොවීය.</div>
 ) : (
   Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
     <div key={classType} className="mb-10">
@@ -670,11 +824,19 @@ const startWatchTimeTracking = async () => {
               </div>
               
               <div className="p-4 bg-slate-900">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
+                    📅 {video.year} {video.month}
+                  </span>
+                  <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 rounded-md truncate max-w-[140px]">
+                    {video.class_type}
+                  </span>
+                </div>
                 <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
                 
                 {/* Status Text - Completed පමණක් පෙන්වයි */}
                 {isUnlocked && watchState === 'completed' && (
-                  <p className="text-emerald-400 font-semibold text-[11px] mt-1">සම්පූර්ණයෙන්ම නරඹා ඇත</p>
+                  <p className="text-emerald-400 font-semibold text-[11px] mt-1">✓ සම්පූර්ණයෙන්ම නරඹා ඇත</p>
                 )}
               </div>
             </div>
@@ -708,7 +870,8 @@ const startWatchTimeTracking = async () => {
 
           <div 
             id="custom-player-wrapper" 
-            className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 shadow-2xl"
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden relative border border-slate-800 shadow-2xl select-none"
             onMouseMove={resetControlsTimeout}
             onClick={resetControlsTimeout}
             onTouchStart={resetControlsTimeout}

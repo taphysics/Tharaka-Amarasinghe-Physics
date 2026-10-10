@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { UserCheck, Trash2, Send, CheckCircle, Search, Clock, Save, Lock, AlertTriangle, KeyRound, Copy, Check } from 'lucide-react'; // KeyRound, Copy, Check අලුතින් එක් කරන ලදී
+import { UserCheck, Trash2, Send, CheckCircle, Search, Clock, Save, Lock, AlertTriangle, KeyRound, Copy, Check } from 'lucide-react';
+import SecurityPasswordModal from './SecurityPasswordModal';
 
 // --- නව කොටස: Password Reset Button Component ---
 // මෙය එක් එක් සිසුවා සඳහා වෙන් වෙන්ව ක්‍රියා කරයි
@@ -200,27 +201,29 @@ export default function AdminRegistryTable({ students, setStudents }: { students
     window.open(whatsappUrl, '_blank');
   };
 
-  const handleDeletePending = async (ids: string[]) => {
-    if (!ids || ids.length === 0) return;
-    if (!confirm(`මෙම පෙන්ඩින් දත්ත ${ids.length}ක් මැකීමට අවශ්‍යද?`)) return;
+  // State for Security Password Protected Student Deletion
+  const [deleteStudentTarget, setDeleteStudentTarget] = useState<{ ids: string[]; summary: string } | null>(null);
+
+  const executeStudentDelete = async () => {
+    if (!deleteStudentTarget || deleteStudentTarget.ids.length === 0) return;
+    const ids = deleteStudentTarget.ids;
     for (const id of ids) {
       await supabase.from('students').delete().eq('id', id);
     }
     setStudents((prev: any) => prev.filter((s: any) => !ids.includes(s.id)));
-    setSelectedPending([]);
+    setSelectedPending(prev => prev.filter(i => !ids.includes(i)));
+    setSelectedActive(prev => prev.filter(i => !ids.includes(i)));
+    setDeleteStudentTarget(null);
   };
 
-  const handleDeleteActive = async (ids: string[]) => {
+  const handleDeletePending = (ids: string[]) => {
     if (!ids || ids.length === 0) return;
-    const pass = prompt('ඇඩ්මින් මුරපදය ඇතුලත් කරන්න (Admin Password Required):');
-    if (pass !== 'admin123') { alert('මුරපදය වැරදියි!'); return; }
-    if (!confirm(`මෙම ක්‍රියාකාරී ගිණුම් ${ids.length}ක් මැකීමට අවශ්‍යද?`)) return;
-    
-    for (const id of ids) {
-      await supabase.from('students').delete().eq('id', id);
-    }
-    setStudents((prev: any) => prev.filter((s: any) => !ids.includes(s.id)));
-    setSelectedActive([]);
+    setDeleteStudentTarget({ ids, summary: `පෙන්ඩින් සිසුන් ${ids.length}ක් (Pending Requests)` });
+  };
+
+  const handleDeleteActive = (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    setDeleteStudentTarget({ ids, summary: `ක්‍රියාකාරී සිසුන් ${ids.length}ක් (Active Students)` });
   };
 
   const toggleSelectAll = (isPending: boolean) => {
@@ -299,6 +302,13 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                       <span><b className="text-slate-300">Class:</b> {st.class_types?.join(', ')}</span>
                     </div>
                  </div>
+                 <button
+                   onClick={() => setDeleteStudentTarget({ ids: [st.id], summary: `${st.name}` })}
+                   className="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/10 transition self-center cursor-pointer"
+                   title="Delete Pending Student"
+                 >
+                   <Trash2 size={13} />
+                 </button>
               </div>
             ))}
             {pendingStudents.length === 0 && <div className="text-xs text-slate-500 text-center py-10">No pending requests</div>}
@@ -355,8 +365,17 @@ export default function AdminRegistryTable({ students, setStudents }: { students
                      </div>
                    </div>
 
-                   {/* WhatsApp Button කොටස */}
-                   <div className="mt-3 pt-2 border-t border-slate-800/50 flex justify-end">
+                   {/* WhatsApp & Delete Buttons */}
+                   <div className="mt-3 pt-2 border-t border-slate-800/50 flex justify-between items-center">
+                      <button
+                        onClick={() => setDeleteStudentTarget({ ids: [st.id], summary: `${st.name} (${st.username})` })}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded text-[10px] font-bold text-rose-400 bg-rose-950/30 hover:bg-rose-900/50 border border-rose-900/40 transition cursor-pointer"
+                        title="Delete Active Student"
+                      >
+                        <Trash2 size={11} />
+                        <span>Delete</span>
+                      </button>
+
                       <button
                         onClick={() => handleSendWhatsApp(st)}
                         disabled={isAlreadySent}
@@ -453,6 +472,21 @@ export default function AdminRegistryTable({ students, setStudents }: { students
           </button>
         </div>
       </div>
+
+      {/* Security Password Protected Student Deletion Modal */}
+      {deleteStudentTarget && (
+        <SecurityPasswordModal
+          isOpen={true}
+          onClose={() => setDeleteStudentTarget(null)}
+          onConfirm={executeStudentDelete}
+          title="සිසු ගිණුම් ඉවත් කිරීම (Delete Student Accounts)"
+          description="තෝරාගත් සිසු ගිණුම් සහ ඔවුන්ගේ සියලුම දත්ත දත්ත ගබඩාවෙන් ස්ථිරවම මකා දැමීමට කරුණාකර පරිපාලක ආරක්ෂක මුරපදය ඇතුළත් කරන්න."
+          itemSummary={deleteStudentTarget.summary}
+          actionButtonText="ස්ථිරවම මකා දමන්න (Delete Now)"
+          isDangerous={true}
+        />
+      )}
+
     </div>
   );
 }

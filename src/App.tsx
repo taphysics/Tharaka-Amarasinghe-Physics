@@ -15,8 +15,18 @@ import {
   Menu,
   Send,
   Video,
+  Sun,
+  Moon,
+  LogOut,
+  Phone,
+  MessageCircle,
+  Eye,
+  EyeOff,
+  Lock,
+  LayoutDashboard
 } from 'lucide-react';
-import { Student } from './types';
+import SecurityPasswordModal from './components/SecurityPasswordModal';
+import { Student, StaffMember } from './types';
 import { 
   DEFAULT_STUDENTS, 
   DEFAULT_SITE_CONFIG,
@@ -32,7 +42,7 @@ import AdminPaymentHistory from './components/AdminPaymentHistory';
 import QrGenerator from './components/QrGenerator';
 import AdminCalendarPlanner from './components/AdminCalendarPlanner';
 import AdminSiteConfig from './components/AdminSiteConfig';
-import AdminSampleDataGenerator from './components/AdminSampleDataGenerator';
+import AdminManualStudentRegistration from './components/AdminManualStudentRegistration';
 import { useSupabaseConfig } from './hooks/useSupabaseConfig';
 import AdminAttentionLogs from './components/AdminAttentionLogs';
 import StudentPaymentInvoice from './components/StudentPaymentInvoice';
@@ -41,9 +51,36 @@ import StudentDashboard from './components/StudentDashboard';
 import AdminRecordingsManager from './components/AdminRecordingsManager';
 import AdminGlobalConfig from "./components/AdminGlobalConfig";
 import AdminLiveControls from './components/AdminLiveControls';
-export default function App() {
+import AdminPendingPayments from './components/AdminPendingPayments';
+import AdminBankAccountsManager from './components/AdminBankAccountsManager';
+import AdminStaffManager from './components/AdminStaffManager';
+import AdminManualStudentRegister from './components/AdminManualStudentRegister';
+import AdminOverview from './components/AdminOverview';
+import LecturerDashboard from './components/LecturerDashboard';
+import BannerLandingPage from './components/BannerLandingPage';
+import { fetchAllPendingPayments } from './pendingPaymentsService';
+import { subscribeRealtimeEvents } from './realtimeSync';
+import { translations, Language } from './translations';
+import { authenticateStaff, saveActiveStaffSession, getActiveStaffSession } from './staffService';
 
-// බ්‍රව්සර් එකේ ලින්ක් එක '/reset-password' නම් කෙලින්ම මේ පිටුව පෙන්වන්න
+export default function App() {
+  // Check for banner landing page URL: /b/:slug, ?b=:slug, ?banner=:slug, ?p=:slug
+  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const bannerSlug = searchParams?.get('b') || searchParams?.get('banner') || searchParams?.get('p') || 
+    (window.location.pathname.startsWith('/b/') ? window.location.pathname.replace(/^\/b\//, '') : null);
+
+  if (bannerSlug) {
+    return (
+      <BannerLandingPage
+        slug={bannerSlug}
+        onNavigateHome={() => {
+          window.location.href = window.location.origin;
+        }}
+      />
+    );
+  }
+
+  // බ්‍රව්සර් එකේ ලින්ක් එක '/reset-password' නම් කෙලින්ම මේ පිටුව පෙන්වන්න
   if (window.location.pathname === '/reset-password') {
     return <ResetPassword />;
   }
@@ -57,6 +94,39 @@ export default function App() {
     const currentYearStr = `${now.getFullYear()}`;
     return activeMonths.includes(currentMonthStr) || activeMonths.includes(currentYearStr);
   };
+  // Language State (Sinhala & English)
+  const [lang, setLang] = useState<Language>(() => {
+    return (localStorage.getItem('physics_hub_lang') as Language) || 'si';
+  });
+
+  const toggleLanguage = () => {
+    setLang(prev => {
+      const next = prev === 'si' ? 'en' : 'si';
+      localStorage.setItem('physics_hub_lang', next);
+      return next;
+    });
+  };
+
+  // Day / Night Theme State
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return (localStorage.getItem('physics_hub_theme') as 'light' | 'dark') || 'dark';
+  });
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('physics_hub_theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  const t = translations[lang];
+
   // State variables
   const [siteConfigRaw, setSiteConfigRaw] = useSupabaseConfig();
   const siteConfig = siteConfigRaw || DEFAULT_SITE_CONFIG;
@@ -82,6 +152,11 @@ export default function App() {
   
   // Replace localStorage students with Supabase Realtime sync
   const [students, setStudents] = useSupabaseSync<any>('students', []);
+  const [dbClassTypes] = useSupabaseSync<any>('class_types_config', []);
+  const activeDbClasses = (dbClassTypes || []).filter((c: any) => c.is_active !== false);
+  const effectiveClasses: { id: string, name: string, fee: number }[] = activeDbClasses.length > 0
+    ? activeDbClasses.map((c: any) => ({ id: c.id || c.class_type, name: c.class_type, fee: c.monthly_fee || 3500 }))
+    : globalClasses;
 
   const [calendarEvents, setCalendarEvents] = useSupabaseSync<any>('calendar_events', []);
   const [announcements, setAnnouncements] = useSupabaseSync<any>('announcements', []);
@@ -234,7 +309,83 @@ useEffect(() => {
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'registry' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'history' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>('registry');
+  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>('overview');
+  const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
+
+  // Active Staff Session State (Super Admin, Admin, Manager, Lecturer)
+  const [currentStaff, setCurrentStaff] = useState<StaffMember | null>(() => getActiveStaffSession());
+
+  // Restore staff session on reload
+  useEffect(() => {
+    const savedStaff = getActiveStaffSession();
+    if (savedStaff) {
+      setCurrentStaff(savedStaff);
+    }
+  }, []);
+
+  // Permission helper: Controls which sections are accessible based on staff role and allowed_sections
+  const isTabAllowed = (tabId: string): boolean => {
+    if (!currentStaff) return true;
+    // Overview is the unified homepage for Super Admin, Admin, Manager, and Lecturer
+    if (tabId === 'overview') return true;
+
+    if (currentStaff.role === 'super_admin') return true;
+
+    // Staff management is accessible to Super Admin, Admin, and Manager (restricted by rank hierarchy inside component)
+    if (tabId === 'staff') {
+      if (currentStaff.role === 'admin' || currentStaff.role === 'manager') return true;
+      return !!currentStaff.allowed_sections?.includes('staff');
+    }
+
+    // For Admin, Manager, Lecturer: check granted sections
+    if (currentStaff.allowed_sections && Array.isArray(currentStaff.allowed_sections)) {
+      return currentStaff.allowed_sections.includes(tabId);
+    }
+
+    // Default safe tabs based on role if allowed_sections is not defined
+    if (currentStaff.role === 'admin' || currentStaff.role === 'manager') {
+      return ['overview', 'registry', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
+    }
+    if (currentStaff.role === 'lecturer') {
+      return ['overview', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
+    }
+    return false;
+  };
+
+  // Auto-switch active tab if currently active tab is not in allowed tabs for this staff member
+  useEffect(() => {
+    if (isAdminLoggedIn && currentStaff) {
+      if (!isTabAllowed(activeAdminTab)) {
+        const candidateTabs: Array<typeof activeAdminTab> = [
+          'overview', 'registry', 'manual_student', 'staff', 'resets', 'payments', 
+          'pending_payments', 'bank_accounts', 'history', 'qr_generator', 
+          'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast'
+        ];
+        const firstPermitted = candidateTabs.find(t => isTabAllowed(t));
+        if (firstPermitted) {
+          setActiveAdminTab(firstPermitted);
+        }
+      }
+    }
+  }, [currentStaff, activeAdminTab, isAdminLoggedIn]);
+
+  const refreshPendingPaymentsCount = async () => {
+    try {
+      const list = await fetchAllPendingPayments();
+      const pendingOnly = list.filter(p => p.status === 'pending');
+      setPendingPaymentsCount(pendingOnly.length);
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    refreshPendingPaymentsCount();
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (type === 'pending_payment_submitted' || type === 'payment_approved' || type === 'payment_rejected') {
+        refreshPendingPaymentsCount();
+      }
+    });
+    return unsub;
+  }, []);
 
   // Manual Profile Code generator inside cockpit
   const [manFirst, setManFirst] = useState('');
@@ -288,9 +439,14 @@ useEffect(() => {
   // Login inputs
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
+  const [showLoginPass, setShowLoginPass] = useState(false);
   const [loginError, setLoginError] = useState(false);
   const [loginShake, setLoginShake] = useState(false);
   const [loginAttempts, setLoginAttempts] = useState(0);
+
+  // Security Unlock for Website Appearance & Configurations
+  const [isSiteConfigUnlocked, setIsSiteConfigUnlocked] = useState(false);
+  const [showSiteConfigPasswordModal, setShowSiteConfigPasswordModal] = useState(false);
 
   // Forgot password username
   const [forgotUsername, setForgotUsername] = useState('');
@@ -321,7 +477,11 @@ useEffect(() => {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "registry" | "planner" | "broadcast" | "site_configs" | "payments" | "history" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
+  const handleAdminTabChange = (tab: "overview" | "registry" | "manual_student" | "staff" | "planner" | "broadcast" | "site_configs" | "payments" | "pending_payments" | "bank_accounts" | "history" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
+    if (tab === 'site_configs' && !isSiteConfigUnlocked) {
+      setShowSiteConfigPasswordModal(true);
+      return;
+    }
     setActiveAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -367,23 +527,56 @@ useEffect(() => {
     setIsLoading(false);
   }, [students]); 
 
-  // Check login states on bootup
-  const handleStudentLoginSubmit = (e: React.FormEvent) => {
+  // Check login states on bootup (Zero hardcoded credentials, 100% database verification)
+  const handleStudentLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(false);
     setLoginShake(false);
 
-    setTimeout(() => {
-      const found = students.find(s => 
-        s.username.toLowerCase() === loginUser.trim().toLowerCase() && 
-        (s as any).password === loginPass
+    const trimmedUser = loginUser.trim();
+    const cleanPass = loginPass.trim();
+
+    if (!trimmedUser || !cleanPass) return;
+
+    try {
+      // 1. Staff Authentication Check against Database (Super Admin, Admin, Manager, Lecturer)
+      const staffAuth = await authenticateStaff(trimmedUser, cleanPass);
+      if (staffAuth.success && staffAuth.staff) {
+        setCurrentStaff(staffAuth.staff);
+        saveActiveStaffSession(staffAuth.staff);
+        setIsAdminLoggedIn(true);
+        setCurrentView('admin');
+        setActiveAdminTab('overview');
+        setLoginAttempts(0);
+        setLoginUser('');
+        setLoginPass('');
+        return;
+      }
+
+      // 2. Student Authentication Check against Database
+      let found = students.find(s => 
+        s.username.toLowerCase() === trimmedUser.toLowerCase() && 
+        (s as any).password === cleanPass
       );
+
+      // If not in memory list, query Supabase directly for realtime check
+      if (!found) {
+        const { data: dbStudent } = await supabase
+          .from('students')
+          .select('*')
+          .ilike('username', trimmedUser)
+          .maybeSingle();
+
+        if (dbStudent && (dbStudent.password === cleanPass || dbStudent.nic === cleanPass)) {
+          found = dbStudent;
+        }
+      }
 
       if (found) {
         setLoginAttempts(0);
         setCurrentStudent(found);
         
-        // Username එක සහ පැය 2ක කල් ඉකුත්වීමේ වේලාව LocalStorage හි සේව් කිරීම
+        // Save student session in LocalStorage (2 hours validity)
         localStorage.setItem('physics_hub_current_student', found.username);
         const expiryTime = new Date().getTime() + (2 * 60 * 60 * 1000); 
         localStorage.setItem('physics_hub_login_expiry', expiryTime.toString());
@@ -395,9 +588,14 @@ useEffect(() => {
         setLoginError(true);
         setLoginShake(true);
         setLoginAttempts(prev => prev + 1);
-        setTimeout(() => setLoginShake(false), 1000); // Remove animation class after shake 1s
+        setTimeout(() => setLoginShake(false), 1000);
       }
-    }, 10);
+    } catch (err) {
+      console.error('Login process error:', err);
+      setLoginError(true);
+      setLoginShake(true);
+      setTimeout(() => setLoginShake(false), 1000);
+    }
   };
 
   const handleStudentLogout = () => {
@@ -690,16 +888,43 @@ const handleClassCheckboxChange = (course: string, checked: boolean) => {
   }
 };
 
-  // Admin Cockpit authentication
-  const handleAdminAuth = (e: React.FormEvent) => {
+  // Admin Cockpit authentication (Verified against database hash)
+  const handleAdminAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPasswordInput === 'dsPHYSICSds*18223') {
+    const cleanPass = adminPasswordInput.trim();
+    // 1. Check superadmin first
+    const auth = await authenticateStaff('superadmin', cleanPass);
+    if (auth.success && auth.staff) {
+      setCurrentStaff(auth.staff);
+      saveActiveStaffSession(auth.staff);
       setIsAdminLoggedIn(true);
+      setActiveAdminTab('overview');
       setAdminError('');
-    } else {
-      setAdminError('වැරදි ඇඩ්මින් මුරපදයක්! කරුණාකර නිවැරදි මුරපදය ඇතුළත් කරන්න.');
-      setIsAdminLoggedIn(false);
+      return;
     }
+
+    // 2. Also check if any registered staff member (Admin/Manager) has this password/pin
+    try {
+      const { data: staffList } = await supabase.from('staff_members').select('*').eq('is_blocked', false);
+      if (staffList && staffList.length > 0) {
+        for (const stf of staffList) {
+          const stfAuth = await authenticateStaff(stf.username, cleanPass);
+          if (stfAuth.success && stfAuth.staff) {
+            setCurrentStaff(stfAuth.staff);
+            saveActiveStaffSession(stfAuth.staff);
+            setIsAdminLoggedIn(true);
+            setActiveAdminTab('overview');
+            setAdminError('');
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Staff auth lookup note:', err);
+    }
+
+    setAdminError('වැරදි ඇඩ්මින් මුරපදයක්! කරුණාකර නිවැරදි මුරපදය ඇතුළත් කරන්න.');
+    setIsAdminLoggedIn(false);
   };
 
   const handleAddPayment = (e: React.FormEvent) => {
@@ -803,6 +1028,8 @@ const handleClassCheckboxChange = (course: string, checked: boolean) => {
   const handleAdminLogout = () => {
     setIsAdminLoggedIn(false);
     setAdminPasswordInput('');
+    setCurrentStaff(null);
+    saveActiveStaffSession(null);
     setCurrentView('home');
   };
 
@@ -981,152 +1208,193 @@ if (isLoading) {
     );
   }
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className={`min-h-screen ${theme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'} flex flex-col font-sans selection:bg-blue-600 selection:text-white transition-colors duration-200`}>
       
       {/* Dynamic Top Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-850 px-4 py-3 md:px-8 flex justify-between items-center transition-all">
+      <header className={`sticky top-0 z-50 backdrop-blur-md border-b px-4 py-2.5 md:px-8 flex justify-between items-center transition-all ${
+        theme === 'dark' ? 'bg-slate-900/90 border-slate-800 text-white' : 'bg-white/90 border-slate-200 text-slate-900 shadow-sm'
+      }`}>
+        {/* Brand: Logo & Title */}
         <div 
-          className="flex items-center gap-3 cursor-pointer group"
+          className="flex items-center gap-2.5 cursor-pointer group"
           onClick={() => setCurrentView(currentStudent ? 'dashboard' : 'home')}
         >
           {siteConfig.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
-            <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg group-hover:scale-105 transition-transform" />
+            <img src={siteConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm group-hover:scale-105 transition-transform" />
           ) : (
-            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-900/20 font-display text-lg group-hover:scale-105 transition-transform">
+            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-md font-display text-base group-hover:scale-105 transition-transform">
               Ω
             </div>
           )}
           <div>
-            <h1 className="text-lg md:text-xl font-bold font-sans tracking-tight text-white leading-tight group-hover:text-blue-200 transition-colors">
-              {siteConfig.headerTitle || siteConfig.heroTitle}
+            <h1 className="text-base md:text-lg font-bold font-sans tracking-tight leading-tight group-hover:text-blue-500 transition-colors">
+              Smart Physics
             </h1>
-            <p className="text-[10px] text-blue-400 font-sans tracking-widest font-bold uppercase transition-colors group-hover:text-amber-400">
-              {siteConfig.headerSubtitle || 'PHYSICS ONLINE HUB'}
+            <p className="text-[10px] text-blue-500 font-sans tracking-wider font-bold uppercase">
+              {lang === 'si' ? 'තාරක අමරසිංහ' : 'Taraka Amarasinghe'}
             </p>
           </div>
         </div>
 
-        {/* Navigation Elements */}
-        {/* Navigation Elements */}
-        <nav className="hidden md:flex items-center gap-1.5">
-          {/* Hide Home and Free Notes when student or admin is logged in. Free Notes removed completely per brief */}
+        {/* Navigation Elements (Dashboard & Cockpit removed, Language & Day/Night mode added) */}
+        <nav className="hidden md:flex items-center gap-2">
           {!(currentStudent || isAdminLoggedIn) && (
             <button 
               onClick={() => setCurrentView('home')} 
-              className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'home' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                currentView === 'home' 
+                  ? 'bg-blue-600 text-white shadow-sm' 
+                  : theme === 'dark' ? 'text-slate-300 hover:text-white hover:bg-slate-800' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
             >
-              Home
+              {t.home}
             </button>
           )}
-          
-          {currentStudent ? (
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setCurrentView('dashboard')} 
-                className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'dashboard' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
-              >
-                Dashboard
-              </button>
-              <button
-                onClick={handleStudentLogout}
-                className="px-3 py-1.5 rounded-full text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition cursor-pointer"
-              >
-                Logout
-              </button>
-            </div>
-          ) : !isAdminLoggedIn ? (
+
+          {!currentStudent && !isAdminLoggedIn && (
             <>
               <button 
                 onClick={() => setCurrentView('login')} 
-                className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'login' ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                  currentView === 'login' 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : theme === 'dark' ? 'text-slate-300 hover:text-white hover:bg-slate-800' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
               >
-                Login
+                {t.login}
               </button>
               <button 
                 onClick={() => setCurrentView('register')} 
-                className="ml-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm px-5 py-2 rounded-full tracking-wide shadow-md transition transform hover:-translate-y-0.5"
+                className="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs px-4 py-1.5 rounded-full shadow-sm transition cursor-pointer"
               >
-                Register
+                {t.register}
               </button>
             </>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setCurrentView('admin')} 
-                className={`px-4 py-2 rounded-full text-sm font-medium transition ${currentView === 'admin' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-300 hover:text-white hover:bg-slate-800'}`}
-              >
-                Admin Cockpit
-              </button>
-              <button
-                onClick={() => setIsAdminLoggedIn(false)}
-                className="px-3 py-1.5 rounded-full text-xs text-rose-400 hover:bg-rose-500/10 border border-rose-500/20 transition cursor-pointer"
-              >
-                Logout
-              </button>
-            </div>
           )}
 
-          {!isAdminLoggedIn && (
+          {isAdminLoggedIn && (
             <button 
-              onClick={() => setCurrentView('admin')}
-              className={`ml-3 border border-dashed border-amber-500/30 text-amber-400 hover:text-amber-300 bg-amber-500/5 hover:bg-amber-500/10 px-3.5 py-1.5 rounded-full text-xs font-mono tracking-wider uppercase flex items-center gap-1`}
+              onClick={() => setCurrentView('admin')} 
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                currentView === 'admin' 
+                  ? 'bg-amber-600 text-white shadow-sm' 
+                  : theme === 'dark' ? 'text-slate-300 hover:text-white hover:bg-slate-800' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
             >
-              <Settings size={12} /> Cockpit
+              {t.adminPanel}
+            </button>
+          )}
+
+          {/* Language Switcher Button (සිංහල / English) */}
+          <button
+            onClick={toggleLanguage}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer border ${
+              theme === 'dark'
+                ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700 hover:text-white'
+                : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+            }`}
+            title="භාෂාව මාරු කරන්න / Switch Language"
+          >
+            <Globe size={13} className="text-blue-500" />
+            <span>{lang === 'si' ? 'English' : 'සිංහල'}</span>
+          </button>
+
+          {/* Day / Night Mode Toggle Button */}
+          <button
+            onClick={toggleTheme}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition cursor-pointer border ${
+              theme === 'dark'
+                ? 'bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700'
+                : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+            }`}
+            title="Day / Night Theme Toggle"
+          >
+            {theme === 'dark' ? (
+              <>
+                <Sun size={13} className="text-amber-400" />
+                <span>{lang === 'si' ? 'දහවල්' : 'Day'}</span>
+              </>
+            ) : (
+              <>
+                <Moon size={13} className="text-indigo-600" />
+                <span>{lang === 'si' ? 'රාත්‍රී' : 'Night'}</span>
+              </>
+            )}
+          </button>
+
+          {/* Logout Button (For student or admin) */}
+          {(currentStudent || isAdminLoggedIn) && (
+            <button
+              onClick={() => {
+                if (currentStudent) handleStudentLogout();
+                if (isAdminLoggedIn) setIsAdminLoggedIn(false);
+              }}
+              className="px-3 py-1.5 rounded-full text-xs text-rose-500 hover:bg-rose-500/10 border border-rose-500/30 transition cursor-pointer flex items-center gap-1 font-bold ml-1"
+            >
+              <LogOut size={12} />
+              <span>{t.logout}</span>
             </button>
           )}
         </nav>
 
-        {/* Mobile menu trigger */}
+        {/* Mobile menu trigger and fast controls */}
         <div className="md:hidden flex items-center gap-2">
-          <button 
-            onClick={() => setCurrentView('admin')}
-            className="border border-amber-500/20 text-amber-500 bg-amber-500/5 p-2 rounded-lg text-xs"
+          {/* Mobile Language Switcher */}
+          <button
+            onClick={toggleLanguage}
+            className={`p-1.5 rounded-xl border text-xs font-bold ${
+              theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200' : 'bg-slate-100 border-slate-300 text-slate-700'
+            }`}
+            title="Language"
           >
-            <Settings size={14} />
+            <Globe size={14} className="text-blue-500" />
           </button>
-          <button 
-            onClick={() => {
-              if (currentStudent) {
-                setCurrentView('dashboard');
-              } else if (isAdminLoggedIn) {
-                setCurrentView('admin');
-              } else {
-                setCurrentView('home');
-              }
-            }}
-            className="text-slate-400 p-2 rounded-lg border border-slate-800"
-            title="Toggle Fast Menu"
+
+          {/* Mobile Theme Switcher */}
+          <button
+            onClick={toggleTheme}
+            className={`p-1.5 rounded-xl border text-xs font-bold ${
+              theme === 'dark' ? 'bg-slate-800 border-slate-700 text-amber-400' : 'bg-slate-100 border-slate-300 text-indigo-600'
+            }`}
+            title="Theme"
           >
-            <Menu size={18} />
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
           </button>
+
+          {/* Mobile Logout if logged in */}
+          {(currentStudent || isAdminLoggedIn) && (
+            <button
+              onClick={() => {
+                if (currentStudent) handleStudentLogout();
+                if (isAdminLoggedIn) setIsAdminLoggedIn(false);
+              }}
+              className="p-1.5 rounded-xl bg-rose-500/10 text-rose-500 border border-rose-500/30 text-xs font-bold"
+              title="Logout"
+            >
+              <LogOut size={14} />
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Mobile Sticky Bar for quick links */}
-      <div className="md:hidden bg-[#0F172A] border-b border-slate-850 py-2.5 px-4 flex justify-around text-xs text-slate-400">
+      {/* Mobile Sticky Bar for quick links (Cockpit & Dashboard removed) */}
+      <div className={`md:hidden border-b py-2 px-4 flex justify-around text-xs ${
+        theme === 'dark' ? 'bg-[#0F172A] border-slate-850 text-slate-400' : 'bg-white border-slate-200 text-slate-600 shadow-sm'
+      }`}>
         {!(currentStudent || isAdminLoggedIn) && (
-          <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-400 font-bold' : ''}>Home</button>
+          <>
+            <button onClick={() => setCurrentView('home')} className={currentView === 'home' ? 'text-blue-500 font-bold' : ''}>{t.home}</button>
+            <button onClick={() => setCurrentView('login')} className={currentView === 'login' ? 'text-blue-500 font-bold' : ''}>{t.login}</button>
+            <button onClick={() => setCurrentView('register')} className={currentView === 'register' ? 'text-blue-500 font-bold' : ''}>{t.register}</button>
+          </>
         )}
-        {currentStudent ? (
-          <>
-            <button onClick={() => setCurrentView('dashboard')} className={currentView === 'dashboard' ? 'text-blue-400 font-bold' : ''}>Dashboard</button>
-            <button onClick={handleStudentLogout} className="text-rose-400 font-semibold">Logout</button>
-          </>
-        ) : isAdminLoggedIn ? (
-          <>
-            <button onClick={() => setCurrentView('admin')} className={currentView === 'admin' ? 'text-amber-400 font-bold' : ''}>Admin Cockpit</button>
-            <button onClick={() => setIsAdminLoggedIn(false)} className="text-rose-400 font-semibold">Logout</button>
-          </>
-        ) : (
-          <>
-            <button onClick={() => setCurrentView('login')} className={currentView === 'login' ? 'text-blue-400 font-bold' : ''}>Login</button>
-            <button onClick={() => setCurrentView('register')} className={currentView === 'register' ? 'text-blue-400 font-bold' : ''}>Register</button>
-          </>
+        {isAdminLoggedIn && (
+          <button onClick={() => setCurrentView('admin')} className={currentView === 'admin' ? 'text-amber-500 font-bold' : ''}>{t.adminPanel}</button>
         )}
       </div>
 
       {/* Main Container Views */}
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 md:px-8 py-6 flex flex-col justify-start">
+      <main className={`flex-grow w-full flex flex-col justify-start ${currentView === 'dashboard' ? 'px-0 py-0' : 'max-w-7xl mx-auto px-4 md:px-8 py-6'}`}>
         
         {/* VIEW 1: HOME */}
         {currentView === 'home' && (
@@ -1171,13 +1439,13 @@ if (isLoading) {
                       onClick={() => setCurrentView('register')}
                       className="bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] active:scale-[0.98] text-white font-semibold px-6 py-3 rounded-2xl shadow-lg shadow-blue-900/40 transition-all duration-150"
                     >
-                      New Student Registration
+                      {lang === 'si' ? 'නව සිසු ලියාපදිංචිය (Register)' : 'New Student Registration'}
                     </button>
                     <button 
                       onClick={() => setCurrentView('login')}
                       className="bg-slate-800/80 hover:bg-slate-700/85 hover:scale-[1.02] active:scale-[0.98] text-slate-100 hover:text-white font-medium border border-slate-700 px-6 py-3 rounded-2xl transition-all duration-150 backdrop-blur-sm"
                     >
-                      Student Login
+                      {lang === 'si' ? 'සිසු පිවිසුම (Login)' : 'Student Login'}
                     </button>
                   </div>
                 </div>
@@ -1189,7 +1457,7 @@ if (isLoading) {
                 <div className="absolute -top-10 -right-10 w-64 h-64 bg-white/10 rounded-full blur-3xl group-hover:bg-white/15 transition-all" />
                 
                 <div className="absolute top-4 right-4 text-[10px] tracking-widest font-mono uppercase bg-white/10 text-blue-200 border border-white/20 px-2 py-0.5 rounded">
-                  Director Core
+                  {lang === 'si' ? 'ප්‍රධාන දේශක' : 'Director Core'}
                 </div>
 
                 {/* Professional Looking Mock Vector/Graphic with rotate effect */}
@@ -1210,54 +1478,54 @@ if (isLoading) {
 
                 <div className="space-y-1 z-10">
                   <h3 className="text-2xl font-bold text-white tracking-tight">
-                    {siteConfig.directorName || siteConfig.heroTitle}
+                    {siteConfig.directorName || (lang === 'si' ? 'තාරක අමරසිංහ' : 'Taraka Amarasinghe')}
                   </h3>
                   <p className="text-xs text-blue-200 font-mono tracking-widest uppercase font-semibold opacity-90">
-                    {siteConfig.directorTitle || "B.Sc (Hon's) University of Peradeniya | Physics Teacher"}
+                    {siteConfig.directorTitle || (lang === 'si' ? "B.Sc (Hon's) පේරාදෙණිය විශ්වවිද්‍යාලය | භෞතික විද්‍යා දේශක" : "B.Sc (Hon's) University of Peradeniya | Physics Teacher")}
                   </p>
                 </div>
 
                 <div className="bg-slate-950/40 border border-blue-400/20 rounded-2xl p-4 mt-6 text-left relative z-10">
                   <span className="absolute -top-3 left-4 bg-[#142340] border border-blue-400/20 p-0.5 px-2 font-mono text-[9px] text-blue-300 font-semibold uppercase tracking-wider rounded">
-                    Advice &amp; Quote
+                    {lang === 'si' ? 'ගුරු උපදෙස්' : 'Advice & Quote'}
                   </span>
                   <p className="text-blue-100 text-sm italic font-sans leading-relaxed py-1">
-                    "{siteConfig.directorQuote || 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.'}"
+                    "{siteConfig.directorQuote || (lang === 'si' ? 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.' : 'Physics is not mere memorization; it is a fascinating journey of understanding how the universe works.')}"
                   </p>
                 </div>
 
                 <div className="pt-6 border-t border-blue-400/20 text-[11px] text-blue-200 justify-center flex items-center gap-1 z-10 opacity-75">
-                  <Award size={12} className="text-white" /> Professional physics learning modules
+                  <Award size={12} className="text-white" /> {lang === 'si' ? 'වෘත්තීය භෞතික විද්‍යා අධ්‍යයන ඒකක' : 'Professional physics learning modules'}
                 </div>
               </div>
             </div>
 
             {/* Feature Cards Section grid (Bento Grid Style) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:bg-slate-800/60 hover:border-blue-500/50 transition-all shadow-lg">
-                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-all">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:border-blue-500/50 transition-all shadow-md">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:bg-blue-500/25 transition-all">
                   <Globe size={22} />
                 </div>
-                <h4 className="text-lg font-bold text-white font-display">Free Resources</h4>
-                <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  {siteConfig.feat1Desc || "නොමිලේ ලබාදෙන සම්මන්ත්‍රණ, වීඩියෝ දර්ශන, ක්‍රියාකාරී ඇලර්ට් සහ අනුමාන ප්‍රශ්න පත්‍ර ඕනෑම අයෙකුට පහසුවෙන් ලබා ගත හැක."}
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                  {lang === 'si' ? 'නොමිලේ සම්පත් (Free Resources)' : 'Free Resources'}
+                </h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-sans">
+                  {siteConfig.feat1Desc || (lang === 'si' ? "නොමිලේ ලබාදෙන සම්මන්ත්‍රණ, වීඩියෝ දර්ශන, ක්‍රියාකාරී ඇලර්ට් සහ අනුමාන ප්‍රශ්න පත්‍ර ඕනෑම අයෙකුට පහසුවෙන් ලබා ගත හැක." : "Free seminar sessions, video walkthroughs, active broadcast alerts and model papers accessible to any student.")}
                 </p>
               </div>
 
-              <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:bg-slate-800/60 hover:border-blue-500/50 transition-all shadow-lg">
-                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-all">
+              <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:border-blue-500/50 transition-all shadow-md">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:bg-blue-500/25 transition-all">
                   <Unlock size={22} />
                 </div>
-                <h4 className="text-lg font-bold text-white font-display">Paid Portal Resources</h4>
-                <p className="text-sm text-slate-400 leading-relaxed font-sans">
-                  {siteConfig.feat2Desc || "සක්‍රීය සිසුන්ට අදාළ මාසයේ සජීවී දේශන සබැඳි, සවිස්තරාත්මක නිබන්ධන පත්‍රිකා සහ සියලුම පටිගත කළ පාඩම් ලිපිගොනු ඇතුළත් වේ."}
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                  {lang === 'si' ? 'ගෙවීම් කළ සිසු සම්පත් (Paid Portal Resources)' : 'Paid Portal Resources'}
+                </h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-sans">
+                  {siteConfig.feat2Desc || (lang === 'si' ? "සක්‍රීය සිසුන්ට අදාළ මාසයේ සජීවී දේශන සබැඳි, සවිස්තරාත්මක නිබන්ධන පත්‍රිකා සහ සියලුම පටිගත කළ පාඩම් ලිපිගොනු ඇතුළත් වේ." : "Active enrolled students access live stream classes, comprehensive tutorial papers, and complete recorded video vaults.")}
                 </p>
               </div>
-
-              
             </div>
-
-
           </div>
         )}
 
@@ -1334,15 +1602,15 @@ if (isLoading) {
         {/* VIEW 3: STUDENT LOGIN */}
         {currentView === 'login' && (
           <div className="max-w-md w-full mx-auto animate-fade-in my-auto py-8 font-sans">
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-2xl relative overflow-hidden">
+            <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative overflow-hidden text-slate-900 dark:text-white">
               <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-600 to-sky-400" />
               
               {showForgotBox ? (
                  <div className="space-y-5 animate-slide-up">
                    <div className="text-center space-y-1.5">
-                     <h3 className="text-lg font-bold text-white uppercase tracking-wider font-display">මුරපදය යළි සැකසීම (Request Reset)</h3>
-                     <p className="text-xs text-slate-400 leading-relaxed mt-2">
-                       ඔබගේ Username එක සහ NIC අංකය පහතින් ටයිප් කර සෙන්ඩ් කළ පසු, මුරපදය අලුත් කර දෙන ලෙස ඉල්ලීමක් ගුරුතුමාගේ WhatsApp ගිණුමට (0719152128) යොමු කිරීමට හැකි වනු ඇත.
+                     <h3 className="text-lg font-bold text-slate-900 dark:text-white uppercase tracking-wider font-display">මුරපදය යළි සැකසීම (Request Reset)</h3>
+                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mt-2">
+                       ඔබගේ Username එක සහ NIC අංකය පහතින් ටයිප් කර සෙන්ඩ් කළ පසු, මුරපදය අලුත් කර දෙන ලෙස ඉල්ලීමක් Smart Physics Support Admin ගේ WhatsApp ගිණුමට (0779630100) යොමු කිරීමට හැකි වනු ඇත.
                      </p>
                    </div>
                    
@@ -1350,26 +1618,26 @@ if (isLoading) {
                      e.preventDefault();
                      if (!forgotUsername || !forgotNIC) return;
                      const text = `මට මගේ මුරපදය අමතක වී ඇත.\nUsername: ${forgotUsername}\nNIC: ${forgotNIC}\nකරුණාකර සහාය වන්න.`;
-                     window.open(`https://wa.me/94719152128?text=${encodeURIComponent(text)}`, '_blank');
+                     window.open(`https://wa.me/94779630100?text=${encodeURIComponent(text)}`, '_blank');
                    }} className="space-y-4 flex flex-col">
                      <div className="space-y-1.5">
                        <input 
                          type="text" 
-                         required
+                         required 
                          placeholder="Username (ID)"
                          value={forgotUsername}
                          onChange={(e) => setForgotUsername(e.target.value)}
-                         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-white"
+                         className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-slate-900 dark:text-white"
                        />
                      </div>
                      <div className="space-y-1.5">
                        <input 
                          type="text" 
-                         required
+                         required 
                          placeholder="NIC අංකය"
                          value={forgotNIC}
                          onChange={(e) => setForgotNIC(e.target.value)}
-                         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-white"
+                         className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-sm focus:outline-none focus:border-blue-500 text-slate-900 dark:text-white"
                        />
                      </div>
                      <button 
@@ -1389,21 +1657,20 @@ if (isLoading) {
                  </div>
               ) : (
                 <>
-                  <div className="text-center space-y-1.5">
-                    <h3 className="text-2xl font-bold text-white font-display">Student Portal Login</h3>
-                    <p className="text-xs text-slate-400">
-                      ලියාපදිංචි වීමේදී ඔබට ලැබුණු පරිශීලක නාමය (Username) හා මුරපදය (NIC) ඇතුළත් කරන්න.
-                    </p>
+                  <div className="text-center">
+                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white font-display">
+                      Login
+                    </h3>
                   </div>
 
                   {loginAttempts >= 4 ? (
-                    <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-700 space-y-4 text-center animate-slide-up">
-                      <h3 className="text-lg font-bold text-red-400 mb-2">ඔබට ලොගින් ඩීටේල්ස් අමතක උනාද?</h3>
-                      <p className="text-sm text-slate-300">දැන්ම ඇඩ්මින්ව සම්බන්ධ කරගන්න</p>
+                    <div className="bg-slate-100 dark:bg-slate-900/60 p-6 rounded-2xl border border-slate-300 dark:border-slate-700 space-y-4 text-center animate-slide-up">
+                      <h3 className="text-lg font-bold text-red-500 mb-2">ඔබට ලොගින් ඩීටේල්ස් අමතක උනාද?</h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-300">දැන්ම ඇඩ්මින්ව සම්බන්ධ කරගන්න</p>
                       <a 
-                        href="https://wa.me/94719152128?text=මට%20මගේ%20ලොගින්%20විස්තර%20අමතක%20වී%20ඇත.%20කරුණාකර%20සහාය%20වන්න." 
+                        href="https://wa.me/94779630100?text=මට%20මගේ%20ලොගින්%20විස්තර%20අමතක%20වී%20ඇත.%20කරුණාකර%20සහාය%20වන්න." 
                         target="_blank" 
-                        rel="noopener noreferrer"
+                        rel="noopener noreferrer" 
                         className="block w-full bg-green-600 hover:bg-green-500 text-white font-semibold py-3 rounded-xl transition-all shadow-md mt-4 text-sm"
                       >
                         WhatsApp ඔස්සේ පණිවිඩයක් එවන්න
@@ -1415,7 +1682,7 @@ if (isLoading) {
                           setLoginShake(false);
                           setLoginPass('');
                         }}
-                        className="mt-4 block w-full text-blue-400 border border-blue-500/30 hover:bg-blue-500/10 py-2.5 rounded-xl text-sm font-semibold transition"
+                        className="mt-4 block w-full text-blue-500 dark:text-blue-400 border border-blue-500/30 hover:bg-blue-500/10 py-2.5 rounded-xl text-sm font-semibold transition"
                       >
                         Back to Login
                       </button>
@@ -1423,11 +1690,13 @@ if (isLoading) {
                   ) : (
                     <form onSubmit={handleStudentLoginSubmit} className={`space-y-4 ${loginShake ? 'animate-shake' : ''}`}>
                       <div className="space-y-1.5">
-                        <label className="text-xs text-slate-350 font-medium font-sans">Username (පරිශීලක හැඳුනුම)</label>
+                        <label className="text-xs text-slate-700 dark:text-slate-300 font-bold font-sans">
+                          {lang === 'si' ? 'Username (පරිශීලක නාමය)' : 'Username'}
+                        </label>
                         <input 
                           type="text" 
                           required 
-                          placeholder="e.g. KAPE7882"
+                          placeholder={lang === 'si' ? 'උදා: KAPE7882' : 'e.g. KAPE7882'}
                           value={loginUser}
                           onChange={(e) => {
                             setLoginUser(e.target.value);
@@ -1436,30 +1705,45 @@ if (isLoading) {
                               setLoginShake(false);
                             }
                           }}
-                          className={`w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-100' : 'border-slate-800 text-white'} focus:border-blue-500 focus:outline-none transition-all`}
+                          className={`w-full px-4 py-2.5 rounded-xl text-sm bg-slate-50 dark:bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-600 dark:text-red-100' : 'border-slate-300 dark:border-slate-800 text-slate-900 dark:text-white'} focus:border-blue-500 focus:outline-none transition-all placeholder:text-slate-400`}
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-xs text-slate-350 font-medium font-sans">Password or NIC Number (මුරපදය)</label>
-                        <input 
-                          type="password" 
-                          required 
-                          placeholder="Enter password or National ID"
-                          value={loginPass}
-                          onChange={(e) => {
-                            setLoginPass(e.target.value);
-                            if (loginError) {
-                              setLoginError(false);
-                              setLoginShake(false);
-                            }
-                          }}
-                          className={`w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-100' : 'border-slate-800 text-white'} focus:border-blue-500 focus:outline-none transition-all`}
-                        />
+                        <label className="text-xs text-slate-700 dark:text-slate-300 font-bold font-sans">
+                          {lang === 'si' ? 'Password (මුරපදය)' : 'Password'}
+                        </label>
+                        <div className="relative flex items-center">
+                          <input 
+                            type={showLoginPass ? 'text' : 'password'} 
+                            required 
+                            placeholder={lang === 'si' ? 'මුරපදය ඇතුළත් කරන්න' : 'Enter password'}
+                            value={loginPass}
+                            onChange={(e) => {
+                              setLoginPass(e.target.value);
+                              if (loginError) {
+                                setLoginError(false);
+                                setLoginShake(false);
+                              }
+                            }}
+                            className={`w-full pl-4 pr-11 py-2.5 rounded-xl text-sm bg-slate-50 dark:bg-slate-950/60 border ${loginError ? 'border-red-500 text-red-600 dark:text-red-100' : 'border-slate-300 dark:border-slate-800 text-slate-900 dark:text-white'} focus:border-blue-500 focus:outline-none transition-all placeholder:text-slate-400`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowLoginPass(!showLoginPass)}
+                            className="absolute right-3.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer"
+                            title={showLoginPass ? 'Hide password' : 'Show password'}
+                          >
+                            {showLoginPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
                       </div>
 
                       {loginError && (
                          <div className="text-red-500 text-center text-xs font-bold leading-relaxed">
-                            ඔබගේ ලොගින් යූසනේම් හෝ පාස්වර්ඩ් වැරැදි.<br/>නැවත පරික්ෂා කර බලා ලොග් වන්න.
+                            {lang === 'si' 
+                              ? <>ඔබගේ ලොගින් යූසනේම් හෝ පාස්වර්ඩ් වැරැදි.<br/>නැවත පරික්ෂා කර බලා ලොග් වන්න.</>
+                              : <>Invalid username or password.<br/>Please check and try again.</>
+                            }
                          </div>
                       )}
 
@@ -1469,16 +1753,16 @@ if (isLoading) {
                           onClick={() => setShowForgotBox(true)}
                           className="text-blue-450 hover:text-blue-300 hover:underline transition font-semibold"
                         >
-                          Forgot Password?
+                          {lang === 'si' ? 'මුරපදය අමතකද?' : 'Forgot Password?'}
                         </button>
-                        <span className="text-slate-500">Support: WhatsApp 0719152128</span>
+                        <span className="text-slate-500">Support: WhatsApp 0779630100</span>
                       </div>
 
                       <button 
                         type="submit" 
                         className={`w-full font-semibold py-2.5 rounded-xl transition-all shadow-md shadow-blue-900/10 ${loginError ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
                       >
-                        Confirm Login
+                        {lang === 'si' ? 'ඇතුල් වන්න (Confirm Login)' : 'Confirm Login'}
                       </button>
                     </form>
                   )}
@@ -1489,7 +1773,8 @@ if (isLoading) {
                   onClick={() => setCurrentView('register')}
                   className="text-xs text-slate-400 hover:text-white transition"
                 >
-                  නැවත ලියාපදිංචි වීමට අවශ්‍යද? <strong className="text-blue-400 font-semibold">මෙහි ක්ලික් කරන්න</strong>
+                  {lang === 'si' ? 'නැවත ලියාපදිංචි වීමට අවශ්‍යද?' : 'Need to register as a student?'}{' '}
+                  <strong className="text-blue-400 font-semibold">{lang === 'si' ? 'මෙහි ක්ලික් කරන්න' : 'Click here'}</strong>
                 </button>
               </div>
             </div>
@@ -1499,11 +1784,11 @@ if (isLoading) {
         {/* VIEW 4: REGISTER VIEW */}
         {currentView === 'register' && (
           <div className="max-w-2xl w-full mx-auto animate-fade-in my-4">
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-2xl relative">
+            <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative text-slate-900 dark:text-white">
               
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-xl md:text-2xl font-bold text-white font-display">New Student Registration</h3>
-                <p className="text-xs text-slate-400 mt-1">
+              <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+                <h3 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white font-display">New Student Registration</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                   සියලුම තොරතුරු පිරවීම අත්‍යවශ්‍ය වේ. පද්ධතිය විසින් ඔබගේ ඇතුළත් කිරීම් නිරීක්ෂණය කරනු ඇත.
                 </p>
               </div>
@@ -1732,357 +2017,351 @@ if (isLoading) {
     filterMonth={filterMonth}
     setFilterMonth={setFilterMonth}
     supabase={supabase}
+    lang={lang}
+    setLang={setLang}
     // අවශ්‍ය නම් තවත් props මෙතැනට එකතු කරන්න
   />
 )}
 
-        {/* VIEW 6: COCKPIT PANEL ADMIN CONSOLE */}
+        {/* VIEW 6: ADMIN PANEL */}
         {currentView === 'admin' && (
           <div className="space-y-6 animate-fade-in w-full">
             
-            {/* Authenticated block checking */}
+            {/* If not logged in, redirect to normal login */}
             {!isAdminLoggedIn ? (
-              <div className="max-w-md w-full mx-auto my-auto py-12">
-                <div className="bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl relative overflow-hidden backdrop-blur-sm">
-                  <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500" />
-                  
-                  <div className="text-center space-y-1">
-                    <h3 className="text-xl font-bold text-white font-display">Tutor Admin Authenticate</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      ශිෂ්‍ය ගිණුම් සක්‍රිය කිරීමට හා පන්ති දින සැලසුම් කිරීමට කරුණාකර ඔබගේ පරිපාලක රහස් මුරපදය ඇතුළත් කරන්න.
-                    </p>
-                  </div>
-
-                  <form onSubmit={handleAdminAuth} className="space-y-4">
-                    <div className="space-y-1.5 focus-within:text-blue-400">
-                      <label className="text-xs text-slate-300 font-medium">Core Admin Password</label>
-                      <input 
-                        type="password"
-                        placeholder="Enter Admin Password"
-                        value={adminPasswordInput}
-                        onChange={(e) => setAdminPasswordInput(e.target.value)}
-                        className="w-full px-4 py-2.5 rounded-xl text-sm bg-slate-950/60 border border-slate-800 text-white focus:border-blue-500 focus:outline-none transition-all placeholder:text-slate-600"
-                      />
-                    </div>
-                    {adminError && <p className="text-xs text-red-400 font-sans">{adminError}</p>}
-
-                    <button 
-                      type="submit" 
-                      className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl tracking-wide transition-all shadow"
-                    >
-                      Authenticate Verification Key
-                    </button>
-                    <p className="text-[10px] text-slate-500 text-center uppercase tracking-widest font-mono font-semibold">
-                      Security Protection Loop Active
-                    </p>
-                  </form>
+              <div className="max-w-md w-full mx-auto my-auto py-12 text-center space-y-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-xl">
+                  <h3 className="text-base font-bold text-white font-display">පරිපාලක පිවිසුම අවශ්‍යයි (Admin Login Required)</h3>
+                  <p className="text-xs text-slate-400">
+                    පරිපාලක පැනලයට පිවිසීමට කරුණාකර සාමාන්‍ය Login පිටුව හරහා Admin ගිණුමෙන් ඇතුල් වන්න.
+                  </p>
+                  <button 
+                    onClick={() => setCurrentView('login')}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition cursor-pointer shadow-lg shadow-blue-900/30"
+                  >
+                    සාමාන්‍ය Login පිටුවට යන්න (Go to Login)
+                  </button>
                 </div>
               </div>
+            ) : currentStaff?.role === 'lecturer' ? (
+              // Dedicated Student-Dashboard Style Lecturer Dashboard
+              <LecturerDashboard 
+                currentStaff={currentStaff} 
+                handleLogout={handleAdminLogout} 
+              />
             ) : (
-              // Authenticated Dashboard Space
+              // Authenticated Dashboard Space for Super Admin, Admin, Manager
               <div className="space-y-6">
                 
                 {/* Header overview control */}
                 <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 bg-slate-900/50 border border-slate-800 rounded-xl p-4 md:p-5">
                   <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2 font-display">
-                      <Settings className="text-blue-500" size={24} /> Admin Cockpit &amp; Class Controller
+                      <Settings className="text-amber-500" size={24} /> පරිපාලක පැනලය (Admin Panel & Controls)
                     </h2>
-                    <p className="text-xs text-slate-400 mt-1">
-                      ශිෂ්‍ය ගිණුම් කළමනාකරණය, පද්ධති කේත නිර්මාණය සහ පන්ති දින සැලසුම්කරණ මධ්‍යස්ථානය.
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${
+                        currentStaff?.role === 'super_admin' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' :
+                        currentStaff?.role === 'admin' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
+                        currentStaff?.role === 'manager' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
+                        'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      }`}>
+                        <User size={13} />
+                        <span>
+                          {currentStaff ? (
+                            `${currentStaff.role === 'super_admin' ? 'Super Admin' : currentStaff.role === 'admin' ? 'Admin' : currentStaff.role === 'manager' ? 'Manager' : 'Lecturer'}: ${currentStaff.first_name || ''} ${currentStaff.last_name || ''} (${currentStaff.username})`
+                          ) : 'Super Admin (System Owner)'}
+                        </span>
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-slate-800 text-[11px] text-slate-400 font-mono">
+                        {currentStaff?.role === 'super_admin' 
+                          ? '🌟 සම්පූර්ණ පාලන ප්‍රවේශය (Full Access)' 
+                          : `අවසර ලත් අංශ: ${currentStaff?.allowed_sections?.length || 0}/15`}
+                      </span>
+                    </div>
                   </div>
                   <button 
                     onClick={handleAdminLogout}
-                    className="bg-slate-850 hover:bg-slate-800 text-xs text-rose-400 hover:text-rose-300 px-4 py-2.5 rounded-xl border border-slate-705 font-bold transition flex items-center gap-1 shrink-0 cursor-pointer"
+                    className="bg-slate-850 hover:bg-slate-800 text-xs text-rose-400 hover:text-rose-300 px-4 py-2.5 rounded-xl border border-slate-705 font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer"
                   >
-                    Lock Session admin
+                    <LogOut size={14} />
+                    <span>පරිපාලක ගිණුමෙන් ඉවත් වන්න (Logout Admin)</span>
                   </button>
                 </div>
 
-                {/* Admin Tab Navigation */}
+                {/* Admin Tab Navigation - Filtered by Staff Role & Permissions */}
                 <div className="flex flex-wrap gap-2 pb-2 border-b border-slate-800">
-                  <button 
-                    onClick={() => handleAdminTabChange('registry')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'registry' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Student Registry
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('resets')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resets' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Class Types & Fees Manager
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('payments')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'payments' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Manage Payments
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('history')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'history' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Payment History
-                  </button>
-                  <button 
-  onClick={() => handleAdminTabChange('qr_generator')}
-  className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'qr_generator' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
->
-  QR Generator
-</button>
-                  <button 
-                    onClick={() => handleAdminTabChange('site_configs')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'site_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Site Configuration
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('planner')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'planner' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Class Planner
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('live_classes')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'live_classes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Live Scheduled
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('tutes')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'tutes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    📚 Tutes (Google Drive)
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('resources')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resources' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    📹 Class Recordings
-                  </button>
-                  <button 
-                    onClick={() => handleAdminTabChange('broadcast')}
-                    className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'broadcast' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
-                  >
-                    Broadcast Notices
-                  </button>
+                  {isTabAllowed('overview') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('overview')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${
+                        activeAdminTab === 'overview' 
+                          ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' 
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <LayoutDashboard size={14} />
+                      <span>
+                        {currentStaff?.role === 'manager' 
+                          ? '📊 Manager Overview (දළ විශ්ලේෂණය)' 
+                          : '📊 Overview (දළ විශ්ලේෂණය)'}
+                      </span>
+                    </button>
+                  )}
+                  {isTabAllowed('registry') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('registry')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'registry' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Student Registry
+                    </button>
+                  )}
+                  {isTabAllowed('manual_student') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('manual_student')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'manual_student' ? 'bg-emerald-600/20 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      🎓 ශිෂ්‍ය ලියාපදිංචිය (Manual Register)
+                    </button>
+                  )}
+                  {isTabAllowed('staff') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('staff')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'staff' ? 'bg-purple-600/20 text-purple-400 border-b-2 border-purple-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      👥 කාර්යමණ්ඩලය (Staff: Admin, Manager, Lecturer)
+                    </button>
+                  )}
+                  {isTabAllowed('resets') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('resets')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resets' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Class Types & Fees Manager
+                    </button>
+                  )}
+                  {isTabAllowed('payments') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('payments')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'payments' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Manage Payments
+                    </button>
+                  )}
+                  {isTabAllowed('pending_payments') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('pending_payments')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'pending_payments' ? 'bg-amber-600/20 text-amber-400 border-b-2 border-amber-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      ⏳ Pending Payments (පොරොත්තු ගෙවීම්)
+                      {pendingPaymentsCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 animate-pulse">
+                          {pendingPaymentsCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  {isTabAllowed('bank_accounts') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('bank_accounts')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'bank_accounts' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      🏦 Bank Accounts (බැංකු ගිණුම්)
+                    </button>
+                  )}
+                  {isTabAllowed('history') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('history')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'history' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Payment History
+                    </button>
+                  )}
+                  {isTabAllowed('qr_generator') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('qr_generator')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'qr_generator' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      QR Generator
+                    </button>
+                  )}
+                  {isTabAllowed('site_configs') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('site_configs')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'site_configs' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Site Configuration
+                    </button>
+                  )}
+                  {isTabAllowed('planner') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('planner')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'planner' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Class Planner
+                    </button>
+                  )}
+                  {isTabAllowed('live_classes') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('live_classes')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'live_classes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Live Scheduled
+                    </button>
+                  )}
+                  {isTabAllowed('tutes') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('tutes')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'tutes' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      📚 Tutes (Google Drive)
+                    </button>
+                  )}
+                  {isTabAllowed('resources') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('resources')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'resources' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      📹 Class Recordings
+                    </button>
+                  )}
+                  {isTabAllowed('broadcast') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('broadcast')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors ${activeAdminTab === 'broadcast' ? 'bg-blue-600/20 text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      Broadcast Notices
+                    </button>
+                  )}
                 </div>
 
                 {/* Sub panels split grids */}
                 <div ref={adminContentRef} className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start scroll-mt-6">
                   
-                  {activeAdminTab === 'registry' && (
-                    <>
-                      <div className="lg:col-span-12">
-                         <AdminRegistryTable students={students} setStudents={setStudents} />
+                  {/* Access Denied Warning if active tab is unauthorized */}
+                  {!isTabAllowed(activeAdminTab) && (
+                    <div className="col-span-12 p-8 md:p-12 bg-slate-900 border border-slate-800 rounded-3xl text-center space-y-3">
+                      <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
+                        <Lock size={26} />
                       </div>
-                      <div className="lg:col-span-12">
-                         <AdminSampleDataGenerator />
-                      </div>
-
-                  {/* Password Reset Tool Removed to separate view tab */}
-
-                  <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
-                    <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
-                      <Plus size={16} className="text-blue-400" /> Quick Student Registration Coder
-                    </h3>
-
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">First Name</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. Nimal"
-                            value={manFirst}
-                            onChange={(e) => setManFirst(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-cyan-500"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Last Name</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. Silva"
-                            value={manLast}
-                            onChange={(e) => setManLast(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-cyan-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400">National ID Number (NIC)</label>
-                        <input 
-                          type="text" 
-                          placeholder="e.g. 20021345678"
-                          value={manNIC}
-                          onChange={(e) => setManNIC(e.target.value)}
-                          className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none focus:border-cyan-500"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400">District</label>
-                        <select 
-                          value={manDistrict}
-                          onChange={(e) => setManDistrict(e.target.value)}
-                          className="w-full bg-slate-950 text-white border border-slate-800 text-xs p-1.5 rounded focus:outline-none"
-                        >
-                          {SRI_LANKA_DISTRICTS.map((dst, idx) => (
-                            <option key={idx} value={dst} className="text-black bg-white">{dst}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400">Class Option Checkboxes</label>
-                        <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2.5 border border-slate-850 rounded">
-                          {globalClassNames.map((item, idx) => (
-                            <label key={idx} className="flex items-center gap-1.5 text-[11px] text-slate-300">
-                              <input 
-                                type="checkbox"
-                                checked={manClassTypes.includes(item)}
-                                onChange={(e) => {
-                                  if (e.target.checked) setManClassTypes(prev => [...prev, item]);
-                                  else setManClassTypes(prev => prev.filter(c => c !== item));
-                                }}
-                                className="w-3.5 h-3.5"
-                              />
-                              {item}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">WhatsApp Number</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. 0712345678"
-                            value={manWhatsApp}
-                            onChange={(e) => setManWhatsApp(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-slate-400">Mobile Number</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. 0712345678"
-                            value={manMobile}
-                            onChange={(e) => setManMobile(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-slate-800 text-xs focus:outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-4 mb-4 bg-blue-500/10 p-3 rounded-lg border border-blue-500/20">
-                         <input 
-                           type="checkbox"
-                           id="freeStudentToggle"
-                           checked={manFreeToggle}
-                           onChange={(e) => setManFreeToggle(e.target.checked)}
-                           className="w-4 h-4 cursor-pointer"
-                         />
-                         <label htmlFor="freeStudentToggle" className="text-xs text-blue-300 font-bold cursor-pointer">
-                           Give this student a FREE CARD (Full Access)
-                         </label>
-                      </div>
-
-                      {manFreeToggle && (
-                        <div className="space-y-1 bg-blue-900/20 border border-blue-500/30 p-3 rounded-xl mt-2 mb-2">
-                          <label className="text-[10px] text-blue-300 font-bold">Free Access Months (Comma separated)</label>
-                          <input 
-                            type="text" 
-                            placeholder="e.g. 2026-05, 2026-06, 2026-07"
-                            value={manFreeMonthsString}
-                            onChange={(e) => setManFreeMonthsString(e.target.value)}
-                            className="bg-slate-950 text-white w-full px-2.5 py-1.5 rounded border border-blue-500/50 text-xs focus:outline-none focus:border-blue-400"
-                          />
-                        </div>
-                      )}
-
-                      <button 
-                        onClick={handleAdminManualGenerate}
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md cursor-pointer"
-                      >
-                        Formulate Registered JSON Code &amp; Credentials
-                      </button>
-
-                      {generatedJSON && (
-                        <div className="space-y-1.5 pt-2">
-                          <label className="text-[10px] text-slate-400 block font-mono">Generated Output Profile block:</label>
-                          <textarea 
-                            readOnly
-                            value={generatedJSON}
-                            className="bg-slate-950/80 text-blue-300 w-full h-[100px] font-mono text-[10px] border border-slate-800 p-2 rounded-xl outline-none resize-none font-semibold"
-                          />
-                          <button 
-                            type="button"
-                            onClick={handleCopyJSON}
-                            className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-705 p-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Copy size={12} /> Copy Student Profile JSON Data
-                          </button>
-                        </div>
-                      )}
+                      <h3 className="text-base font-bold text-white">ප්‍රවේශ අවසර සීමා කර ඇත (Access Denied)</h3>
+                      <p className="text-xs text-slate-400 max-w-md mx-auto">
+                        ඔබගේ ගිණුමට ({currentStaff?.role || 'Staff'}) මෙම අංශයට පිවිසීමට අවසර ලබා දී නොමැත. කරුණාකර ප්‍රධාන පරිපාලක (Super Admin) අමතන්න.
+                      </p>
                     </div>
-                  </div>
-                    </>
                   )}
 
-                  {activeAdminTab === 'payments' && (
+                  {activeAdminTab === 'overview' && isTabAllowed('overview') && (
+                    <div className="col-span-12 w-full">
+                      <AdminOverview 
+                        currentStaff={currentStaff} 
+                        students={students}
+                        onTabChange={handleAdminTabChange}
+                        availableClasses={Array.from(new Set(effectiveClasses.map(c => c.name).filter(Boolean)))}
+                      />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'registry' && isTabAllowed('registry') && (
+                    <div className="lg:col-span-12 space-y-6">
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => handleAdminTabChange('manual_student')}
+                          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-900/30 flex items-center gap-2 transition cursor-pointer"
+                        >
+                          ➕ නව ශිෂ්‍යයෙක් ලියාපදිංචි කරන්න (Manual Register)
+                        </button>
+                      </div>
+                      <AdminRegistryTable students={students} setStudents={setStudents} />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'manual_student' && isTabAllowed('manual_student') && (
+                    <div className="col-span-12 w-full">
+                      <AdminManualStudentRegister 
+                        availableClasses={effectiveClasses.map(c => c.name)}
+                        onStudentRegistered={async () => {
+                          const { data } = await supabase.from('students').select('*').order('joined_at', { ascending: false });
+                          if (data) setStudents(data);
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'staff' && isTabAllowed('staff') && (
+                    <div className="col-span-12 w-full">
+                      <AdminStaffManager currentStaff={currentStaff} />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'payments' && isTabAllowed('payments') && (
                     <div className="lg:col-span-12">
                        <AdminPaymentManager />
                     </div>
                   )}
 
-                  {activeAdminTab === 'history' && (
+                  {activeAdminTab === 'history' && isTabAllowed('history') && (
                     <div className="lg:col-span-12">
                        <AdminPaymentHistory students={students} />
                     </div>
                   )}
 
-                  {activeAdminTab === 'qr_generator' && (
-  <QrGenerator />
-)}
+                  {activeAdminTab === 'qr_generator' && isTabAllowed('qr_generator') && (
+                    <div className="col-span-12 w-full">
+                      <QrGenerator />
+                    </div>
+                  )}
 
-                  {activeAdminTab === 'resets' && (
-  <div className="lg:col-span-12 w-full">
-    <ClassTypesFeesManager />
-  </div>
-)}
+                  {activeAdminTab === 'resets' && isTabAllowed('resets') && (
+                    <div className="lg:col-span-12 w-full">
+                      <ClassTypesFeesManager />
+                    </div>
+                  )}
 
                   {/* අලුත් AdminLiveControls ෆයිල් එක භාවිතා කිරීම */}
-{activeAdminTab === 'live_classes' && (
-  <div className="col-span-12 w-full">
-    <AdminLiveControls />
-  </div>
-)}
-
-                  {/* අලුතින් සම්බන්ධ කළ නවීන Tutes සහ Recordings Manager කොටස් */}
-                  {activeAdminTab === 'tutes' && (
-                    <AdminRecordingsManager initialTab="tutes" />
-                  )}
-                  {activeAdminTab === 'resources' && (
-                    <AdminRecordingsManager initialTab="recordings" />
+                  {activeAdminTab === 'live_classes' && isTabAllowed('live_classes') && (
+                    <div className="col-span-12 w-full">
+                      <AdminLiveControls currentStaff={currentStaff} />
+                    </div>
                   )}
 
-                  {activeAdminTab === 'site_configs' && (
-                    <AdminSiteConfig />
+                  {activeAdminTab === 'pending_payments' && isTabAllowed('pending_payments') && (
+                    <div className="col-span-12 w-full">
+                       <AdminPendingPayments />
+                    </div>
                   )}
 
-                  {activeAdminTab === 'planner' && (
+                  {activeAdminTab === 'bank_accounts' && isTabAllowed('bank_accounts') && (
+                    <div className="col-span-12 w-full">
+                       <AdminBankAccountsManager />
+                    </div>
+                  )}
+
+                  {/* අලුතින් සම්බන්ධ කළ නවීන Tutes සහ Recordings Manager කොටස් - FULL SCREEN WIDTH */}
+                  {activeAdminTab === 'tutes' && isTabAllowed('tutes') && (
+                    <div className="col-span-12 w-full">
+                      <AdminRecordingsManager initialTab="tutes" currentStaff={currentStaff} />
+                    </div>
+                  )}
+                  {activeAdminTab === 'resources' && isTabAllowed('resources') && (
+                    <div className="col-span-12 w-full">
+                      <AdminRecordingsManager initialTab="recordings" currentStaff={currentStaff} />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'site_configs' && isTabAllowed('site_configs') && (
+                    <div className="col-span-12 w-full">
+                      <AdminSiteConfig />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'planner' && isTabAllowed('planner') && (
                     <div className="lg:col-span-12 w-full">
                       <AdminCalendarPlanner />
                     </div>
                   )}
 
-                  {activeAdminTab === 'broadcast' && (
+                  {activeAdminTab === 'broadcast' && isTabAllowed('broadcast') && (
                     <div className="lg:col-span-12 bg-slate-800/40 border border-slate-700/50 rounded-3xl p-6 md:p-8 space-y-4 shadow-xl backdrop-blur-sm">
                     <h3 className="text-md font-bold text-white border-b border-slate-800 pb-2 flex items-center gap-1.5 font-display font-semibold">
                       <Bell size={16} className="text-rose-400" /> Multi-Cast Alert Notifications Sender
@@ -2181,8 +2460,28 @@ if (isLoading) {
                   </div>
                   )}
                 </div>
-
               </div>
+            )}
+
+            {/* Security Password Protected Site Configurations Entry Modal */}
+            {showSiteConfigPasswordModal && (
+              <SecurityPasswordModal
+                isOpen={true}
+                onClose={() => setShowSiteConfigPasswordModal(false)}
+                onConfirm={() => {
+                  setIsSiteConfigUnlocked(true);
+                  setActiveAdminTab('site_configs');
+                  setShowSiteConfigPasswordModal(false);
+                  setTimeout(() => {
+                    adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 100);
+                }}
+                title="වෙබ් අඩවි සැකසුම් අංශය (Website Appearance & Configurations)"
+                description="වෙබ් අඩවියේ හෝම් පේජ් ටෙක්ස්ට්, ෆුටර්, සහ සිසුන්ගේ මෙනු නම් ඇතුළු ප්‍රධාන සැකසුම් වෙනස් කිරීමේ අංශයට ඇතුළු වීමට පරිපාලක ආරක්ෂක මුරපදය ඇතුළත් කරන්න."
+                itemSummary="Website Appearance & Configurations Section Access"
+                actionButtonText="අංශයට පිවිසෙන්න (Unlock Access)"
+                isDangerous={false}
+              />
             )}
           </div>
         )}
@@ -2282,17 +2581,40 @@ if (isLoading) {
         </div>
       )}
 
-      {/* Elegant Standard XHTML Footer */}
-      <footer className="bg-slate-950 border-t border-slate-900 py-8 px-4 mt-12 text-center text-xs text-slate-500 space-y-4 font-sans">
-        <div className="flex justify-center gap-6 text-slate-400 font-bold">
-          {!(currentStudent || isAdminLoggedIn) && (
-            <button onClick={() => { setCurrentView('home'); window.scrollTo(0,0); }} className="hover:text-white transition cursor-pointer">Home Page</button>
-          )}
-        </div>
-        <div>
-          <p className="font-sans">© 2026 Taraka Amarasinghe Physics Zone. All rights reserved.</p>
-        </div>
-      </footer>
+      {/* Footer */}
+      {currentView !== 'dashboard' && (
+        <footer className={`border-t py-6 px-4 mt-12 text-center text-xs space-y-2 font-sans ${
+          theme === 'dark' ? 'bg-slate-950 border-slate-900 text-slate-400' : 'bg-white border-slate-200 text-slate-600 shadow-inner'
+        }`}>
+          <div className="flex justify-center gap-6 text-slate-400 font-bold mb-2">
+            {!(currentStudent || isAdminLoggedIn) && (
+              <button onClick={() => { setCurrentView('home'); window.scrollTo(0,0); }} className="hover:text-blue-500 transition cursor-pointer">{t.home}</button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2.5 text-blue-600 dark:text-blue-400 font-bold">
+            <span>Contact: Smart Physics Support Team - 0779630100</span>
+            <a 
+              href="tel:0779630100" 
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[11px] transition"
+              title="Call Smart Physics Support Team"
+            >
+              <Phone size={12} /> Call Hotline
+            </a>
+            <a 
+              href="https://wa.me/94779630100" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] transition"
+              title="WhatsApp Smart Physics Support Team"
+            >
+              <MessageCircle size={12} /> WhatsApp
+            </a>
+          </div>
+          <div className="text-slate-700 dark:text-slate-300 font-semibold">
+            🏛️ Powered by Amarasinghe Digital
+          </div>
+        </footer>
+      )}
 
     </div>
   );

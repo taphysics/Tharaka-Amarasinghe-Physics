@@ -1,10 +1,68 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;605;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
-Tailwind CSS IntelliSense {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+@custom-variant dark (&:where(.dark, .dark *));
+
+html.dark, html.dark body, html.dark #root {
+  background-color: #020617;
+  color: #f8fafc;
+  min-height: 100vh;
+}
+
+html:not(.dark), html:not(.dark) body, html:not(.dark) #root {
+  background-color: #f8fafc;
+  color: #0f172a;
+  min-height: 100vh;
+}
+
+/* Day Mode (Light Theme) Text Clarity & Contrast Enhancements */
+html:not(.dark) {
+  color-scheme: light;
+}
+
+/* Base text contrast inside non-dark surfaces */
+html:not(.dark) body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* Ensure secondary and muted texts are crystal clear in Day Mode */
+html:not(.dark) .text-slate-400:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+  color: #334155 !important;
+}
+
+html:not(.dark) .text-slate-350:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+  color: #1e293b !important;
+}
+
+html:not(.dark) .text-slate-300:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+  color: #1e293b !important;
+}
+
+html:not(.dark) .text-slate-500:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+  color: #475569 !important;
+}
+
+html:not(.dark) .text-slate-600 {
+  color: #334155 !important;
+}
+
+/* Make inputs, selects and textareas crisp and visible in Day Mode */
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]),
+html:not(.dark) select:not([class*="bg-slate-900"]):not([class*="bg-slate-950"]),
+html:not(.dark) textarea:not([class*="bg-slate-900"]):not([class*="bg-slate-950"]) {
+  color: #0f172a;
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Day mode border visibility enhancement */
+html:not(.dark) .border-slate-200,
+html:not(.dark) .border-slate-200\/80 {
+  border-color: #cbd5e1 !important;
 }
 
 @layer utilities {

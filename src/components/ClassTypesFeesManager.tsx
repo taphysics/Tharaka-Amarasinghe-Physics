@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Plus, Trash2, Edit2, Save, X, DollarSign, CheckCircle, XCircle, RefreshCw, Link } from 'lucide-react';
 import { supabase } from '../supabaseClient'; 
+import SecurityPasswordModal from './SecurityPasswordModal';
 
 interface ClassType {
   id?: string;
@@ -18,6 +19,7 @@ const ClassTypesFeesManager = () => {
   const [isActive, setIsActive] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ClassType | null>(null);
 
   useEffect(() => {
     fetchClassTypes();
@@ -118,24 +120,23 @@ const ClassTypesFeesManager = () => {
     setWhatsappLink(cls.whatsapp_link || ''); // එඩිට් කිරීමේදී පවතින ලින්ක් එක Form එකට ලබාදීම
   };
 
-  const handleDelete = async (id: string) => {
-    if (!id) return;
-    if (window.confirm("මෙම පන්ති වර්ගය මකා දැමීමට අවශ්‍යද? වෙනත් ටේබල් වල දත්ත වලට බලපා ඇත්නම් මකා දැමීමට ඉඩ නොදෙනු ඇත.")) {
-      setIsLoading(true);
-      try {
-        const { error } = await supabase
-          .from('class_types_config')
-          .delete()
-          .eq('id', id);
+  const executeDelete = async () => {
+    if (!deleteTarget?.id) return;
+    setIsLoading(true);
+    try {
+      const { error } = await supabase
+        .from('class_types_config')
+        .delete()
+        .eq('id', deleteTarget.id);
 
-        if (error) throw error;
-        await fetchClassTypes();
-      } catch (error: any) {
-        console.error("Delete Error:", error);
-        alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
-      } finally {
-        setIsLoading(false);
-      }
+      if (error) throw error;
+      await fetchClassTypes();
+      setDeleteTarget(null);
+    } catch (error: any) {
+      console.error("Delete Error:", error);
+      alert('මකා දැමීමේදී දෝෂයක්: ' + error.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -343,7 +344,7 @@ const ClassTypesFeesManager = () => {
                     </button>
 
                     <button
-                      onClick={() => handleDelete(cls.id!)}
+                      onClick={() => setDeleteTarget(cls)}
                       disabled={isLoading}
                       className="p-2 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/10 rounded-lg transition-all text-xs flex items-center gap-1 cursor-pointer"
                     >
@@ -358,6 +359,20 @@ const ClassTypesFeesManager = () => {
         </div>
 
       </div>
+
+      {/* Security Password Protected Class Type Deletion Modal */}
+      {deleteTarget && (
+        <SecurityPasswordModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={executeDelete}
+          title="පන්ති වර්ගය ඉවත් කිරීම (Delete Class Type)"
+          description="මෙම පන්ති වර්ගය දත්ත ගබඩාවෙන් ස්ථිරවම මකා දැමීමට කරුණාකර පරිපාලක ආරක්ෂක මුරපදය ඇතුළත් කරන්න."
+          itemSummary={deleteTarget ? `${deleteTarget.class_type} (මාසික ගාස්තුව: රු. ${deleteTarget.monthly_fee})` : ''}
+          actionButtonText="ස්ථිරවම මකා දමන්න (Delete Now)"
+          isDangerous={true}
+        />
+      )}
 
     </div>
   );

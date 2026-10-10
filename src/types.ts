@@ -125,3 +125,41 @@ export interface ResourceProgress {
   lastPosition?: number; // බාගෙට බලපු වීඩියෝ නැවත එතැන සිට ප්ලේ කිරීමට (තත්පර ගණන)
   updatedAt: string;
 }
+
+// 4. කාර්යමණ්ඩල සාමාජිකයන් (Super Admin, Admin, Manager, Lecturer)
+export type StaffRole = 'super_admin' | 'admin' | 'manager' | 'lecturer';
+
+export interface StaffMember {
+  id: string;
+  role: StaffRole;
+  username: string;
+  password?: string;
+  password_hash?: string;
+  first_name: string;
+  last_name: string;
+  nic: string;
+  whatsapp: string;
+  mobile: string;
+  title?: string; // e.g. "Senior Lecturer"
+  assigned_classes?: string[]; // e.g. ["2027 Theory", "2027 Revision"]
+  allowed_sections?: string[]; // e.g. ["registry", "payments", "live_classes"]
+  delete_pin?: string; // Delete confirmation PIN
+  is_blocked?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// 5. ලෙක්චර්වරුන් ඇතුළත් කරන එසයිමන්ට් ලකුණු
+export interface AssignmentMark {
+  id: string;
+  assignment_name: string;
+  class_type?: string;
+  assignment_date?: string;
+  student_id?: string;
+  student_username: string;
+  student_name?: string;
+  marks: number;
+  lecturer_id?: string;
+  lecturer_name?: string;
+  created_at?: string;
+}

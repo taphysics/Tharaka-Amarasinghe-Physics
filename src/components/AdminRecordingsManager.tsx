@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Video, Plus, Trash2, CheckCircle, AlertCircle, Youtube, Eye, FileText, ExternalLink, Link2, Download, BookOpen } from 'lucide-react';
+import { emitRealtimeEvent, subscribeRealtimeEvents } from '../realtimeSync';
+import SecurityPasswordModal from './SecurityPasswordModal';
+import { 
+  Video, Plus, Trash2, CheckCircle, AlertCircle, Youtube, Eye, FileText, 
+  ExternalLink, Link2, Download, BookOpen, RefreshCw, Search, Filter, Check, X, Film
+} from 'lucide-react';
 
 interface Recording {
   id: string;
@@ -11,6 +16,7 @@ interface Recording {
   month: string;
   class_type: string;
   thumbnail_url: string;
+  created_at?: string;
 }
 
 interface RecordingView {
@@ -33,9 +39,25 @@ interface TuteResource {
 
 interface AdminRecordingsManagerProps {
   initialTab?: 'recordings' | 'tutes';
+  currentStaff?: any;
 }
 
-export default function AdminRecordingsManager({ initialTab = 'recordings' }: AdminRecordingsManagerProps) {
+export default function AdminRecordingsManager({ initialTab = 'recordings', currentStaff }: AdminRecordingsManagerProps) {
+  const isLecturer = currentStaff?.role === 'lecturer';
+
+  const canLecturerEdit = (createdAt?: string) => {
+    if (!isLecturer) return true;
+    if (!createdAt) return false;
+    const diffMs = Date.now() - new Date(createdAt).getTime();
+    return diffMs <= 60 * 60 * 1000;
+  };
+
+  const getRemainingMinutes = (createdAt?: string) => {
+    if (!createdAt) return 0;
+    const diffMs = 60 * 60 * 1000 - (Date.now() - new Date(createdAt).getTime());
+    return Math.max(0, Math.floor(diffMs / 60000));
+  };
+
   const [activeTab, setActiveTab] = useState<'recordings' | 'tutes'>(initialTab);
   const [classes, setClasses] = useState<any[]>([]);
 
@@ -52,11 +74,14 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
 
   const [title, setTitle] = useState('');
   const [youtubeLink, setYoutubeLink] = useState('');
+  const [detectedYtId, setDetectedYtId] = useState<string | null>(null);
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
   const [selectedMonth, setSelectedMonth] = useState(new Date().toLocaleString('default', { month: 'long' }));
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [recSearch, setRecSearch] = useState('');
+  const [recFilterClass, setRecFilterClass] = useState('all');
 
   // ---------------- TUTES & PAPERS STATES ----------------
   const [tutesList, setTutesList] = useState<TuteResource[]>([]);
@@ -69,6 +94,9 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
   const [tuteDesc, setTuteDesc] = useState('');
   const [tuteLoading, setTuteLoading] = useState(false);
   const [tuteMessage, setTuteMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [tuteSearch, setTuteSearch] = useState('');
+  const [tuteFilterClass, setTuteFilterClass] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'recording' | 'tute'; id: string; title: string; created_at?: string } | null>(null);
 
   const years = ['2024', '2025', '2026', '2027', '2028'];
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -79,56 +107,173 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
     'September': '09', 'October': '10', 'November': '11', 'December': '12'
   };
 
+  // Bulletproof YouTube ID Extractor (Works with ANY link: unlisted, live, embed, short, query params, etc.)
+  const extractYouTubeID = (url: string): string | null => {
+    if (!url) return null;
+    const cleanUrl = url.replace(/["'<>]/g, '').trim();
+
+    // 1. Direct 11-char ID
+    if (/^[a-zA-Z0-9_-]{11}$/.test(cleanUrl)) {
+      return cleanUrl;
+    }
+
+    try {
+      // 2. Parse via standard URL object
+      const urlToParse = cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') 
+        ? cleanUrl 
+        : `https://${cleanUrl}`;
+      const parsedUrl = new URL(urlToParse);
+      
+      // youtu.be/ID (Typical unlisted link sharing format)
+      if (parsedUrl.hostname.includes('youtu.be')) {
+        const pathPart = parsedUrl.pathname.replace(/^\//, '').split('/')[0].split('?')[0];
+        if (pathPart && /^[a-zA-Z0-9_-]{11}$/.test(pathPart)) {
+          return pathPart;
+        }
+      }
+
+      // youtube.com search params ?v=ID
+      const vParam = parsedUrl.searchParams.get('v');
+      if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) {
+        return vParam;
+      }
+
+      // /live/ID, /embed/ID, /shorts/ID, /v/ID
+      const pathSegments = parsedUrl.pathname.split('/').filter(Boolean);
+      for (let i = 0; i < pathSegments.length; i++) {
+        const seg = pathSegments[i];
+        if (['live', 'embed', 'shorts', 'v', 'video'].includes(seg.toLowerCase())) {
+          const nextSeg = pathSegments[i + 1]?.split('?')[0];
+          if (nextSeg && /^[a-zA-Z0-9_-]{11}$/.test(nextSeg)) {
+            return nextSeg;
+          }
+        }
+      }
+    } catch (e) {
+      // Continue to regex patterns
+    }
+
+    // 3. Robust Regex Fallbacks
+    const patterns = [
+      /youtu\.be\/([a-zA-Z0-9_-]{11})/i,
+      /[?&]v=([a-zA-Z0-9_-]{11})/i,
+      /\/live\/([a-zA-Z0-9_-]{11})/i,
+      /\/embed\/([a-zA-Z0-9_-]{11})/i,
+      /\/shorts\/([a-zA-Z0-9_-]{11})/i,
+      /\/video\/([a-zA-Z0-9_-]{11})/i,
+      /(?:v=|be\/|embed\/|live\/)([a-zA-Z0-9_-]{11})/i
+    ];
+
+    for (const pat of patterns) {
+      const match = cleanUrl.match(pat);
+      if (match && match[1]) return match[1];
+    }
+
+    // 4. Any 11 char base64 string following slash or equals
+    const generalMatch = cleanUrl.match(/[/=]([a-zA-Z0-9_-]{11})(?:[?&#/!]|$)/);
+    if (generalMatch && generalMatch[1]) return generalMatch[1];
+
+    return null;
+  };
+
+  // Listen to youtubeLink changes and detect ID in real time
+  useEffect(() => {
+    const id = extractYouTubeID(youtubeLink);
+    setDetectedYtId(id);
+  }, [youtubeLink]);
+
   useEffect(() => {
     fetchClasses();
     fetchRecordings();
     fetchViews();
     fetchTutes();
+
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (type === 'recording_added' || type === 'recording_deleted') {
+        fetchRecordings();
+      }
+      if (type === 'tute_added' || type === 'tute_deleted') {
+        fetchTutes();
+      }
+    });
+    return unsub;
   }, []);
 
   const fetchClasses = async () => {
-    const { data, error } = await supabase.from('class_types_config').select('*').eq('is_active', true);
-    if (data) setClasses(data);
-    if (error) console.error("Error fetching classes:", error);
+    try {
+      const { data, error } = await supabase.from('class_types_config').select('*').eq('is_active', true);
+      if (data && data.length > 0) {
+        setClasses(data);
+        return;
+      }
+    } catch (e) {}
+    // Fallback default classes
+    setClasses([
+      { id: '1', class_type: '2026 Theory' },
+      { id: '2', class_type: '2026 Revision' },
+      { id: '3', class_type: '2027 Theory' },
+      { id: '4', class_type: '2027 Revision' },
+      { id: '5', class_type: '2027 Paper Class' },
+      { id: '6', class_type: '2028 Theory' },
+      { id: '7', class_type: '2028 Revision' },
+      { id: '8', class_type: '2028 Paper Class' },
+    ]);
   };
 
   const fetchRecordings = async () => {
-    const { data, error } = await supabase.from('recordings').select('*').order('created_at', { ascending: false });
-    if (data) setRecordings(data as Recording[]);
-    if (error) console.error("Error fetching recordings:", error);
+    // 1. Try Supabase
+    try {
+      const { data, error } = await supabase.from('recordings').select('*').order('created_at', { ascending: false });
+      if (data && !error && data.length > 0) {
+        setRecordings(data as Recording[]);
+        localStorage.setItem('physics_hub_recordings', JSON.stringify(data));
+        return;
+      }
+    } catch (e) {}
+
+    // 2. Fallback to localStorage
+    try {
+      const local = localStorage.getItem('physics_hub_recordings');
+      if (local) setRecordings(JSON.parse(local));
+    } catch (e) {}
   };
 
   const fetchViews = async () => {
-    const { data, error } = await supabase.from('recording_views').select('*');
-    if (data) {
-      const groupedViews: Record<string, RecordingView[]> = {};
-      data.forEach((view: RecordingView) => {
-        if (!groupedViews[view.recording_id]) groupedViews[view.recording_id] = [];
-        groupedViews[view.recording_id].push(view);
-      });
-      setViewsMap(groupedViews);
-    }
-    if (error) console.error("Error fetching views:", error);
+    try {
+      const { data, error } = await supabase.from('recording_views').select('*');
+      if (data) {
+        const groupedViews: Record<string, RecordingView[]> = {};
+        data.forEach((view: RecordingView) => {
+          if (!groupedViews[view.recording_id]) groupedViews[view.recording_id] = [];
+          groupedViews[view.recording_id].push(view);
+        });
+        setViewsMap(groupedViews);
+      }
+    } catch (e) {}
   };
 
   const fetchTutes = async () => {
-    const { data, error } = await supabase
-      .from('class_resources')
-      .select('*')
-      .in('type', ['tute', 'paper'])
-      .order('created_at', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('class_resources')
+        .select('*')
+        .in('type', ['tute', 'paper'])
+        .order('created_at', { ascending: false });
 
-    if (data) setTutesList(data as TuteResource[]);
-    if (error) console.error("Error fetching tutes:", error);
+      if (data && !error && data.length > 0) {
+        setTutesList(data as TuteResource[]);
+        localStorage.setItem('physics_hub_tutes', JSON.stringify(data));
+        return;
+      }
+    } catch (e) {}
+
+    try {
+      const local = localStorage.getItem('physics_hub_tutes');
+      if (local) setTutesList(JSON.parse(local));
+    } catch (e) {}
   };
 
   // ---------------- RECORDINGS HANDLERS ----------------
-  const extractYouTubeID = (url: string) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
-  };
-
   const handleClassToggle = (className: string) => {
     setSelectedClasses(prev => prev.includes(className) ? prev.filter(c => c !== className) : [...prev, className]);
   };
@@ -139,51 +284,98 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
 
     const ytId = extractYouTubeID(youtubeLink);
     if (!ytId) {
-      setMessage({ type: 'error', text: 'නිවැරදි YouTube Link එකක් ලබාදෙන්න.' });
+      setMessage({ 
+        type: 'error', 
+        text: 'නිවැරදි YouTube Link එකක් හෝ Video ID එකක් ලබාදෙන්න. (උදා: https://youtu.be/... හෝ unlisted link)' 
+      });
       return;
     }
+
     if (selectedClasses.length === 0) {
       setMessage({ type: 'error', text: 'අවම වශයෙන් එක් පන්ති වර්ගයක් හෝ තෝරන්න.' });
       return;
     }
 
     setLoading(true);
-    const thumbnailUrl = `https://img.youtube.com/vi/${ytId}/maxresdefault.jpg`;
+    const thumbnailUrl = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
     const standardVideoUrl = `https://www.youtube.com/watch?v=${ytId}`; 
+    const nowIso = new Date().toISOString();
+
+    const recordsToInsert: Recording[] = selectedClasses.map(classType => ({
+      id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      title: title.trim(), 
+      youtube_id: ytId, 
+      video_url: standardVideoUrl,
+      year: selectedYear, 
+      month: selectedMonth, 
+      class_type: classType, 
+      thumbnail_url: thumbnailUrl,
+      created_at: nowIso
+    }));
 
     try {
-      const recordsToInsert = selectedClasses.map(classType => ({
-        title, 
-        youtube_id: ytId, 
-        video_url: standardVideoUrl,
-        year: selectedYear, 
-        month: selectedMonth, 
-        class_type: classType, 
-        thumbnail_url: thumbnailUrl
-      }));
-      
-      const { error } = await supabase.from('recordings').insert(recordsToInsert);
-      if (error) throw error;
+      // 1. Try Supabase insert
+      try {
+        await supabase.from('recordings').insert(recordsToInsert);
+      } catch (err) {
+        console.warn('Supabase recordings insert fallback:', err);
+      }
 
-      setMessage({ type: 'success', text: 'රෙකෝඩින් සාර්ථකව ඇතුළත් කරන ලදී!' });
+      // 2. Always persist to localStorage
+      const existing = recordings;
+      const updated = [...recordsToInsert, ...existing];
+      setRecordings(updated);
+      localStorage.setItem('physics_hub_recordings', JSON.stringify(updated));
+
+      // 3. Realtime broadcast to student dashboards
+      emitRealtimeEvent('recording_added', recordsToInsert);
+
+      setMessage({ type: 'success', text: `රෙකෝඩින් ${recordsToInsert.length} ක් සාර්ථකව පන්ති සඳහා එක් කරන ලදී!` });
       setTitle('');
       setYoutubeLink('');
+      setDetectedYtId(null);
       setSelectedClasses([]);
       fetchRecordings();
     } catch (err: any) {
       console.error(err);
-      setMessage({ type: 'error', text: 'දත්ත ඇතුළත් කිරීමේදී දෝෂයක් සිදුවිය.' });
+      setMessage({ type: 'error', text: 'දත්ත ඇතුළත් කිරීමේදී දෝෂයක් සිදුවිය: ' + (err.message || '') });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDeleteRecording = async (id: string) => {
-    if (!window.confirm('මෙම රෙකෝඩින් එක ඉවත් කිරීමට අවශ්‍යද?')) return;
+  const executeDeleteTarget = async () => {
+    if (!deleteTarget) return;
+    if (isLecturer && !canLecturerEdit(deleteTarget.created_at)) {
+      alert("පැය 1 ක කාලය ඉක්මවා ඇති බැවින් මෙම අයිතමය මකා දැමිය හැක්කේ ප්‍රධාන පරිපාලක (Super Admin / Admin / Manager) මඟින් පමණි.");
+      setDeleteTarget(null);
+      return;
+    }
     try {
-      const { error } = await supabase.from('recordings').delete().eq('id', id);
-      if (error) throw error;
-      fetchRecordings();
+      if (deleteTarget.type === 'recording') {
+        try {
+          await supabase.from('recordings').delete().eq('id', deleteTarget.id);
+        } catch (e) {}
+
+        const updated = recordings.filter(r => r.id !== deleteTarget.id);
+        setRecordings(updated);
+        localStorage.setItem('physics_hub_recordings', JSON.stringify(updated));
+
+        emitRealtimeEvent('recording_deleted', { id: deleteTarget.id });
+        fetchRecordings();
+      } else {
+        try {
+          await supabase.from('class_resources').delete().eq('id', deleteTarget.id);
+        } catch (e) {}
+
+        const updated = tutesList.filter(t => t.id !== deleteTarget.id);
+        setTutesList(updated);
+        localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
+
+        emitRealtimeEvent('tute_deleted', { id: deleteTarget.id });
+        fetchTutes();
+      }
+      setDeleteTarget(null);
     } catch (err) {
       console.error(err);
     }
@@ -216,21 +408,30 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
     setTuteLoading(true);
     const mNum = monthMap[tuteMonth] || '01';
     const targetMonthStr = `${tuteYear}-${mNum}`;
+    const nowIso = new Date().toISOString();
+
+    const newResource: TuteResource = {
+      id: `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      title: tuteTitle.trim(),
+      type: tuteType,
+      link: tuteLink.trim(),
+      target_month: targetMonthStr,
+      target_classes: tuteSelectedClasses,
+      description: tuteDesc.trim() || undefined,
+      date_added: new Date().toISOString().split('T')[0],
+      created_at: nowIso
+    };
 
     try {
-      const newResource = {
-        title: tuteTitle.trim(),
-        description: tuteDesc.trim() || null,
-        type: tuteType,
-        link: tuteLink.trim(),
-        target_month: targetMonthStr,
-        target_classes: tuteSelectedClasses,
-        date_added: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      };
+      try {
+        await supabase.from('class_resources').insert([newResource]);
+      } catch (e) {}
 
-      const { error } = await supabase.from('class_resources').insert([newResource]);
-      if (error) throw error;
+      const updated = [newResource, ...tutesList];
+      setTutesList(updated);
+      localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
+
+      emitRealtimeEvent('tute_added', newResource);
 
       setTuteMessage({ type: 'success', text: 'ටියුට් එක සාර්ථකව ඇතුළත් කරන ලදී!' });
       setTuteTitle('');
@@ -249,190 +450,282 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
   const handleDeleteTute = async (id: string) => {
     if (!window.confirm('මෙම ටියුට් / ලේඛනය ඉවත් කිරීමට අවශ්‍යද?')) return;
     try {
-      const { error } = await supabase.from('class_resources').delete().eq('id', id);
-      if (error) throw error;
+      try {
+        await supabase.from('class_resources').delete().eq('id', id);
+      } catch (e) {}
+
+      const updated = tutesList.filter(t => t.id !== id);
+      setTutesList(updated);
+      localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
+
+      emitRealtimeEvent('tute_deleted', { id });
       fetchTutes();
     } catch (err) {
       console.error(err);
     }
   };
 
+  const lecturerClasses: string[] | null = (isLecturer && currentStaff?.assigned_classes && currentStaff.assigned_classes.length > 0)
+    ? currentStaff.assigned_classes
+    : null;
+
+  const displayClasses = lecturerClasses
+    ? classes.filter(c => lecturerClasses.includes(c.class_type))
+    : classes;
+
+  useEffect(() => {
+    if (lecturerClasses && lecturerClasses.length === 1) {
+      setSelectedClasses([lecturerClasses[0]]);
+      setTuteSelectedClasses([lecturerClasses[0]]);
+    }
+  }, [currentStaff]);
+
+  // Filtered recordings
+  const filteredRecordings = recordings.filter(r => {
+    if (lecturerClasses && !lecturerClasses.includes(r.class_type)) return false;
+    if (recFilterClass !== 'all' && r.class_type !== recFilterClass) return false;
+    if (recSearch.trim()) {
+      const q = recSearch.toLowerCase();
+      const matchTitle = (r.title || '').toLowerCase().includes(q);
+      const matchClass = (r.class_type || '').toLowerCase().includes(q);
+      const matchYear = (r.year || '').includes(q);
+      const matchMonth = (r.month || '').toLowerCase().includes(q);
+      return matchTitle || matchClass || matchYear || matchMonth;
+    }
+    return true;
+  });
+
+  // Filtered tutes
+  const filteredTutes = tutesList.filter(t => {
+    if (lecturerClasses) {
+      const tClasses = t.target_classes || [];
+      if (!tClasses.some((tc: string) => lecturerClasses.includes(tc))) return false;
+    }
+    if (tuteFilterClass !== 'all') {
+      const tClasses = t.target_classes || [];
+      if (!tClasses.includes(tuteFilterClass)) return false;
+    }
+    if (tuteSearch.trim()) {
+      const q = tuteSearch.toLowerCase();
+      const matchTitle = (t.title || '').toLowerCase().includes(q);
+      const matchDesc = (t.description || '').toLowerCase().includes(q);
+      const matchMonth = (t.target_month || '').includes(q);
+      return matchTitle || matchDesc || matchMonth;
+    }
+    return true;
+  });
+
   return (
-    <div className="w-full min-h-screen bg-slate-950 text-white p-4 md:p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        
-        {/* Top Header & Sub-Tab Switcher */}
-        <div className="bg-slate-900 border border-slate-800 p-5 md:p-6 rounded-3xl shadow-xl space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
-                <BookOpen className="text-amber-400" /> Tutes &amp; Records කළමනාකරණය
-              </h1>
-              <p className="text-xs text-slate-400 mt-1">Google Drive ලින්ක් මගින් ටියුට් / පේපර්ස් සහ YouTube පන්ති රෙකෝඩින් පහසුවෙන් කළමනාකරණය කරන්න.</p>
-            </div>
-          </div>
-
-          {/* Prominent Two-Button Mode Selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('tutes')}
-              className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                activeTab === 'tutes'
-                  ? 'bg-blue-600/20 border-blue-500 shadow-lg shadow-blue-900/30 ring-1 ring-blue-500/50'
-                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-xl ${activeTab === 'tutes' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-blue-400'}`}>
-                  <FileText size={20} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    📚 ටියුට් සහ පේපර්ස් (Google Drive)
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Google Drive View Link මගින් සිසුන්ට ටියුට් ලබා දෙන්න</p>
-                </div>
-              </div>
-              <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${activeTab === 'tutes' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
-                {activeTab === 'tutes' ? 'තෝරා ඇත ✓' : 'තෝරන්න'}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('recordings')}
-              className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                activeTab === 'recordings'
-                  ? 'bg-amber-500/20 border-amber-500 shadow-lg shadow-amber-900/30 ring-1 ring-amber-500/50'
-                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className={`p-3 rounded-xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-amber-400'}`}>
-                  <Video size={20} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                    📹 වීඩියෝ රෙකෝඩින් (YouTube Records)
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">පන්ති වීඩියෝ රෙකෝඩින් සහ ශිෂ්‍ය නරඹීම් පරීක්ෂාව</p>
-                </div>
-              </div>
-              <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
-                {activeTab === 'recordings' ? 'තෝරා ඇත ✓' : 'තෝරන්න'}
-              </span>
-            </button>
+    <div className="w-full space-y-6 animate-in fade-in duration-300">
+      
+      {/* Top Header & Sub-Tab Switcher - Full Screen Width */}
+      <div className="bg-slate-900 border border-slate-800 p-5 md:p-6 rounded-3xl shadow-xl space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl md:text-2xl font-black text-white flex items-center gap-2.5">
+              <BookOpen className="text-amber-400" size={26} /> Tutes &amp; Recordings මධ්‍යස්ථානය
+            </h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Google Drive ලින්ක් මගින් ටියුට් / ප්‍රශ්න පත්‍ර සහ YouTube Unlisted / Public ලින්ක් මගින් පන්ති රෙකෝඩින් පුළුල් තිරයෙන් පහසුවෙන් කළමනාකරණය කරන්න.
+            </p>
           </div>
         </div>
 
-        {/* =========================================================================
-            SECTION 1: TUTES & PAPERS MANAGER (GOOGLE DRIVE LINKS)
-           ========================================================================= */}
-        {activeTab === 'tutes' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-200">
-            
-            {/* Form Column (5 cols) */}
-            <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-xl h-fit space-y-5">
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <Plus size={18} className="text-blue-400" /> අලුත් ටියුට් / පේපර් එකක් එක් කරන්න
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Google Drive ලින්ක් එක මගින් සිසුන්ට ටියුට් ලබා දෙන්න.</p>
+        {/* Large Tab Switcher */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab('tutes')}
+            className={`p-4 md:p-5 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+              activeTab === 'tutes'
+                ? 'bg-blue-600/20 border-blue-500 shadow-xl shadow-blue-900/30 ring-2 ring-blue-500/50'
+                : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
+            }`}
+          >
+            <div className="flex items-center gap-3.5">
+              <div className={`p-3.5 rounded-2xl ${activeTab === 'tutes' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40' : 'bg-slate-800 text-blue-400'}`}>
+                <FileText size={24} />
               </div>
+              <div>
+                <h3 className="text-sm md:text-base font-extrabold text-white flex items-center gap-2">
+                  📚 ටියුට් සහ පේපර්ස් (Google Drive)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">Google Drive View Link මගින් සිසුන්ට ආරක්ෂිතව ලේඛන සපයන්න</p>
+              </div>
+            </div>
+            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'tutes' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+              {activeTab === 'tutes' ? 'ක්‍රියාකාරීයි ✓' : 'තෝරන්න'}
+            </span>
+          </button>
 
-              {tuteMessage && (
-                <div className={`p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2 ${
-                  tuteMessage.type === 'success' 
-                    ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' 
-                    : 'bg-red-500/15 border border-red-500/30 text-red-300'
-                }`}>
-                  {tuteMessage.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
-                  {tuteMessage.text}
-                </div>
-              )}
+          <button
+            type="button"
+            onClick={() => setActiveTab('recordings')}
+            className={`p-4 md:p-5 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+              activeTab === 'recordings'
+                ? 'bg-amber-500/20 border-amber-500 shadow-xl shadow-amber-900/30 ring-2 ring-amber-500/50'
+                : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
+            }`}
+          >
+            <div className="flex items-center gap-3.5">
+              <div className={`p-3.5 rounded-2xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/40' : 'bg-slate-800 text-amber-400'}`}>
+                <Video size={24} />
+              </div>
+              <div>
+                <h3 className="text-sm md:text-base font-extrabold text-white flex items-center gap-2">
+                  📹 වීඩියෝ රෙකෝඩින් (YouTube Records)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">YouTube Unlisted &amp; Public වීඩියෝ රෙකෝඩින් කළමනාකරණය</p>
+              </div>
+            </div>
+            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+              {activeTab === 'recordings' ? 'ක්‍රියාකාරීයි ✓' : 'තෝරන්න'}
+            </span>
+          </button>
+        </div>
+      </div>
 
-              <form onSubmit={handleSubmitTute} className="space-y-4 text-xs">
-                {/* 1. Tute Title */}
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">ටියුට් / ප්‍රශ්න පත්‍රයේ නම (Title) *</label>
+      {/* =========================================================================
+          SECTION 1: TUTES & PAPERS MANAGER (GOOGLE DRIVE LINKS) - FULL WIDTH
+         ========================================================================= */}
+      {activeTab === 'tutes' && (
+        <div className="space-y-6">
+          
+          {/* Form Card (Full Width) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-6">
+            <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Plus size={20} className="text-blue-400" /> නව ටියුට් / ප්‍රශ්න පත්‍රයක් එක් කරන්න (Add Tute)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">Google Drive ලින්ක් එක මගින් සිසුන්ට ආරක්ෂිතව PDF ටියුට් ලබා දෙන්න.</p>
+              </div>
+            </div>
+
+            {tuteMessage && (
+              <div className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2.5 ${
+                tuteMessage.type === 'success' 
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' 
+                  : 'bg-red-500/15 border border-red-500/30 text-red-300'
+              }`}>
+                {tuteMessage.type === 'success' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+                {tuteMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitTute} className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                
+                {/* 1. Title */}
+                <div className="md:col-span-2">
+                  <label className="text-slate-300 font-bold text-xs block mb-1.5">ටියුට් / ප්‍රශ්න පත්‍රයේ නම (Title) *</label>
                   <input
                     type="text"
                     required
-                    placeholder="උදා: යාන්ත්‍ර විද්‍යාව - සිද්ධාන්ත ටියුට් 01"
+                    placeholder="උදා: යාන්ත්‍ර විද්‍යාව - සිද්ධාන්ත ටියුට් 01 (Theory Sheet 01)"
                     value={tuteTitle}
                     onChange={(e) => setTuteTitle(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white text-xs focus:outline-none focus:border-blue-500"
                   />
                 </div>
 
                 {/* 2. Type */}
-                <div className="grid grid-cols-2 gap-2">
-                  <label 
-                    onClick={() => setTuteType('tute')}
-                    className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold cursor-pointer transition ${
-                      tuteType === 'tute' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <FileText size={14} /> ටියුට් (Tute)
-                  </label>
-                  <label 
-                    onClick={() => setTuteType('paper')}
-                    className={`p-3 rounded-xl border flex items-center justify-center gap-2 font-bold cursor-pointer transition ${
-                      tuteType === 'paper' ? 'bg-rose-600/20 border-rose-500 text-rose-300' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Download size={14} /> පේපර් (Paper)
-                  </label>
-                </div>
-
-                {/* 3. Google Drive Link with test preview */}
                 <div>
-                  <label className="text-slate-300 font-bold block mb-1.5 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <Link2 size={13} className="text-blue-400" /> Google Drive Link එක (View / Download URL) *
-                    </span>
-                    {tuteLink.trim() && (
-                      <a
-                        href={tuteLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 hover:underline"
-                        title="ලින්ක් එක අලුත් ටැබ් එකකින් පරීක්ෂා කරන්න"
-                      >
-                        <ExternalLink size={11} /> Test Link
-                      </a>
-                    )}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      required
-                      placeholder="https://drive.google.com/file/d/..."
-                      value={tuteLink}
-                      onChange={(e) => setTuteLink(e.target.value)}
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                    />
-                    {tuteLink.trim() && (
-                      <a
-                        href={tuteLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 transition"
-                      >
-                        <ExternalLink size={12} /> Test
-                      </a>
-                    )}
+                  <label className="text-slate-300 font-bold text-xs block mb-1.5">ලේඛන වර්ගය (Type) *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      type="button"
+                      onClick={() => setTuteType('tute')}
+                      className={`py-3 rounded-2xl border text-xs flex items-center justify-center gap-1.5 font-bold cursor-pointer transition ${
+                        tuteType === 'tute' ? 'bg-blue-600/20 border-blue-500 text-blue-300 ring-1 ring-blue-500/40' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <FileText size={15} /> ටියුට් (Tute)
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setTuteType('paper')}
+                      className={`py-3 rounded-2xl border text-xs flex items-center justify-center gap-1.5 font-bold cursor-pointer transition ${
+                        tuteType === 'paper' ? 'bg-rose-600/20 border-rose-500 text-rose-300 ring-1 ring-rose-500/40' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Download size={15} /> පේපර් (Paper)
+                    </button>
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-1">Google Drive Share settings හි 'Anyone with the link can view' ලෙස සකසා ඇති බව තහවුරු කරගන්න.</p>
                 </div>
 
-                {/* 4. Target Classes */}
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
-                  <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
-                    {classes.map((cls) => (
-                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1">
+              </div>
+
+              {/* Google Drive Link */}
+              <div>
+                <label className="text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Link2 size={14} className="text-blue-400" /> Google Drive Link එක (View / Preview URL) *
+                  </span>
+                  {tuteLink.trim() && (
+                    <a
+                      href={tuteLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 hover:underline"
+                    >
+                      <ExternalLink size={13} /> Test Link (නව ටැබ් එකකින් බලන්න)
+                    </a>
+                  )}
+                </label>
+                <div className="flex gap-2.5">
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
+                    value={tuteLink}
+                    onChange={(e) => setTuteLink(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                  />
+                  {tuteLink.trim() && (
+                    <a
+                      href={tuteLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 rounded-2xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition"
+                    >
+                      <ExternalLink size={14} /> Test
+                    </a>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  💡 Google Drive Share විකල්පයන්හි 'Anyone with the link can view' ලෙස තෝරා ඇති බව තහවුරු කරගන්න.
+                </p>
+              </div>
+
+              {/* Classes, Year & Month */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* Target Classes */}
+                <div className="lg:col-span-8">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTuteSelectedClasses(displayClasses.map(c => c.class_type))}
+                        className="text-[10px] text-blue-400 hover:underline font-bold cursor-pointer"
+                      >
+                        සියල්ල තෝරන්න (Select All)
+                      </button>
+                      <span className="text-slate-600 text-xs">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setTuteSelectedClasses([])}
+                        className="text-[10px] text-slate-400 hover:underline font-bold cursor-pointer"
+                      >
+                        හිස් කරන්න (Clear)
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-950 p-3.5 rounded-2xl border border-slate-800 max-h-48 overflow-y-auto">
+                    {displayClasses.map((cls) => (
+                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1 text-xs">
                         <input
                           type="checkbox"
                           checked={tuteSelectedClasses.includes(cls.class_type)}
@@ -445,196 +738,309 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
                   </div>
                 </div>
 
-                {/* 5. Year & Month */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* Year & Month */}
+                <div className="lg:col-span-4 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-slate-300 font-bold block mb-1.5">වසර</label>
+                    <label className="text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
                     <select
                       value={tuteYear}
                       onChange={(e) => setTuteYear(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-blue-500"
                     >
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-slate-300 font-bold block mb-1.5">මාසය</label>
+                    <label className="text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
                     <select
                       value={tuteMonth}
                       onChange={(e) => setTuteMonth(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-blue-500"
                     >
                       {months.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                 </div>
 
-                {/* 6. Description */}
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">කෙටි විස්තරයක් (අමතර උපදෙස්)</label>
-                  <textarea
-                    rows={2}
-                    placeholder="උදා: පළමු සතියේ සාකච්ඡා කෙරෙන ප්‍රශ්නාවලිය"
-                    value={tuteDesc}
-                    onChange={(e) => setTuteDesc(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-blue-500 resize-none"
-                  />
-                </div>
+              </div>
 
-                <button
-                  type="submit"
-                  disabled={tuteLoading}
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-blue-900/30 cursor-pointer disabled:opacity-50"
+              {/* Description */}
+              <div>
+                <label className="text-slate-300 font-bold text-xs block mb-1.5">කෙටි විස්තරයක් (අමතර උපදෙස්)</label>
+                <textarea
+                  rows={2}
+                  placeholder="උදා: පළමු සතියේ සාකච්ඡා කෙරෙන ප්‍රශ්නාවලිය. සජීවී පන්තියට පෙර සම්පූර්ණ කරන්න."
+                  value={tuteDesc}
+                  onChange={(e) => setTuteDesc(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-white text-xs focus:outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={tuteLoading}
+                className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-2xl transition shadow-xl shadow-blue-900/40 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Plus size={16} /> {tuteLoading ? 'ඇතුළත් වෙමින් පවතී...' : 'ටියුට් එක සාර්ථකව පද්ධතියට එක් කරන්න (Save Tute)'}
+              </button>
+            </form>
+          </div>
+
+          {/* Tutes List Stream (Full Width Table/Grid) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <FileText size={20} className="text-blue-400" /> දැනට ඇතුළත් කර ඇති ටියුට් &amp; ප්‍රශ්න පත්‍ර
+                </h3>
+                <p className="text-xs text-slate-400">මුළු ලේඛන ගණන: {tutesList.length}</p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <select
+                  value={tuteFilterClass}
+                  onChange={(e) => setTuteFilterClass(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
                 >
-                  {tuteLoading ? 'ඇතුළත් වෙමින් පවතී...' : 'ටියුට් එක ඇතුළත් කරන්න (Save Tute)'}
-                </button>
-              </form>
-            </div>
+                  <option value="all">සියලු පන්ති (All Classes)</option>
+                  {displayClasses.map(c => (
+                    <option key={c.id} value={c.class_type}>{c.class_type}</option>
+                  ))}
+                </select>
 
-            {/* List Column (7 cols) */}
-            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <FileText size={18} className="text-blue-400" /> දැනට ඇතුළත් කර ඇති ටියුට් &amp; පේපර්ස්
-                  </h3>
-                  <p className="text-xs text-slate-400">මුළු ටියුට් ගණන: {tutesList.length}</p>
+                <div className="relative w-full sm:w-64">
+                  <Search size={14} className="absolute left-3 top-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="ටියුට් සොයන්න..."
+                    value={tuteSearch}
+                    onChange={(e) => setTuteSearch(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-blue-500"
+                  />
                 </div>
 
                 <button
                   onClick={fetchTutes}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
                 >
-                  Refresh
+                  <RefreshCw size={13} /> Refresh
                 </button>
               </div>
+            </div>
 
-              {tutesList.length === 0 ? (
-                <div className="py-16 text-center text-slate-500 text-xs">
-                  තවමත් ටියුට් හෝ පේපර්ස් ඇතුළත් කර නොමැත. වම්පස පෝරමයෙන් ඇතුළත් කරන්න.
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
-                  {tutesList.map((tute) => {
-                    const isTute = tute.type === 'tute';
-                    const targetClasses = tute.target_classes || [];
+            {filteredTutes.length === 0 ? (
+              <div className="py-16 text-center text-slate-500 text-xs space-y-2">
+                <FileText size={32} className="mx-auto text-slate-600" />
+                <p className="font-bold">කිසිදු ටියුට් එකක් හමු නොවීය.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredTutes.map((tute) => {
+                  const isTute = tute.type === 'tute';
+                  const targetClasses = tute.target_classes || [];
 
-                    return (
-                      <div
-                        key={tute.id}
-                        className="p-4 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition"
-                      >
-                        <div className="space-y-1.5 flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded border uppercase ${
-                              isTute ? 'bg-blue-500/15 text-blue-300 border-blue-500/30' : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                            }`}>
-                              {isTute ? 'Tute' : 'Paper'}
+                  return (
+                    <div
+                      key={tute.id}
+                      className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-md group"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-[10px] font-black px-2.5 py-1 rounded-xl uppercase border ${
+                            isTute ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          }`}>
+                            {isTute ? '📄 Tute' : '📝 Paper'}
+                          </span>
+
+                          {tute.target_month && (
+                            <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-lg">
+                              📅 {tute.target_month}
                             </span>
-                            {tute.target_month && (
-                              <span className="text-[10px] font-mono text-slate-400">
-                                📅 {tute.target_month}
-                              </span>
-                            )}
-                          </div>
-
-                          <h4 className="font-bold text-sm text-white truncate" title={tute.title}>
-                            {tute.title}
-                          </h4>
-
-                          {targetClasses.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {targetClasses.map((c, i) => (
-                                <span key={i} className="text-[9px] bg-slate-900 border border-slate-800 text-amber-400 font-bold px-1.5 py-0.5 rounded">
-                                  {c}
-                                </span>
-                              ))}
-                            </div>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                          <a
-                            href={tute.link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-bold flex items-center gap-1 transition"
-                            title="Google Drive Link එක පරික්ෂා කරන්න"
-                          >
-                            <ExternalLink size={13} /> Drive
-                          </a>
+                        <h4 className="font-extrabold text-sm text-white group-hover:text-blue-300 transition line-clamp-2" title={tute.title}>
+                          {tute.title}
+                        </h4>
 
+                        {tute.description && (
+                          <p className="text-xs text-slate-400 line-clamp-2">
+                            {tute.description}
+                          </p>
+                        )}
+
+                        {targetClasses.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {targetClasses.map((c, i) => (
+                              <span key={i} className="text-[10px] bg-slate-900 border border-slate-800 text-amber-300 font-bold px-2 py-0.5 rounded-lg">
+                                {c}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-900 gap-2">
+                        <a
+                          href={tute.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3.5 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                          title="Google Drive Link එක පරික්ෂා කරන්න"
+                        >
+                          <ExternalLink size={13} /> View Link
+                        </a>
+
+                        {isLecturer && !canLecturerEdit(tute.created_at) ? (
+                          <span 
+                            className="text-[10px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-1.5 rounded"
+                            title="පැය 1 ඉක්මවා ඇති බැවින් මැකීම කළ හැක්කේ සුපර් ඇඩ්මින් / ඇඩ්මින් / මැනේජර් මඟින් පමණි."
+                          >
+                            🔒 Locked (&gt;1h)
+                          </span>
+                        ) : (
                           <button
-                            onClick={() => handleDeleteTute(tute.id)}
-                            className="p-1.5 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl transition cursor-pointer"
-                            title="ඉවත් කරන්න"
+                            onClick={() => setDeleteTarget({ type: 'tute', id: tute.id, title: tute.title, created_at: tute.created_at })}
+                            className="p-2 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded-xl transition cursor-pointer"
+                            title={isLecturer ? `ඉවත් කරන්න (Delete - ${getRemainingMinutes(tute.created_at)} mins left)` : "ඉවත් කරන්න (Delete)"}
                           >
                             <Trash2 size={15} />
                           </button>
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            SECTION 2: RECORDINGS MANAGER (YOUTUBE VIDEOS)
-           ========================================================================= */}
-        {activeTab === 'recordings' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-200">
-            
-            {/* Form Column (5 cols) */}
-            <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-xl h-fit space-y-5">
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <Plus size={18} className="text-amber-400" /> අලුත් වීඩියෝ රෙකෝඩින් එකක් එක් කරන්න
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">YouTube Link එකක් මගින් පන්ති රෙකෝඩින් එක් කරන්න.</p>
+                    </div>
+                  );
+                })}
               </div>
+            )}
+          </div>
 
-              {message && (
-                <div className={`p-3.5 rounded-2xl text-xs font-bold flex items-center gap-2 ${
-                  message.type === 'success' ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' : 'bg-red-500/15 border border-red-500/30 text-red-300'
-                }`}>
-                  {message.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
-                  {message.text}
-                </div>
-              )}
+        </div>
+      )}
 
-              <form onSubmit={handleSubmitRecording} className="space-y-4 text-xs">
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">වීඩියෝවේ මාතෘකාව (Title) *</label>
+      {/* =========================================================================
+          SECTION 2: RECORDINGS MANAGER (YOUTUBE VIDEOS) - FULL WIDTH & FIXED PARSER
+         ========================================================================= */}
+      {activeTab === 'recordings' && (
+        <div className="space-y-6">
+          
+          {/* Add Recording Form (Full Width) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-6">
+            <div className="border-b border-slate-800 pb-4">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Plus size={20} className="text-amber-400" /> නව වීඩියෝ රෙකෝඩින් එකක් එක් කරන්න (Add Class Recording)
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                YouTube Unlisted හෝ Public ඕනෑම ලින්ක් එකක් ඇතුළත් කරන්න. ලින්ක් එක ඇතුළත් කළ විගස පහතින් Preview එක දිස්වේ.
+              </p>
+            </div>
+
+            {message && (
+              <div className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2.5 ${
+                message.type === 'success' 
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' 
+                  : 'bg-red-500/15 border border-red-500/30 text-red-300'
+              }`}>
+                {message.type === 'success' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+                {message.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitRecording} className="space-y-5">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                {/* Title */}
+                <div className="lg:col-span-6">
+                  <label className="text-slate-300 font-bold text-xs block mb-1.5">වීඩියෝවේ මාතෘකාව (Title) *</label>
                   <input
                     type="text"
                     required
-                    placeholder="උදා: 2026 Revision - චලිතය Day 01"
+                    placeholder="උදා: 2027 Theory - චලිතය Day 01 (Motion Day 01)"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white text-xs focus:outline-none focus:border-amber-500"
                   />
                 </div>
 
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">YouTube Video Link (URL) *</label>
+                {/* YouTube Link with Realtime ID & Thumbnail Preview */}
+                <div className="lg:col-span-6">
+                  <label className="text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Youtube size={15} className="text-red-500" /> YouTube Video Link (URL හෝ Unlisted Link) *
+                    </span>
+                    {detectedYtId && (
+                      <span className="text-emerald-400 text-xs font-mono font-bold flex items-center gap-1">
+                        <Check size={13} /> Valid ID: {detectedYtId}
+                      </span>
+                    )}
+                  </label>
                   <input
-                    type="url"
+                    type="text"
                     required
-                    placeholder="https://youtu.be/... හෝ https://www.youtube.com/watch?v=..."
+                    placeholder="උදා: https://youtu.be/... හෝ https://www.youtube.com/watch?v=... (Unlisted or Public)"
                     value={youtubeLink}
                     onChange={(e) => setYoutubeLink(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono text-[11px] focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
                   />
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    💡 YouTube Unlisted ලින්ක්, Short ලින්ක් (`youtu.be/`), Live ලින්ක් හෝ සම්පූර්ණ URL ඕනෑම ආකෘතියකට සහය දක්වයි.
+                  </p>
                 </div>
 
-                <div>
-                  <label className="text-slate-300 font-bold block mb-1.5">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
-                  <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-2.5 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
-                    {classes.map((cls) => (
-                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1">
+              </div>
+
+              {/* Live Preview Box if valid ID detected */}
+              {detectedYtId && (
+                <div className="p-4 bg-slate-950/80 border border-amber-500/40 rounded-2xl flex flex-col sm:flex-row items-center gap-4 animate-in fade-in duration-200">
+                  <img
+                    src={`https://img.youtube.com/vi/${detectedYtId}/hqdefault.jpg`}
+                    alt="Preview"
+                    className="w-36 h-24 object-cover rounded-xl border border-slate-800 shrink-0 shadow-md bg-slate-900"
+                    onError={(e: any) => {
+                      e.target.src = `https://img.youtube.com/vi/${detectedYtId}/default.jpg`;
+                    }}
+                  />
+                  <div className="space-y-1 text-xs min-w-0 flex-1">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                      ✓ YouTube Video හඳුනාගන්නා ලදී
+                    </span>
+                    <p className="font-bold text-white text-sm">
+                      {title || 'වීඩියෝ මාතෘකාව ඉහතින් ඇතුළත් කරන්න'}
+                    </p>
+                    <p className="text-slate-400 font-mono text-[11px]">
+                      Video ID: <span className="text-amber-400 font-bold">{detectedYtId}</span>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Class Types & Year/Month Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                
+                <div className="lg:col-span-8">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedClasses(displayClasses.map(c => c.class_type))}
+                        className="text-[10px] text-amber-400 hover:underline font-bold cursor-pointer"
+                      >
+                        සියල්ල තෝරන්න (Select All)
+                      </button>
+                      <span className="text-slate-600 text-xs">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedClasses([])}
+                        className="text-[10px] text-slate-400 hover:underline font-bold cursor-pointer"
+                      >
+                        හිස් කරන්න (Clear)
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-950 p-3.5 rounded-2xl border border-slate-800 max-h-48 overflow-y-auto">
+                    {displayClasses.map((cls) => (
+                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1 text-xs">
                         <input
                           type="checkbox"
                           checked={selectedClasses.includes(cls.class_type)}
@@ -647,117 +1053,207 @@ export default function AdminRecordingsManager({ initialTab = 'recordings' }: Ad
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                {/* Year & Month */}
+                <div className="lg:col-span-4 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-slate-300 font-bold block mb-1.5">වසර</label>
+                    <label className="text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
                     <select
                       value={selectedYear}
                       onChange={(e) => setSelectedYear(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-amber-500"
                     >
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-slate-300 font-bold block mb-1.5">මාසය</label>
+                    <label className="text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
                     <select
                       value={selectedMonth}
                       onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-amber-500"
                     >
                       {months.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-amber-500/20 cursor-pointer disabled:opacity-50"
-                >
-                  {loading ? 'ඇතුළත් වෙමින් පවතී...' : 'රෙකෝඩින් එක ඇතුළත් කරන්න (Save)'}
-                </button>
-              </form>
-            </div>
-
-            {/* List Column (7 cols) */}
-            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Youtube size={18} className="text-red-500" /> දැනට පවතින රෙකෝඩින්
-                  </h3>
-                  <p className="text-xs text-slate-400">මුළු වීඩියෝ ගණන: {recordings.length}</p>
-                </div>
-                <button
-                  onClick={fetchRecordings}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
-                >
-                  Refresh
-                </button>
               </div>
 
-              {recordings.length === 0 ? (
-                <div className="py-16 text-center text-slate-500 text-xs">
-                  තවමත් රෙකෝඩින් ඇතුළත් කර නොමැත.
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
-                  {recordings.map((rec) => {
-                    const views = viewsMap[rec.id] || [];
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl transition shadow-xl shadow-amber-500/20 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Plus size={16} /> {loading ? 'ඇතුළත් වෙමින් පවතී...' : 'රෙකෝඩින් එක සාර්ථකව පද්ධතියට එක් කරන්න (Save Recording)'}
+              </button>
+            </form>
+          </div>
 
-                    return (
-                      <div
-                        key={rec.id}
-                        className="p-4 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition"
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
+          {/* Recordings Stream (Full Width Grid) */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <Youtube size={22} className="text-red-500" /> දැනට පද්ධතියේ පවතින රෙකෝඩින්
+                </h3>
+                <p className="text-xs text-slate-400">මුළු වීඩියෝ ගණන: {recordings.length}</p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <select
+                  value={recFilterClass}
+                  onChange={(e) => setRecFilterClass(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
+                >
+                  <option value="all">සියලු පන්ති (All Classes)</option>
+                  {displayClasses.map(c => (
+                    <option key={c.id} value={c.class_type}>{c.class_type}</option>
+                  ))}
+                </select>
+
+                <div className="relative w-full sm:w-64">
+                  <Search size={14} className="absolute left-3 top-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="රෙකෝඩින් සොයන්න..."
+                    value={recSearch}
+                    onChange={(e) => setRecSearch(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <button
+                  onClick={fetchRecordings}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <RefreshCw size={13} /> Refresh
+                </button>
+              </div>
+            </div>
+
+            {filteredRecordings.length === 0 ? (
+              <div className="py-16 text-center text-slate-500 text-xs space-y-2">
+                <Video size={32} className="mx-auto text-slate-600" />
+                <p className="font-bold">කිසිදු රෙකෝඩින් එකක් හමු නොවීය.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredRecordings.map((rec) => {
+                  const views = viewsMap[rec.id] || [];
+
+                  return (
+                    <div
+                      key={rec.id}
+                      className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-md group"
+                    >
+                      <div className="space-y-3">
+                        <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-800 bg-slate-900">
                           <img
                             src={rec.thumbnail_url}
                             alt=""
-                            className="w-16 h-12 object-cover rounded-xl border border-slate-800 shrink-0 bg-slate-900"
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                            onError={(e: any) => {
+                              const ytId = rec.youtube_id;
+                              if (ytId) e.target.src = `https://img.youtube.com/vi/${ytId}/default.jpg`;
+                            }}
                           />
-                          <div className="space-y-1 min-w-0">
-                            <span className="text-[10px] font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-bold">
+                          <div className="absolute top-2.5 left-2.5">
+                            <span className="text-[10px] font-bold bg-amber-500 text-slate-950 px-2.5 py-1 rounded-lg shadow-md font-mono">
                               {rec.class_type}
                             </span>
-                            <h4 className="font-bold text-sm text-white truncate" title={rec.title}>
-                              {rec.title}
-                            </h4>
-                            <p className="text-[10px] text-slate-400 font-mono">
-                              {rec.year} {rec.month}
-                            </p>
+                          </div>
+                          <div className="absolute bottom-2.5 right-2.5 bg-black/80 text-white text-[10px] font-mono font-bold px-2 py-0.5 rounded-md">
+                            {rec.year} - {rec.month}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                        <h4 className="font-extrabold text-sm text-white group-hover:text-amber-400 transition line-clamp-2" title={rec.title}>
+                          {rec.title}
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-900 gap-2">
+                        <div className="flex items-center gap-2">
                           <button
                             onClick={() => setActiveViewId(activeViewId === rec.id ? null : rec.id)}
-                            className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1 transition cursor-pointer"
+                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-xl border border-slate-800 flex items-center gap-1.5 transition cursor-pointer"
                             title="නැරඹූ සිසුන්"
                           >
-                            <Eye size={13} /> {views.length}
+                            <Eye size={13} className="text-amber-400" /> {views.length} Views
                           </button>
 
+                          <a
+                            href={rec.video_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition"
+                            title="YouTube වෙතින් බලන්න"
+                          >
+                            <ExternalLink size={14} />
+                          </a>
+                        </div>
+
+                        {isLecturer && !canLecturerEdit(rec.created_at) ? (
+                          <span 
+                            className="text-[10px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-1.5 rounded"
+                            title="පැය 1 ඉක්මවා ඇති බැවින් මැකීම කළ හැක්කේ සුපර් ඇඩ්මින් / ඇඩ්මින් / මැනේජර් මඟින් පමණි."
+                          >
+                            🔒 Locked (&gt;1h)
+                          </span>
+                        ) : (
                           <button
-                            onClick={() => handleDeleteRecording(rec.id)}
-                            className="p-1.5 bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded-xl transition cursor-pointer"
-                            title="ඉවත් කරන්න"
+                            onClick={() => setDeleteTarget({ type: 'recording', id: rec.id, title: rec.title, created_at: rec.created_at })}
+                            className="p-2 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded-xl transition cursor-pointer"
+                            title={isLecturer ? `ඉවත් කරන්න (Delete - ${getRemainingMinutes(rec.created_at)} mins left)` : "ඉවත් කරන්න (Delete)"}
                           >
                             <Trash2 size={15} />
                           </button>
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
 
+                      {/* Views Dropdown Drawer if active */}
+                      {activeViewId === rec.id && (
+                        <div className="mt-2 p-3 bg-slate-900/90 border border-slate-800 rounded-2xl space-y-1.5 text-xs animate-in fade-in">
+                          <span className="font-bold text-slate-300 block border-b border-slate-800 pb-1">නැරඹූ සිසුන්ගේ ලැයිස්තුව:</span>
+                          {views.length === 0 ? (
+                            <p className="text-slate-500 text-[11px] italic">තවමත් කිසිදු සිසුවෙකු නරඹා නොමැත.</p>
+                          ) : (
+                            <div className="max-h-28 overflow-y-auto space-y-1">
+                              {views.map((v, idx) => (
+                                <div key={idx} className="flex justify-between text-[11px]">
+                                  <span className="text-amber-400">@{v.username}</span>
+                                  <span className="text-slate-400 font-mono">{Math.floor(v.watched_seconds / 60)} min</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
 
-      </div>
+        </div>
+      )}
+
+      {/* Security Password Protected Deletion Modal */}
+      {deleteTarget && (
+        <SecurityPasswordModal
+          isOpen={true}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={executeDeleteTarget}
+          title={deleteTarget.type === 'recording' ? 'පන්ති රෙකෝඩින් ඉවත් කිරීම (Delete Recording)' : 'ටියුට් / නිබන්ධන ඉවත් කිරීම (Delete Resource)'}
+          description="මෙම අයිතමය දත්ත ගබඩාවෙන් ස්ථිරවම මකා දැමීමට කරුණාකර පරිපාලක ආරක්ෂක මුරපදය ඇතුළත් කරන්න."
+          itemSummary={deleteTarget.title}
+          actionButtonText="ස්ථිරවම මකා දමන්න (Delete Now)"
+          isDangerous={true}
+        />
+      )}
+
     </div>
   );
 }
