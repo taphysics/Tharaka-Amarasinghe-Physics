@@ -1,48 +1,107 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
+import { subscribeRealtimeEvents, emitRealtimeEvent } from '../realtimeSync';
 
 export function useSupabaseSync<T>(tableName: string, initialData: T[]) {
-  const [data, setData] = useState<T[]>(initialData);
+  // 1. Hydrate initially from localStorage cache if available to prevent empty flashes on refresh
+  const [data, setData] = useState<T[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cacheKey = tableName === 'students' ? 'physics_hub_students' : `cached_${tableName}`;
+        const cachedRaw = localStorage.getItem(cacheKey);
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+    return initialData;
+  });
 
-  
-    // Initial fetch
-    useEffect(() => {
+  const lastJsonRef = useRef<string>('');
+
+  useEffect(() => {
+    let isMounted = true;
+
     const fetchData = async () => {
-      const { data: fetchedData, error } = await supabase.from(tableName).select('*');
-      if (!error && fetchedData) {
-        const camelData = fetchedData.map(item => toCamelCase(item));
-        setData(camelData);
+      try {
+        const { data: fetchedData, error } = await supabase.from(tableName).select('*');
+        if (!isMounted) return;
+
+        if (!error && fetchedData) {
+          const camelData = fetchedData.map(item => toCamelCase(item));
+          const serialized = JSON.stringify(camelData);
+
+          // Only update React state if data actually changed
+          if (serialized !== lastJsonRef.current) {
+            lastJsonRef.current = serialized;
+            setData(camelData);
+
+            // Keep local backup cache updated
+            try {
+              const cacheKey = tableName === 'students' ? 'physics_hub_students' : `cached_${tableName}`;
+              localStorage.setItem(cacheKey, serialized);
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        // Silently tolerate transient network pauses
       }
     };
+
+    // Initial load
     fetchData();
 
-    // Subscribe to changes
-    const channelName = `public:${tableName}:${Math.random()}`;
+    // 2. Real-time Live Polling Every 1.5 seconds so all dashboards remain live with the database
+    const pollInterval = setInterval(() => {
+      // Only poll when page is visible to save battery/bandwidth
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchData();
+    }, 1500);
+
+    // 3. Supabase Realtime Postgres Changes Subscription
+    const channelName = `realtime:${tableName}:${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const channel = supabase
       .channel(channelName)
-      .on('postgres_changes', { event: '*', schema: 'public', table: tableName }, payload => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: tableName }, () => {
         fetchData();
       })
       .subscribe();
 
+    // 4. Cross-tab BroadcastChannel and CustomEvent Listener
+    const unsubRealtime = subscribeRealtimeEvents(() => {
+      fetchData();
+    });
+
+    // 5. Window Focus / Tab Re-activation Listener
+    const handleFocus = () => {
+      fetchData();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
     return () => {
-      supabase.removeChannel(channel);
+      isMounted = false;
+      clearInterval(pollInterval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+      unsubRealtime();
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {}
     };
   }, [tableName]);
 
   const updateData = async (updater: T[] | ((prev: T[]) => T[])) => {
     setData(prev => {
       const newData = typeof updater === 'function' ? (updater as any)(prev) : updater;
-      
-      // Attempt to intelligently sync to Supabase (WARNING: This is a simplistic approach for demo)
-      // Ideally you should have dedicated functions like addStudent, removeStudent
-      const syncToDb = async () => {
-        // Full table replacement strategy is dangerous but ensures sync for this basic hook
-        // For production, diffing should be used.
-        // We will just do a basic sync for additions if not using explicit RLS 
-        // For now, this just updates UI, and real CRUD should be done via explicit API calls
-      };
-      
+      try {
+        const cacheKey = tableName === 'students' ? 'physics_hub_students' : `cached_${tableName}`;
+        localStorage.setItem(cacheKey, JSON.stringify(newData));
+        emitRealtimeEvent('student_updated');
+      } catch (e) {}
       return newData;
     });
   };
@@ -50,7 +109,7 @@ export function useSupabaseSync<T>(tableName: string, initialData: T[]) {
   return [data, updateData] as const;
 }
 
-function toCamelCase(obj: any): any {
+export function toCamelCase(obj: any): any {
   if (Array.isArray(obj)) {
     return obj.map(v => toCamelCase(v));
   } else if (obj !== null && obj.constructor === Object) {

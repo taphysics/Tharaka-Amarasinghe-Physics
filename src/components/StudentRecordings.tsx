@@ -98,7 +98,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
     return () => {
       stopWatchTimeTracking().catch(console.error);
     };
-  }, [student, selectedFilter]);
+  }, [student?.id, student?.username, JSON.stringify(student?.class_types || student?.classTypes), selectedFilter]);
 
   useEffect(() => {
     if (isPlaying && selectedVideo && isReady && !hasEnded) {
@@ -234,9 +234,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
 
   const fetchRecordingsAndPayments = async () => {
     try {
-      const studentClasses = student.class_types || [];
+      const rawClasses = student?.class_types || student?.classTypes || (student?.class ? [student.class] : []);
+      const studentClasses: string[] = Array.isArray(rawClasses) ? rawClasses : [rawClasses].filter(Boolean);
       if (studentClasses.length === 0) {
-        setRecordings([]);
+        if (recordings.length > 0) setRecordings([]);
         return;
       }
 

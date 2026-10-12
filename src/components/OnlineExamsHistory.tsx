@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { 
   Award, Calendar, CheckCircle2, XCircle, Clock, ChevronDown, 
@@ -6,6 +6,7 @@ import {
   AlertCircle, Sparkles, BookOpen 
 } from 'lucide-react';
 import { fetchAssignmentMarks } from '../assignmentService';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 import { AssignmentMark } from '../types';
 
 interface Props {
@@ -13,11 +14,29 @@ interface Props {
 }
 
 const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
-  const [records, setRecords] = useState<any[]>([]);
+  const [records, setRecords] = useState<any[]>(() => {
+    try {
+      const username = currentStudent?.username;
+      const raw = username ? localStorage.getItem(`online_exams_history_${username}`) : null;
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [activeExams, setActiveExams] = useState<any[]>([]);
   const [assignmentMarks, setAssignmentMarks] = useState<AssignmentMark[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    try {
+      const username = currentStudent?.username;
+      const raw = username ? localStorage.getItem(`online_exams_history_${username}`) : null;
+      return !raw;
+    } catch {
+      return true;
+    }
+  });
+
+  const isInitialLoadRef = useRef(true);
 
   // Active Exam Taker Modal States
   const [takingExam, setTakingExam] = useState<any | null>(null);
@@ -30,16 +49,26 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
     fetchAllData();
 
     // Supabase Realtime Subscription for exams & results & assignment marks
-    const channel = supabase.channel('student-exams-realtime')
+    const channelName = `student-exams-realtime-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const channel = supabase.channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => fetchAllData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => fetchAllData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'assignment_marks' }, () => fetchAllData())
       .subscribe();
 
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (type === 'exam_submitted' || type === 'exam_created' || type === 'assignment_marks_updated') {
+        fetchAllData();
+      }
+    });
+
     return () => {
-      supabase.removeChannel(channel);
+      unsub();
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {}
     };
-  }, [currentStudent]);
+  }, [currentStudent?.id, currentStudent?.username, JSON.stringify(currentStudent?.class_types || currentStudent?.classTypes)]);
 
   // Exam Countdown Timer
   useEffect(() => {
@@ -61,21 +90,29 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
     };
   }, [takingExam, examSecondsLeft, justSubmittedResult]);
 
-  const fetchAllData = async () => {
-    setIsLoading(true);
+  const fetchAllData = async (isManual = false) => {
+    if (takingExam) return; // Do not interrupt or clear state while writing exam!
+    if (isManual || (isInitialLoadRef.current && records.length === 0 && activeExams.length === 0)) {
+      setIsLoading(true);
+    }
     try {
       const username = currentStudent?.username;
       const studentId = currentStudent?.id;
-      const studentClasses: string[] = currentStudent?.class_types || [];
+      const rawClasses = currentStudent?.class_types || currentStudent?.classTypes || [];
+      const studentClasses: string[] = Array.isArray(rawClasses) ? rawClasses : [rawClasses].filter(Boolean);
 
       // 1. Fetch Past Exam Results
       let fetchedResults: any[] = [];
       if (username || studentId) {
-        const { data, error } = await supabase
-          .from('exam_results')
-          .select('*')
-          .or(`username.eq.${username},student_id.eq.${studentId}`)
-          .order('submitted_at', { ascending: false });
+        let query = supabase.from('exam_results').select('*');
+        if (username && studentId) {
+          query = query.or(`username.eq.${username},student_id.eq.${studentId}`);
+        } else if (username) {
+          query = query.eq('username', username);
+        } else if (studentId) {
+          query = query.eq('student_id', studentId);
+        }
+        const { data, error } = await query.order('submitted_at', { ascending: false });
 
         if (!error && data) {
           fetchedResults = data;
@@ -116,7 +153,15 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
         }
       });
 
-      setRecords(uniqueList.sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime()));
+      if (uniqueList.length > 0) {
+        const sorted = uniqueList.sort((a, b) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime());
+        setRecords(sorted);
+        if (username) {
+          try {
+            localStorage.setItem(`online_exams_history_${username}`, JSON.stringify(sorted));
+          } catch (e) {}
+        }
+      }
 
       // 2. Fetch Active Pushed Live Exams
       const { data: examsData } = await supabase
@@ -129,8 +174,12 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
         // Filter exams matching student's enrolled classes
         const matchingActive = examsData.filter((ex: any) => {
           if (studentClasses.length === 0) return true;
-          const target = ex.class_type || ex.target_class_type;
-          return !target || studentClasses.includes(target);
+          const target = (ex.class_type || ex.target_class_type || '').toLowerCase().trim();
+          if (!target || target === 'all' || target === 'general') return true;
+          return studentClasses.some(sc => {
+            const scLower = sc.toLowerCase().trim();
+            return target.includes(scLower) || scLower.includes(target);
+          });
         });
         setActiveExams(matchingActive);
       }
@@ -138,12 +187,15 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
       // 3. Fetch Assignment Marks for this student username
       if (username) {
         const marks = await fetchAssignmentMarks({ studentUsername: username });
-        setAssignmentMarks(marks);
+        if (marks) {
+          setAssignmentMarks(marks);
+        }
       }
 
     } catch (err) {
       console.error('Error fetching student exam & marks data:', err);
     } finally {
+      isInitialLoadRef.current = false;
       setIsLoading(false);
     }
   };
@@ -265,7 +317,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
         </div>
 
         <button 
-          onClick={fetchAllData} 
+          onClick={() => fetchAllData(true)} 
           className="text-xs px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition font-medium self-start sm:self-auto cursor-pointer"
         >
           යාවත්කාලීන කරන්න (Refresh)

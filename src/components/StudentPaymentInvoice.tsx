@@ -252,7 +252,17 @@ export default function StudentPaymentInvoice() {
       const urlParams = new URLSearchParams(window.location.search);
       const rawSpecificClass = urlParams.get('c');
       const specificClass = rawSpecificClass ? decodeURIComponent(rawSpecificClass).trim() : null;
-      const targetClassType = specificClass || (classesWithFees.find(c => c.status === 'unpaid')?.name) || 'Class Session';
+
+      // Extract all class types being paid for (all unpaid classes if bundle, or specific class)
+      let targetClassType = specificClass;
+      if (!targetClassType) {
+        const unpaidClasses = classesWithFees.filter(c => c.status === 'unpaid').map(c => c.name.trim());
+        if (unpaidClasses.length > 0) {
+          targetClassType = unpaidClasses.join(', ');
+        } else {
+          targetClassType = classesWithFees.map(c => c.name.trim()).join(', ') || 'Class Session';
+        }
+      }
 
       await submitClassJoinPayment({
         student,
@@ -486,7 +496,13 @@ export default function StudentPaymentInvoice() {
             </div>
             <div className="relative inline-block bg-white p-3 rounded-2xl border border-slate-800 mx-auto group">
               <img 
-                src="/qr-payment.PNG" 
+                src="/qr-payment.png" 
+                onError={(e) => {
+                  const target = e.currentTarget as HTMLImageElement;
+                  if (!target.src.endsWith('/qr-payment.PNG')) {
+                    target.src = '/qr-payment.PNG';
+                  }
+                }}
                 alt="QR Payment" 
                 className="w-44 h-44 object-contain cursor-zoom-in"
                 onClick={() => setIsQrModalOpen(true)}
@@ -580,7 +596,17 @@ export default function StudentPaymentInvoice() {
             <X size={24} />
           </button>
           <div className="bg-white p-4 rounded-3xl max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <img src="/qr-payment.PNG" alt="QR Large" className="w-full h-auto object-contain rounded-xl" />
+            <img 
+              src="/qr-payment.png" 
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                if (!target.src.endsWith('/qr-payment.PNG')) {
+                  target.src = '/qr-payment.PNG';
+                }
+              }}
+              alt="QR Large" 
+              className="w-full h-auto object-contain rounded-xl" 
+            />
           </div>
         </div>
       )}

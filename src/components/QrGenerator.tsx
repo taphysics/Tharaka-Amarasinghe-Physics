@@ -19,12 +19,17 @@ import {
   Phone,
   Users,
   FileText,
-  MessageCircle
+  MessageCircle,
+  Sun,
+  Moon,
+  Smartphone,
+  Maximize2,
+  X
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { emitRealtimeEvent, subscribeRealtimeEvents } from '../realtimeSync';
 import SecurityPasswordModal from './SecurityPasswordModal';
-import { BannerLandingPageData, SocialLinkItem, WhatsAppGroupItem } from './BannerLandingPage';
+import BannerLandingPage, { BannerLandingPageData, SocialLinkItem, WhatsAppGroupItem } from './BannerLandingPage';
 
 const SOCIAL_PLATFORMS = [
   { id: 'whatsapp', label: 'WhatsApp', icon: '💬', placeholder: 'https://wa.me/94779630100' },
@@ -67,6 +72,8 @@ export default function QrGenerator() {
   // UI States
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [previewPage, setPreviewPage] = useState<BannerLandingPageData | null>(null);
+  const [activePreviewTab, setActivePreviewTab] = useState<'page' | 'qr'>('page');
+  const [previewTheme, setPreviewTheme] = useState<'dark' | 'light'>('dark');
 
   // Delete Security Modal
   const [deleteTarget, setDeleteTarget] = useState<BannerLandingPageData | null>(null);
@@ -87,15 +94,16 @@ export default function QrGenerator() {
         const parsed: BannerLandingPageData[] = data.map((d: any) => ({
           id: d.id,
           slug: d.slug,
-          title: d.title || d.batch_name || '',
-          description: d.announcement_text || d.description || '',
+          title: d.title || '',
+          description: d.description || '',
           teacher_name: d.teacher_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
           contact_phone: d.contact_phone || '0779630100',
           whatsapp_number: d.whatsapp_number || d.contact_phone || '0779630100',
-          contact_address: d.contact_address || 'Kandy & Online',
+          contact_address: d.contact_address || 'Kandy & Online Islandwide',
+          banner_image: d.banner_image || '',
           social_links: typeof d.social_links === 'string' ? JSON.parse(d.social_links) : d.social_links || [],
           whatsapp_groups: typeof d.whatsapp_groups === 'string' ? JSON.parse(d.whatsapp_groups) : d.whatsapp_groups || [],
-          is_active: d.status ? d.status === 'active' : (d.is_active !== false),
+          is_active: d.is_active !== false,
           view_count: d.view_count || 0,
           created_at: d.created_at,
           updated_at: d.updated_at
@@ -258,41 +266,52 @@ export default function QrGenerator() {
       .trim()
       .replace(/[^\w-]/g, '-');
 
+    // Ensure valid UUID for the database record (since banner_landing_pages.id is uuid NOT NULL)
+    const targetUuid = (editingId && isUuid(editingId))
+      ? editingId
+      : (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+              const r = Math.random() * 16 | 0;
+              return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+            }));
+
     const pagePayload: BannerLandingPageData = {
-      id: editingId || `banner_${Date.now()}`,
+      id: targetUuid,
       slug: cleanSlug,
       title: title.trim(),
       description: description.trim(),
-      teacher_name: teacherName.trim(),
-      contact_phone: contactPhone.trim(),
-      whatsapp_number: contactPhone.trim(),
-      contact_address: contactAddress.trim(),
+      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      contact_phone: contactPhone.trim() || '0779630100',
+      whatsapp_number: contactPhone.trim() || '0779630100',
+      contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
       social_links: socialLinks,
       whatsapp_groups: whatsappGroups,
       is_active: isActive,
-      view_count: editingId ? (pages.find(p => p.id === editingId)?.view_count || 0) : 0,
+      view_count: editingId ? (pages.find(p => p.id === editingId || p.slug === cleanSlug)?.view_count || 0) : 0,
       updated_at: new Date().toISOString()
     };
 
-    // Save to Supabase matching user's official schema
+    // Save to Supabase matching EXACT existing columns of banner_landing_pages table
     let savedToDb = false;
     let dbErrorMsg = '';
 
     const dbRecord: any = {
+      id: targetUuid,
       slug: cleanSlug,
       title: title.trim(),
-      batch_name: title.trim(),
-      status: isActive ? 'active' : 'inactive',
+      description: description.trim(),
+      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      contact_phone: contactPhone.trim() || '0779630100',
+      whatsapp_number: contactPhone.trim() || '0779630100',
+      contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
       banner_image: '',
-      announcement_text: description.trim(),
-      class_types: [],
       social_links: socialLinks,
-      whatsapp_groups: whatsappGroups
+      whatsapp_groups: whatsappGroups,
+      is_active: isActive,
+      view_count: pagePayload.view_count,
+      updated_at: new Date().toISOString()
     };
-
-    if (editingId && isUuid(editingId)) {
-      dbRecord.id = editingId;
-    }
 
     try {
       const { data, error } = await supabase
@@ -306,45 +325,28 @@ export default function QrGenerator() {
           pagePayload.id = data[0].id;
         }
       } else {
-        console.warn('Upsert attempt 1 failed:', error.message);
-        // Fallback for custom columns
-        const fallbackRecord = {
-          ...dbRecord,
-          description: description.trim(),
-          teacher_name: teacherName.trim(),
-          contact_phone: contactPhone.trim(),
-          whatsapp_number: contactPhone.trim(),
-          contact_address: contactAddress.trim(),
-          is_active: isActive
-        };
-        const { error: err2 } = await supabase
-          .from('banner_landing_pages')
-          .upsert(fallbackRecord, { onConflict: 'slug' });
-
-        if (!err2) {
-          savedToDb = true;
-        } else {
-          dbErrorMsg = err2.message;
-        }
+        console.warn('Supabase upsert failed:', error.message);
+        dbErrorMsg = error.message;
       }
     } catch (e: any) {
       console.warn('Supabase upsert failed:', e);
       dbErrorMsg = e?.message || 'Network exception';
     }
 
-    // Save to localStorage
+    // Save to localStorage as well
     const existing = pages.filter(p => p.id !== pagePayload.id && p.slug !== pagePayload.slug);
     const updatedList = [pagePayload, ...existing];
     setPages(updatedList);
     localStorage.setItem('physics_banner_landing_pages', JSON.stringify(updatedList));
 
     emitRealtimeEvent('banner_page_updated', { slug: pagePayload.slug });
+    await fetchPages();
     resetForm();
 
     if (savedToDb) {
       alert('✅ ප්‍රචාරක බැනර් පිටුව සාර්ථකව Supabase ඩේටාබේස් එකට ඇතුළත් කර පබ්ලික් කරන ලදී! පහතින් QR Code එක Download කරගන්න.');
     } else {
-      alert(`⚠️ බැනර් පිටුව LocalStorage වෙත සුරැකිණි. Supabase වෙත ඇතුළත් වීමේ සටහන: ${dbErrorMsg || 'වගුව සෑදී ඇත්දැයි පරීක්ෂා කරන්න'}\nපහතින් QR Code එක ලබාගත හැක.`);
+      alert(`⚠️ බැනර් පිටුව LocalStorage වෙත සුරැකිණි. Supabase සටහන: ${dbErrorMsg || 'වගුව පරීක්ෂා කරන්න'}\nපහතින් QR Code එක ලබාගත හැක.`);
     }
   };
 
@@ -355,12 +357,13 @@ export default function QrGenerator() {
       await supabase
         .from('banner_landing_pages')
         .update({ 
-          status: updatedStatus ? 'active' : 'inactive',
           is_active: updatedStatus,
           updated_at: new Date().toISOString() 
         })
         .eq('slug', p.slug);
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Supabase toggle failed:', e);
+    }
 
     const updated = pages.map(item => item.id === p.id ? { ...item, is_active: updatedStatus } : item);
     setPages(updated);
@@ -517,9 +520,43 @@ export default function QrGenerator() {
 
   const currentPreviewUrl = slug.trim() ? getPublicUrl(slug.trim()) : `${window.location.origin}?b=preview`;
 
+  const livePreviewData: BannerLandingPageData = {
+    id: editingId || 'preview_id',
+    slug: slug.trim() || 'preview',
+    title: title.trim() || '2026 A/L Physics Theory & Revision Class',
+    description: description.trim() || 'තාරක අමරසිංහ සර් විසින් මෙහෙයවනු ලබන දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පන්තියට සම්බන්ධ වීමට පහත WhatsApp සමූහයට එක්වන්න.',
+    teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+    contact_phone: contactPhone.trim() || '0779630100',
+    whatsapp_number: contactPhone.trim() || '0779630100',
+    contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
+    social_links: socialLinks.length > 0 ? socialLinks : [
+      { id: '1', platform: 'whatsapp', label: 'Official WhatsApp', url: 'https://wa.me/94779630100' },
+      { id: '2', platform: 'youtube', label: 'Smart Physics YouTube', url: 'https://youtube.com/@smartphysics' },
+      { id: '3', platform: 'telegram', label: 'Smart Physics Telegram', url: 'https://t.me/smartphysicslk' },
+      { id: '4', platform: 'facebook', label: 'Facebook Page', url: 'https://facebook.com/smartphysics' }
+    ],
+    whatsapp_groups: whatsappGroups.length > 0 ? whatsappGroups : [
+      { id: 'g1', title: '2026 A/L Theory Official Group', description: 'අලුතෙන් එක්වන සිසුන් සඳහා නිල WhatsApp සමූහය', url: 'https://chat.whatsapp.com/demo2026' }
+    ],
+    is_active: isActive,
+    view_count: editingId ? (pages.find(p => p.id === editingId || p.slug === slug)?.view_count || 1) : 1,
+    created_at: new Date().toISOString()
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
       
+      {/* Hidden fixed QR element to always ensure DOM rendering for downloadQrImage */}
+      <div style={{ position: 'fixed', left: '-9999px', top: '-9999px', width: '512px', height: '512px', pointerEvents: 'none', opacity: 0 }}>
+        <div id="qr-svg-preview">
+          <QRCode
+            value={currentPreviewUrl}
+            size={512}
+            viewBox="0 0 256 256"
+          />
+        </div>
+      </div>
+
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-blue-900/60 via-slate-900 to-indigo-900/60 border border-blue-500/30 rounded-3xl p-6 md:p-8 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -546,11 +583,11 @@ export default function QrGenerator() {
         </div>
       </div>
 
-      {/* Grid: Left = Create/Edit Form, Right = Live QR Preview */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+      {/* Grid: Left = Create/Edit Form, Right = Real-Time Live Preview */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         
-        {/* FORM CONTAINER (8 cols) */}
-        <div className="lg:col-span-8 bg-slate-800/40 border border-slate-700/60 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl backdrop-blur-sm">
+        {/* FORM CONTAINER (7 cols on xl) */}
+        <div className="xl:col-span-7 bg-slate-800/40 border border-slate-700/60 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl backdrop-blur-sm">
           <div className="flex justify-between items-center border-b border-slate-800 pb-3">
             <h3 className="font-extrabold text-white text-base flex items-center gap-2">
               <Sparkles size={18} className="text-blue-400" />
@@ -825,81 +862,231 @@ export default function QrGenerator() {
           </form>
         </div>
 
-        {/* LIVE QR CODE PREVIEW (4 cols) */}
-        <div className="lg:col-span-4 bg-slate-800/40 border border-slate-700/60 rounded-3xl p-6 space-y-5 shadow-xl backdrop-blur-sm text-center">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="font-bold text-white text-sm flex items-center gap-2">
-              <QrCode size={16} className="text-amber-400" />
-              <span>Real-Time QR Code Preview</span>
-            </h3>
-            <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-md">
-              Print Ready
-            </span>
-          </div>
-
-          {/* White Box for QR Code */}
-          <div className="p-6 bg-white rounded-2xl shadow-xl inline-block mx-auto border-4 border-slate-200">
-            <div id={`qr-svg-preview`}>
-              <QRCode
-                value={currentPreviewUrl}
-                size={200}
-                style={{ height: 'auto', maxWidth: '100%', width: '100%' }}
-                viewBox={`0 0 256 256`}
-              />
+        {/* REAL-TIME LIVE PREVIEW & QR STUDIO (5 cols on xl) */}
+        <div className="xl:col-span-5 bg-slate-800/40 border border-slate-700/60 rounded-3xl p-5 md:p-6 space-y-4 shadow-xl backdrop-blur-sm sticky top-4">
+          
+          {/* Header with Mode Tabs */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <h3 className="font-extrabold text-white text-sm flex items-center gap-1.5 font-display">
+                  <span>Real-Time Live Preview</span>
+                </h3>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                ස්වයංක්‍රීයව යාවත්කාලීන වන පිටු පෙරදසුන සහ QR කේතය
+              </p>
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <p className="text-xs font-bold text-white truncate">
-              {title || 'Smart Physics Print Banner'}
-            </p>
-            <p className="text-[11px] text-slate-400 font-mono truncate">
-              {currentPreviewUrl}
-            </p>
-          </div>
-
-          <div className="pt-2 flex flex-col gap-2">
-            {/* Direct High-Resolution Downloads for Physical Printing */}
-            <div className="grid grid-cols-2 gap-2">
+            {/* Tab Selector: Live Page vs Print QR */}
+            <div className="flex items-center p-1 bg-slate-950 border border-slate-800 rounded-xl shrink-0">
               <button
                 type="button"
-                onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Print_1024px`, 'png')}
-                className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/30 cursor-pointer"
-                title="Download 1024x1024 High-Resolution PNG for Physical Print Banners"
+                onClick={() => setActivePreviewTab('page')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  activePreviewTab === 'page'
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
               >
-                <Download size={14} />
-                <span>PNG (1024px)</span>
+                <Smartphone size={13} />
+                <span>📱 Live Page</span>
               </button>
               <button
                 type="button"
-                onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Vector`, 'svg')}
-                className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                title="Download Scalable Vector SVG for Billboards & Large Banners"
+                onClick={() => setActivePreviewTab('qr')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  activePreviewTab === 'qr'
+                    ? 'bg-amber-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
               >
-                <FileText size={14} />
-                <span>SVG Vector</span>
+                <QrCode size={13} />
+                <span>🔲 Print QR</span>
               </button>
             </div>
-
-            <button
-              type="button"
-              onClick={() => handleCopyLink(slug || 'sample')}
-              className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700/80 transition flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              {copiedSlug === (slug || 'sample') ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-              <span>{copiedSlug === (slug || 'sample') ? 'Link Copied!' : 'Copy Landing Page Link'}</span>
-            </button>
-
-            <a
-              href={currentPreviewUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
-            >
-              <ExternalLink size={14} />
-              <span>Open & Preview Page</span>
-            </a>
           </div>
+
+          {/* TAB 1: REAL-TIME LIVE PAGE PREVIEW */}
+          {activePreviewTab === 'page' && (
+            <div className="space-y-4">
+              
+              {/* Preview Control Bar: Day/Night Toggle & Fullscreen */}
+              <div className="flex items-center justify-between bg-slate-900/90 border border-slate-800 px-3.5 py-2 rounded-xl text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 text-[11px] font-bold">Theme Mode:</span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTheme(t => t === 'dark' ? 'light' : 'dark')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black border transition cursor-pointer ${
+                      previewTheme === 'dark'
+                        ? 'bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700'
+                        : 'bg-white text-indigo-700 border-slate-300 shadow-sm hover:bg-slate-50'
+                    }`}
+                    title="දිවා / රාත්‍රී මාදිලිය මාරු කර Text පැහැදිලි බව පරීක්ෂා කරන්න"
+                  >
+                    {previewTheme === 'dark' ? <Moon size={13} className="text-amber-400" /> : <Sun size={13} className="text-amber-500" />}
+                    <span>{previewTheme === 'dark' ? '🌙 Night Mode' : '☀️ Day Mode'}</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPage(livePreviewData)}
+                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 font-bold transition cursor-pointer"
+                    title="විශාල තිරයකින් පෙරදසුන බලන්න"
+                  >
+                    <Maximize2 size={13} />
+                    <span>Fullscreen</span>
+                  </button>
+                  <a
+                    href={currentPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 font-bold transition"
+                    title="නව Tab එකකින් විවෘත කරන්න"
+                  >
+                    <ExternalLink size={13} />
+                    <span>Open URL</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Realistic Scrollable Device Viewport Mockup */}
+              <div className="relative rounded-2xl border-2 border-slate-700/80 bg-slate-950 shadow-2xl overflow-hidden">
+                {/* Device Status Header */}
+                <div className="bg-slate-900/95 px-3 py-1.5 flex items-center justify-between text-[10px] text-slate-400 border-b border-slate-800">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span className="font-mono font-bold text-slate-300">LIVE PREVIEW</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono truncate max-w-[180px]">
+                    ?b={slug || 'preview'}
+                  </span>
+                </div>
+
+                {/* Scrollable Viewport with Real-Time Live Component Rendering */}
+                <div className="max-h-[500px] overflow-y-auto overscroll-contain">
+                  <BannerLandingPage
+                    slug={slug || 'preview'}
+                    previewData={livePreviewData}
+                    forceTheme={previewTheme}
+                  />
+                </div>
+              </div>
+
+              {/* Quick Actions Row under Live Page */}
+              <div className="p-3 bg-slate-900/80 rounded-2xl border border-slate-800 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 p-1 bg-white rounded-lg shrink-0 border border-slate-300">
+                    <QRCode value={currentPreviewUrl} size={32} style={{ width: '100%', height: '100%' }} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold text-white truncate">{title || 'Smart Physics Banner'}</p>
+                    <p className="text-[10px] text-slate-400 font-mono truncate">{currentPreviewUrl}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Print_1024px`, 'png')}
+                    className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                    title="Download 1024x1024 High-Resolution PNG"
+                  >
+                    <Download size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Vector`, 'svg')}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 transition cursor-pointer"
+                    title="Download Scalable Vector SVG"
+                  >
+                    <FileText size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyLink(slug || 'preview')}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 transition cursor-pointer"
+                    title="Copy Page Link"
+                  >
+                    {copiedSlug === (slug || 'preview') ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 2: PRINT QR CODE VIEW */}
+          {activePreviewTab === 'qr' && (
+            <div className="space-y-4 text-center py-2">
+              <div className="p-6 bg-white rounded-2xl shadow-xl inline-block mx-auto border-4 border-slate-200">
+                <div>
+                  <QRCode
+                    value={currentPreviewUrl}
+                    size={200}
+                    style={{ height: 'auto', maxWidth: '100%', width: '100%' }}
+                    viewBox="0 0 256 256"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-white truncate">
+                  {title || 'Smart Physics Print Banner'}
+                </p>
+                <p className="text-[11px] text-slate-400 font-mono truncate">
+                  {currentPreviewUrl}
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Print_1024px`, 'png')}
+                    className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/30 cursor-pointer"
+                    title="Download 1024x1024 High-Resolution PNG for Physical Print Banners"
+                  >
+                    <Download size={14} />
+                    <span>PNG (1024px)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadQrImage('qr-svg-preview', `QR_${slug || 'Banner'}_Vector`, 'svg')}
+                    className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    title="Download Scalable Vector SVG for Large Billboards"
+                  >
+                    <FileText size={14} />
+                    <span>SVG Vector</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleCopyLink(slug || 'sample')}
+                  className="w-full py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700/80 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {copiedSlug === (slug || 'sample') ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  <span>{copiedSlug === (slug || 'sample') ? 'Link Copied!' : 'Copy Landing Page Link'}</span>
+                </button>
+
+                <a
+                  href={currentPreviewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                >
+                  <ExternalLink size={14} />
+                  <span>Open & Preview Page</span>
+                </a>
+              </div>
+            </div>
+          )}
+
         </div>
 
       </div>
@@ -1030,6 +1217,15 @@ export default function QrGenerator() {
 
                     {/* Secondary Actions (Preview, Edit, Toggle, Delete) */}
                     <div className="flex items-center justify-between gap-1 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewPage(p)}
+                        className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                        title="පෙරදසුන බලන්න (Preview in Modal)"
+                      >
+                        <Eye size={15} />
+                      </button>
+
                       <a
                         href={fullUrl}
                         target="_blank"
@@ -1090,6 +1286,61 @@ export default function QrGenerator() {
           actionButtonText="ස්ථිරවම මකා දමන්න (Delete Now)"
           isDangerous={true}
         />
+      )}
+
+      {/* Fullscreen Interactive Landing Page Preview Modal */}
+      {previewPage && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
+          <div className="relative w-full max-w-4xl max-h-[92vh] bg-slate-900 border border-slate-700 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-slate-950/90 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+                <span className="font-extrabold text-white text-xs sm:text-sm truncate">
+                  පිටු පෙරදසුන (Preview): {previewPage.title}
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+                  (?b={previewPage.slug})
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPreviewTheme(t => t === 'dark' ? 'light' : 'dark')}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-amber-300 border border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                  title="Toggle Day/Night mode"
+                >
+                  {previewTheme === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
+                  <span>{previewTheme === 'dark' ? 'Night' : 'Day'}</span>
+                </button>
+                <a
+                  href={getPublicUrl(previewPage.slug)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 text-xs font-bold border border-blue-500/30 transition flex items-center gap-1"
+                >
+                  <ExternalLink size={12} />
+                  <span className="hidden sm:inline">Live URL</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPage(null)}
+                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                  title="Close preview"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              <BannerLandingPage
+                slug={previewPage.slug}
+                previewData={previewPage}
+                forceTheme={previewTheme}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

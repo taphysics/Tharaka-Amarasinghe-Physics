@@ -28,7 +28,7 @@ export default function AdminBankAccountsManager() {
   const [accountNumber, setAccountNumber] = useState('');
   const [branch, setBranch] = useState('');
   const [bankLogo, setBankLogo] = useState('');
-  const [qrCodeUrl, setQrCodeUrl] = useState('/qr-payment.PNG');
+  const [qrCodeUrl, setQrCodeUrl] = useState('/qr-payment.png');
   const [instructions, setInstructions] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -62,7 +62,7 @@ export default function AdminBankAccountsManager() {
     setAccountNumber('');
     setBranch('Ampara (අම්පාර)');
     setBankLogo('/Peoples-bank-logo.jpg');
-    setQrCodeUrl('/qr-payment.PNG');
+    setQrCodeUrl('/qr-payment.png');
     setInstructions('මුදල් තැන්පත් කළ පසු රිසීට් පතේ Transaction ID / Reference අංකය ඇතුළත් කර සබ්මිට් කරන්න.');
     setIsActive(true);
     setIsModalOpen(true);
@@ -75,7 +75,7 @@ export default function AdminBankAccountsManager() {
     setAccountNumber(acc.account_number);
     setBranch(acc.branch);
     setBankLogo(acc.bank_logo || '');
-    setQrCodeUrl(acc.qr_code_url || '/qr-payment.PNG');
+    setQrCodeUrl(acc.qr_code_url || '/qr-payment.png');
     setInstructions(acc.instructions || '');
     setIsActive(acc.is_active);
     setIsModalOpen(true);
@@ -97,7 +97,7 @@ export default function AdminBankAccountsManager() {
           account_number: accountNumber.trim(),
           branch: branch.trim(),
           bank_logo: bankLogo.trim() || undefined,
-          qr_code_url: qrCodeUrl.trim() || '/qr-payment.PNG',
+          qr_code_url: qrCodeUrl.trim() || '/qr-payment.png',
           instructions: instructions.trim(),
           is_active: isActive
         });
@@ -109,7 +109,7 @@ export default function AdminBankAccountsManager() {
           account_number: accountNumber.trim(),
           branch: branch.trim(),
           bank_logo: bankLogo.trim() || undefined,
-          qr_code_url: qrCodeUrl.trim() || '/qr-payment.PNG',
+          qr_code_url: qrCodeUrl.trim() || '/qr-payment.png',
           instructions: instructions.trim(),
           is_active: isActive
         });
@@ -419,7 +419,7 @@ export default function AdminBankAccountsManager() {
                 <label className="text-xs font-bold text-slate-300 block mb-1.5">QR Image URL (QR Code පින්තූරය)</label>
                 <input
                   type="text"
-                  placeholder="උදා: /qr-payment.PNG"
+                  placeholder="උදා: /qr-payment.png"
                   value={qrCodeUrl}
                   onChange={(e) => setQrCodeUrl(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white text-xs focus:outline-none focus:border-blue-500 font-mono"

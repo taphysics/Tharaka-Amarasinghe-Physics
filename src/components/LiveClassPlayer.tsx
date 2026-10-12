@@ -34,7 +34,9 @@ import {
   Award,
   AlertCircle,
   HelpCircle,
-  GripHorizontal
+  GripHorizontal,
+  KeyRound,
+  Copy
 } from 'lucide-react';
 
 interface Student {
@@ -118,93 +120,95 @@ const getMonthDisplayName = (monthStr: string) => {
   return clean;
 };
 
-// Extracts Meeting ID and Passcode reliably from various Zoom URL formats
-const extractZoomMeetingInfo = (joinUrl: string) => {
+// Extracts Meeting ID and Passcode reliably from various Zoom URL formats and class objects
+const extractZoomMeetingInfo = (joinUrl: string, classObj?: any) => {
   let meetingId = '';
   let pwd = '';
-  if (!joinUrl) return { meetingId, pwd };
+  if (classObj) {
+    if (classObj.zoom_passcode) pwd = String(classObj.zoom_passcode).trim();
+    else if (classObj.passcode) pwd = String(classObj.passcode).trim();
+    else if (classObj.password) pwd = String(classObj.password).trim();
+  }
+  if (!joinUrl && !meetingId) return { meetingId, pwd };
   try {
     const url = new URL(joinUrl);
     const m = url.pathname.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || url.pathname.match(/\/(\d{9,11})/);
     if (m && m[1]) meetingId = m[1];
-    pwd = url.searchParams.get('pwd') || url.searchParams.get('password') || '';
+    if (!pwd) {
+      pwd = url.searchParams.get('pwd') || url.searchParams.get('password') || url.searchParams.get('passcode') || '';
+    }
   } catch {
     const m = joinUrl.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || joinUrl.match(/(\d{9,11})/);
     if (m && m[1]) meetingId = m[1];
-    const p = joinUrl.match(/[?&](?:pwd|password)=([a-zA-Z0-9_\.-]+)/i);
-    if (p && p[1]) pwd = p[1];
+    if (!pwd) {
+      const p = joinUrl.match(/[?&](?:pwd|password|passcode)=([a-zA-Z0-9_\.-]+)/i);
+      if (p && p[1]) pwd = p[1];
+    }
   }
   return { meetingId, pwd };
 };
 
 // Generates embeddable Zoom Web Client URL pre-filling student's username and passcode
-const getEmbeddableZoomUrl = (joinUrl: string, userName: string) => {
+const getEmbeddableZoomUrl = (joinUrl: string, userName: string, classObj?: any) => {
   if (!joinUrl) return '';
   try {
-    const url = new URL(joinUrl);
-    const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl);
+    const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl, classObj);
+    if (!meetingId) return joinUrl;
 
-    if (meetingId) {
-      url.pathname = `/wc/${meetingId}/join`;
-    } else if (url.pathname.includes('/j/')) {
-      url.pathname = url.pathname.replace('/j/', '/wc/') + '/join';
+    const trimmedUser = (userName || 'Student').trim();
+    let b64User = '';
+    try {
+      b64User = btoa(unescape(encodeURIComponent(trimmedUser)));
+    } catch {
+      b64User = btoa(trimmedUser);
     }
 
+    const params = new URLSearchParams();
+    params.set('prefer', '1');
     if (pwd) {
-      url.searchParams.set('pwd', pwd);
-      url.searchParams.set('password', pwd);
+      params.set('pwd', pwd);
+      params.set('password', pwd);
     }
+    params.set('uname', trimmedUser);
+    params.set('un', b64User);
+    params.set('userName', trimmedUser);
+    params.set('name', trimmedUser);
+    params.set('dn', trimmedUser);
 
-    // Automatically fill the student's username into Zoom Attendee Name
-    if (userName) {
-      const trimmedUser = userName.trim();
-      try {
-        const encodedName = btoa(unescape(encodeURIComponent(trimmedUser)));
-        url.searchParams.set('un', encodedName);
-      } catch {
-        url.searchParams.set('un', btoa(trimmedUser));
-      }
-      url.searchParams.set('uname', trimmedUser);
-      url.searchParams.set('userName', trimmedUser);
-      url.searchParams.set('name', trimmedUser);
-      url.searchParams.set('dn', trimmedUser);
-    }
-
-    url.searchParams.set('prefer', '1');
-    return url.toString();
+    return `https://zoom.us/wc/join/${meetingId}?${params.toString()}`;
   } catch (error) {
     return joinUrl;
   }
 };
 
 // Generates Direct Zoom Join URL (with embedded passcode so mobile/browser never prompts)
-const getDirectZoomJoinUrl = (joinUrl: string, userName: string) => {
+const getDirectZoomJoinUrl = (joinUrl: string, userName: string, classObj?: any) => {
   if (!joinUrl) return '';
   try {
-    const url = new URL(joinUrl);
-    const { pwd } = extractZoomMeetingInfo(joinUrl);
+    const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl, classObj);
+    if (!meetingId) return joinUrl;
+
+    const trimmedUser = (userName || 'Student').trim();
+    const params = new URLSearchParams();
     if (pwd) {
-      url.searchParams.set('pwd', pwd);
-      url.searchParams.set('password', pwd);
+      params.set('pwd', pwd);
     }
-    if (userName) {
-      const trimmedUser = userName.trim();
-      url.searchParams.set('uname', trimmedUser);
-      url.searchParams.set('userName', trimmedUser);
-      url.searchParams.set('name', trimmedUser);
-      url.searchParams.set('dn', trimmedUser);
+    if (trimmedUser) {
+      params.set('uname', trimmedUser);
+      params.set('userName', trimmedUser);
+      params.set('name', trimmedUser);
     }
-    return url.toString();
+    return `https://zoom.us/j/${meetingId}?${params.toString()}`;
   } catch {
     return joinUrl;
   }
 };
 
-// Generates direct mobile Zoom App link with embedded passcode
-const getMobileZoomAppUrl = (joinUrl: string, userName: string) => {
-  const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl);
+// Generates direct mobile Zoom App link with embedded passcode & username
+const getMobileZoomAppUrl = (joinUrl: string, userName: string, classObj?: any) => {
+  const { meetingId, pwd } = extractZoomMeetingInfo(joinUrl, classObj);
   if (!meetingId) return joinUrl;
-  const pwdParam = pwd ? `&pwd=${pwd}` : '';
+  const pwdParam = pwd ? `&pwd=${encodeURIComponent(pwd)}` : '';
   const userParam = userName ? `&uname=${encodeURIComponent(userName.trim())}` : '';
   return `zoomus://zoom.us/join?action=join&confno=${meetingId}${pwdParam}${userParam}`;
 };
@@ -273,6 +277,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isRequestingCamera, setIsRequestingCamera] = useState<boolean>(false);
   const [showBrowserPermModal, setShowBrowserPermModal] = useState<boolean>(false);
+  const [passcodeCopied, setPasscodeCopied] = useState<boolean>(false);
+  const [usernameCopied, setUsernameCopied] = useState<boolean>(false);
 
   // Fullscreen Auto-hide Controls States & Orientation
   const [showFullscreenControls, setShowFullscreenControls] = useState<boolean>(true);
@@ -595,63 +601,92 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       let stream: MediaStream | null = null;
       let lastErr: any = null;
 
-      // Adaptive Cascading Constraints for Maximum Device & Browser Compatibility
+      // Pure Camera Video Constraints (DO NOT request audio to prevent mobile mic lockouts and browser prompts)
       const constraintTiers: MediaStreamConstraints[] = [
-        // Tier 1: Ideal user-facing camera + microphone
+        // Tier 1: Front Selfie Camera on mobile phone / iOS Safari
         {
           video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: true
+          audio: false
         },
-        // Tier 2: Flexible camera + microphone without strict resolution constraints
+        // Tier 2: Ideal front camera
+        {
+          video: { facingMode: { ideal: 'user' } },
+          audio: false
+        },
+        // Tier 3: Standard generic camera
         {
           video: true,
-          audio: true
+          audio: false
         },
-        // Tier 3: User camera only (for PCs without microphone or where mic is blocked)
+        // Tier 4: Minimal video
         {
-          video: { facingMode: 'user' }
-        },
-        // Tier 4: Generic camera only (any connected webcam)
-        {
-          video: true
-        },
-        // Tier 5: Audio only (if device has no camera at all but has mic)
-        {
-          audio: true
+          video: { width: { min: 240 } },
+          audio: false
         }
       ];
 
+      // Safe acquisition with 12s timeout protection against infinite spinner hangs
+      const acquireStreamWithTimeout = (constraints: MediaStreamConstraints, timeoutMs = 12000): Promise<MediaStream> => {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            reject(new Error("Camera request timed out. Please allow camera permissions in your device settings."));
+          }, timeoutMs);
+
+          if (navigator?.mediaDevices?.getUserMedia) {
+            navigator.mediaDevices.getUserMedia(constraints)
+              .then(s => { clearTimeout(timer); resolve(s); })
+              .catch(e => { clearTimeout(timer); reject(e); });
+          } else {
+            const legacy = (navigator as any)?.webkitGetUserMedia || (navigator as any)?.mozGetUserMedia;
+            if (legacy) {
+              legacy.call(navigator, constraints,
+                (s: MediaStream) => { clearTimeout(timer); resolve(s); },
+                (e: any) => { clearTimeout(timer); reject(e); }
+              );
+            } else {
+              clearTimeout(timer);
+              reject(new Error("MediaDevices not supported"));
+            }
+          }
+        });
+      };
+
       for (const constraints of constraintTiers) {
         try {
-          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-          } else {
-            const legacyGetUserMedia = (navigator as any).webkitGetUserMedia || (navigator as any).mozGetUserMedia;
-            stream = await new Promise((resolve, reject) => {
-              legacyGetUserMedia.call(navigator, constraints, resolve, reject);
-            });
+          stream = await acquireStreamWithTimeout(constraints, 12000);
+          if (stream && stream.getVideoTracks().length > 0) {
+            break;
           }
-          if (stream) break;
         } catch (e) {
           lastErr = e;
           // Continue to next tier fallback
         }
       }
 
-      if (!stream) {
-        throw lastErr || new Error("Camera stream could not be acquired");
+      // Strictly verify that the stream contains an active video track
+      if (!stream || stream.getVideoTracks().length === 0) {
+        throw lastErr || new Error("Camera stream could not be acquired or contains no video track");
       }
 
       setCameraStream(stream);
       setIsCameraActive(true);
       setMediaPermissionGranted(true);
 
-      if (examGateVideoRef.current) {
-        examGateVideoRef.current.srcObject = stream;
-      }
-      if (floatingCameraVideoRef.current) {
-        floatingCameraVideoRef.current.srcObject = stream;
-      }
+      const attachStreamToVideo = async (videoEl: HTMLVideoElement | null) => {
+        if (!videoEl) return;
+        videoEl.srcObject = stream;
+        videoEl.muted = true;
+        videoEl.setAttribute('playsinline', 'true');
+        videoEl.setAttribute('webkit-playsinline', 'true');
+        try {
+          await videoEl.play();
+        } catch (pErr) {
+          console.warn("Camera video autoplay deferred:", pErr);
+        }
+      };
+
+      await attachStreamToVideo(examGateVideoRef.current);
+      await attachStreamToVideo(floatingCameraVideoRef.current);
 
       if (showPromptAlert) {
         alert("✅ කැමරාව සාර්ථකව සක්‍රීය විය! දැන් ඔබට විභාගය ආරම්භ කළ හැක.");
@@ -660,11 +695,14 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     } catch (err: any) {
       console.warn("Camera stream request info:", err);
       setIsCameraActive(false);
+      setCameraStream(null);
+      if (examGateVideoRef.current) examGateVideoRef.current.srcObject = null;
+      if (floatingCameraVideoRef.current) floatingCameraVideoRef.current.srcObject = null;
 
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        setCameraError("බ්‍රවුසරයේ කැමරා අවසරය (Permission) ලබා දී නොමැත. කැමරාව On කර ගැනීමට Address Bar හි Lock/Camera අයිකනයෙන් Allow කරන්න. (කැමරාව නොමැතිවද විභාගය ආරම්භ කළ හැක).");
+        setCameraError("බ්‍රවුසරයේ කැමරා අවසරය (Permission) ලබා දී නොමැත. කරුණාකර Browser Settings (හෝ Address bar Lock icon) හරහා Camera Allow කරන්න. (කැමරාව නොමැතිවද විභාගය ආරම්භ කළ හැක).");
       } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-        setCameraError("මෙම ඩිවයිස් එකෙහි කැමරාවක් හෝ මයික්‍රෆෝනයක් සොයාගත නොහැකි විය. කැමරාව රහිතවද විභාගය ආරම්භ කළ හැක.");
+        setCameraError("මෙම ඩිවයිස් එකෙහි කැමරාවක් සොයාගත නොහැකි විය. කැමරාව රහිතවද විභාගය ආරම්භ කළ හැක.");
       } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
         setCameraError("කැමරාව වෙනත් මෘදුකාංගයක් මගින් භාවිතා වේ. කැමරාව රහිතවද විභාගය ආරම්භ කළ හැක.");
       } else {
@@ -1247,9 +1285,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
   // Direct Zoom fallback URL & Embed URL (strictly student Join link)
   const zoomDirectUrl = targetClass ? (targetClass.zoom_join_url || targetClass.link || '') : '';
-  const zoomEmbedUrl = targetClass ? getEmbeddableZoomUrl(zoomDirectUrl, studentUsername) : '';
-  const zoomMeetingInfo = extractZoomMeetingInfo(zoomDirectUrl);
-  const mobileZoomAppUrl = getMobileZoomAppUrl(zoomDirectUrl, studentUsername);
+  const zoomEmbedUrl = targetClass ? getEmbeddableZoomUrl(zoomDirectUrl, studentUsername, targetClass) : '';
+  const zoomMeetingInfo = extractZoomMeetingInfo(zoomDirectUrl, targetClass);
+  const mobileZoomAppUrl = getMobileZoomAppUrl(zoomDirectUrl, studentUsername, targetClass);
 
   // Google Drive PDF embed link
   const drivePdfEmbedUrl = activeExam ? getEmbeddableDriveUrl(activeExam.pdf_url) : '';
@@ -2034,6 +2072,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               {!isExamOpen && (
                 <button
                   onClick={() => startCameraStream(true)}
+                  disabled={isRequestingCamera}
                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition cursor-pointer ${
                     isCameraActive
                       ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
@@ -2041,7 +2080,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                   }`}
                   title={isCameraActive ? "කැමරාව සාර්ථකව ක්‍රියාත්මකයි" : "බ්‍රවුසරයේ කැමරා සහ මයික්‍රෆෝන් අවසරය ලබා ගන්න"}
                 >
-                  {isCameraActive ? (
+                  {isRequestingCamera ? (
+                    <><RotateCcw size={13} className="animate-spin text-amber-400" /> <span className="hidden sm:inline">කැමරාව සක්‍රීය වෙමින්...</span></>
+                  ) : isCameraActive ? (
                     <><Camera size={13} className="text-emerald-400" /> <span className="hidden sm:inline">Camera ON</span></>
                   ) : (
                     <><VideoOff size={13} className="text-amber-400" /> <span className="hidden sm:inline">Turn Cam ON</span></>
@@ -2049,14 +2090,26 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </button>
               )}
 
-              {/* Mobile Phone Native Zoom App Direct Launch */}
+              {/* Mobile Phone Native Zoom App Direct Launch & Direct Auto-Join */}
               {mobileZoomAppUrl && !isExamOpen && (
                 <a
                   href={mobileZoomAppUrl}
-                  className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 border border-blue-500/30 transition"
+                  className="bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-blue-500/40 transition shadow-sm"
                   title="Mobile Phone එකෙන් Zoom App එක හරහා පාස්කෝඩ් නොමැතිව Auto Open කරන්න"
                 >
                   <Smartphone size={13} /> <span className="hidden sm:inline">Zoom App</span>
+                </a>
+              )}
+
+              {zoomDirectUrl && !isExamOpen && (
+                <a
+                  href={getDirectZoomJoinUrl(zoomDirectUrl, studentUsername, targetClass)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-emerald-500/40 transition shadow-sm"
+                  title="Auto Join Link එකෙන් කෙලින්ම Open කරන්න (පාස්කෝඩ් නොමැතිව)"
+                >
+                  <ExternalLink size={13} /> <span className="hidden sm:inline">Auto Join</span>
                 </a>
               )}
 
@@ -2151,7 +2204,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
               <iframe
                 src={zoomEmbedUrl}
-                allow="camera *; microphone *; fullscreen *; display-capture *; autoplay *; clipboard-write *; clipboard-read *"
+                allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write; clipboard-read"
                 allowFullScreen={true}
                 sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads allow-presentation"
                 className={`absolute inset-0 w-full h-full border-0 ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}

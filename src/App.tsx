@@ -34,7 +34,7 @@ import {
 } from './data';
 import { supabase } from './supabaseClient';
 
-import { useSupabaseSync } from './hooks/useSupabaseSync';
+import { useSupabaseSync, toCamelCase } from './hooks/useSupabaseSync';
 import AdminRegistryTable from './components/AdminRegistryTable';
 import ClassTypesFeesManager from './components/ClassTypesFeesManager';
 import AdminPaymentManager from './components/AdminPaymentManager';
@@ -58,10 +58,26 @@ import AdminManualStudentRegister from './components/AdminManualStudentRegister'
 import AdminOverview from './components/AdminOverview';
 import LecturerDashboard from './components/LecturerDashboard';
 import BannerLandingPage from './components/BannerLandingPage';
+import FinanceDepartment from './components/FinanceDepartment';
 import { fetchAllPendingPayments } from './pendingPaymentsService';
 import { subscribeRealtimeEvents } from './realtimeSync';
 import { translations, Language } from './translations';
-import { authenticateStaff, saveActiveStaffSession, getActiveStaffSession } from './staffService';
+import { authenticateStaff } from './staffService';
+import {
+  getActiveStaffSession,
+  saveActiveStaffSession,
+  clearStaffSession,
+  touchStaffSession,
+  getActiveStudentSession,
+  saveActiveStudentSession,
+  clearStudentSession,
+  touchStudentSession,
+  getSavedAdminTab,
+  setSavedAdminTab,
+  getSavedStudentTab,
+  setSavedStudentTab
+} from './sessionService';
+
 
 export default function App() {
   // Check for banner landing page URL: /b/:slug, ?b=:slug, ?banner=:slug, ?p=:slug
@@ -164,60 +180,49 @@ export default function App() {
   const [scheduledLives, setScheduledLives] = useSupabaseSync<any>('scheduled_lives', []);
 
   const [currentView, setCurrentView] = useState<'home' | 'free-notes' | 'register' | 'login' | 'dashboard' | 'admin' | 'live' | 'tutes' | 'recordings'>(() => {
-    const cached = localStorage.getItem('physics_hub_current_student');
-    const expiryStr = localStorage.getItem('physics_hub_login_expiry');
-    
-    // ලොග් වී ඇත්නම් සහ පැය 2ක කාලය අවසන් වී නැත්නම් කෙලින්ම dashboard එකට යන්න
-    if (cached && expiryStr) {
-      const now = new Date().getTime();
-      const expiryTime = parseInt(expiryStr, 10);
-      if (now < expiryTime) {
-        return 'dashboard';
-      } else {
-        // කාලය අවසන් වී ඇත්නම් (පැය 2කට වඩා බැහැරව සිටියා නම්) පැරණි දත්ත මකා දමන්න
-        localStorage.removeItem('physics_hub_current_student');
-        localStorage.removeItem('physics_hub_login_expiry');
-      }
+    // 1. First check if staff (Super Admin, Admin, Manager, Lecturer) has active 6-hour session
+    const staff = getActiveStaffSession();
+    if (staff) {
+      return 'admin';
+    }
+    // 2. Then check if student has active 6-hour session
+    const student = getActiveStudentSession();
+    if (student) {
+      return 'dashboard';
     }
     return 'home';
   });
 
   const [currentStudent, setCurrentStudent] = useState<Student | null>(() => {
-    const cached = localStorage.getItem('physics_hub_current_student');
-    const expiryStr = localStorage.getItem('physics_hub_login_expiry');
-
-    if (cached && expiryStr) {
-      const now = new Date().getTime();
-      const expiryTime = parseInt(expiryStr, 10);
-      
-      // කාලය ඉකුත් වී නැත්නම් පමණක් ළමයාගේ දත්ත ලබා ගන්න
-      if (now < expiryTime) {
-        const saved = localStorage.getItem('physics_hub_students');
-        const list: Student[] = saved ? JSON.parse(saved) : DEFAULT_STUDENTS;
-        return list.find(s => s.username === cached) || null;
-      }
-    }
-    return null;
+    return getActiveStudentSession();
   });
 
-  // ළමයා වෙබ් අඩවියේ රැඳී සිටින තාක් කල් කල් ඉකුත්වීමේ කාලය අඛණ්ඩව පැය 2කින් ඉදිරියට ගෙන යාම (Heartbeat)
+  // Active 6-Hour Session Heartbeat: while user is active on the website, continuously extend 6-hour offline countdown
   useEffect(() => {
-    if (currentStudent) {
-      const extendSessionTime = () => {
-        const newExpiryTime = new Date().getTime() + (2 * 60 * 60 * 1000);
-        localStorage.setItem('physics_hub_login_expiry', newExpiryTime.toString());
-      };
+    const handleActiveHeartbeat = () => {
+      touchStaffSession();
+      touchStudentSession();
+    };
 
-      // මුලින්ම ආපු ගමන්ම Session එක පැය 2කින් Extend කරනවා
-      extendSessionTime();
+    // Immediate touch on boot
+    handleActiveHeartbeat();
 
-      // ඉන්පසු සෑම තත්පර 60කට වරක්ම කාලය දික් කරනවා
-      const intervalId = setInterval(extendSessionTime, 60000);
+    // Heartbeat every 30 seconds
+    const intervalId = setInterval(handleActiveHeartbeat, 30000);
 
-      // වෙබ් අඩවියෙන් ඉවත් වූ විට (Tab එක Close කළ විට) මෙය නවතින අතර, එතැන් සිට පැය 2ක ගණන් කිරීම ඇරඹේ
-      return () => clearInterval(intervalId);
-    }
-  }, [currentStudent]);
+    // Also touch on any user activity (clicks, keys, touches, focus)
+    const onUserActivity = () => {
+      handleActiveHeartbeat();
+    };
+
+    const activityEvents = ['mousedown', 'keydown', 'touchstart', 'scroll', 'visibilitychange', 'focus'];
+    activityEvents.forEach(evt => window.addEventListener(evt, onUserActivity, { passive: true }));
+
+    return () => {
+      clearInterval(intervalId);
+      activityEvents.forEach(evt => window.removeEventListener(evt, onUserActivity));
+    };
+  }, []);
   
   // Slide index
   const [activeSlide, setActiveSlide] = useState(0);
@@ -252,23 +257,25 @@ export default function App() {
     return () => clearInterval(timer);
   }, [slideImages.length]);
 
-  // Ensure current password matches to handle cross-device password refresh
+  // Ensure current password matches to handle cross-device password refresh without falsely logging out on reload
   useEffect(() => {
-    if (currentStudent) {
-      const found = students.find(s => s.username === currentStudent.username);
-      if (!found || found.password !== currentStudent.password) {
-        // Password changed or student deleted, log out
-        setCurrentStudent(null);
-        localStorage.removeItem('physics_hub_current_student');
-        if (currentView !== 'login') {
-          setCurrentView('login');
+    if (currentStudent && students && students.length > 0) {
+      const found = students.find(s => s.username?.toLowerCase() === currentStudent.username?.toLowerCase());
+      if (found) {
+        if (found.password && currentStudent.password && String(found.password).trim() !== String(currentStudent.password).trim()) {
+          // Password explicitly changed in database, log out
+          handleStudentLogout();
+        } else {
+          // Silently sync latest database details (activeMonths, payment status, etc.)
+          setCurrentStudent(prev => prev ? ({ ...prev, ...found }) : found);
+          saveActiveStudentSession(found);
         }
       }
     }
-  }, [students, currentStudent, currentView]);
+  }, [students]);
 
-  // Dashboard inner tabs
-  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams' | 'calendar' | 'history' | null>('live');
+  // Dashboard inner tabs with persistence
+  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams' | 'calendar' | 'history' | null>(() => (getSavedStudentTab() as any) || 'live');
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
@@ -305,21 +312,24 @@ useEffect(() => {
   // Profile modal click details
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
-  // Admin access states
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  // Admin access states with 6-Hour Persistent Session
+  const [currentStaff, setCurrentStaff] = useState<StaffMember | null>(() => getActiveStaffSession());
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => {
+    return Boolean(getActiveStaffSession());
+  });
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>('overview');
+  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>(() => {
+    return (getSavedAdminTab() as any) || 'overview';
+  });
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
 
-  // Active Staff Session State (Super Admin, Admin, Manager, Lecturer)
-  const [currentStaff, setCurrentStaff] = useState<StaffMember | null>(() => getActiveStaffSession());
-
-  // Restore staff session on reload
+  // Restore staff session on reload and ensure isAdminLoggedIn stays true
   useEffect(() => {
     const savedStaff = getActiveStaffSession();
     if (savedStaff) {
       setCurrentStaff(savedStaff);
+      setIsAdminLoggedIn(true);
     }
   }, []);
 
@@ -379,12 +389,21 @@ useEffect(() => {
 
   useEffect(() => {
     refreshPendingPaymentsCount();
+    const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      refreshPendingPaymentsCount();
+    }, 1500);
+
     const unsub = subscribeRealtimeEvents((type) => {
-      if (type === 'pending_payment_submitted' || type === 'payment_approved' || type === 'payment_rejected') {
+      if (type === 'pending_payment_submitted' || type === 'pending_payment_deleted' || type === 'payment_approved' || type === 'payment_rejected') {
         refreshPendingPaymentsCount();
       }
     });
-    return unsub;
+
+    return () => {
+      clearInterval(pollInterval);
+      unsub();
+    };
   }, []);
 
   // Manual Profile Code generator inside cockpit
@@ -477,12 +496,13 @@ useEffect(() => {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "overview" | "registry" | "manual_student" | "staff" | "planner" | "broadcast" | "site_configs" | "payments" | "pending_payments" | "bank_accounts" | "history" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
+  const handleAdminTabChange = (tab: "overview" | "registry" | "manual_student" | "staff" | "planner" | "broadcast" | "site_configs" | "payments" | "pending_payments" | "bank_accounts" | "history" | "finance" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
     if (tab === 'site_configs' && !isSiteConfigUnlocked) {
       setShowSiteConfigPasswordModal(true);
       return;
     }
     setActiveAdminTab(tab);
+    setSavedAdminTab(tab);
     setTimeout(() => {
       adminContentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
@@ -502,30 +522,19 @@ useEffect(() => {
     }
   }, [currentStudent]);
 
-  // Refresh කළ විට Auto-login වීම සහ පැය 2 පරීක්ෂා කිරීම (අලුතින් එකතු කළ කොටස)
+  // Sync loaded student once students table is fetched
   useEffect(() => {
-    const savedStudentUser = localStorage.getItem('physics_hub_current_student');
-    const expiryTimeStr = localStorage.getItem('physics_hub_login_expiry');
-
-    if (savedStudentUser && expiryTimeStr && students.length > 0 && !currentStudent) {
-      const now = new Date().getTime();
-      const expiryTime = parseInt(expiryTimeStr, 10);
-
-      if (now < expiryTime) {
-        // පැය 2ක කාලය අවසන් වී නැත්නම් ළමයාව සොයා ලොග් කරවන්න
-        const found = students.find(s => s.username === savedStudentUser);
-        if (found) {
-          setCurrentStudent(found);
+    if (!currentStudent) {
+      const activeStudent = getActiveStudentSession();
+      if (activeStudent) {
+        setCurrentStudent(activeStudent);
+        if (currentView === 'home' || currentView === 'login') {
           setCurrentView('dashboard');
         }
-      } else {
-        // පැය 2 අවසන් වී ඇත්නම්, පැරණි දත්ත මකා දමන්න (Auto logout)
-        localStorage.removeItem('physics_hub_current_student');
-        localStorage.removeItem('physics_hub_login_expiry');
       }
     }
     setIsLoading(false);
-  }, [students]); 
+  }, [students]);
 
   // Check login states on bootup (Zero hardcoded credentials, 100% database verification)
   const handleStudentLoginSubmit = async (e: React.FormEvent) => {
@@ -547,6 +556,7 @@ useEffect(() => {
         setIsAdminLoggedIn(true);
         setCurrentView('admin');
         setActiveAdminTab('overview');
+        setSavedAdminTab('overview');
         setLoginAttempts(0);
         setLoginUser('');
         setLoginPass('');
@@ -568,7 +578,7 @@ useEffect(() => {
           .maybeSingle();
 
         if (dbStudent && (dbStudent.password === cleanPass || dbStudent.nic === cleanPass)) {
-          found = dbStudent;
+          found = toCamelCase(dbStudent);
         }
       }
 
@@ -576,10 +586,8 @@ useEffect(() => {
         setLoginAttempts(0);
         setCurrentStudent(found);
         
-        // Save student session in LocalStorage (2 hours validity)
-        localStorage.setItem('physics_hub_current_student', found.username);
-        const expiryTime = new Date().getTime() + (2 * 60 * 60 * 1000); 
-        localStorage.setItem('physics_hub_login_expiry', expiryTime.toString());
+        // Save student session with full object and 6-hour offline validity
+        saveActiveStudentSession(found);
 
         setLoginUser('');
         setLoginPass('');
@@ -600,9 +608,7 @@ useEffect(() => {
 
   const handleStudentLogout = () => {
     setCurrentStudent(null);
-    // ලොග් අවුට් වන විට LocalStorage හි ඇති දත්ත සියල්ල මකා දැමීම
-    localStorage.removeItem('physics_hub_current_student');
-    localStorage.removeItem('physics_hub_login_expiry');
+    clearStudentSession();
     setCurrentView('home');
   };
 
@@ -1029,7 +1035,7 @@ const handleClassCheckboxChange = (course: string, checked: boolean) => {
     setIsAdminLoggedIn(false);
     setAdminPasswordInput('');
     setCurrentStaff(null);
-    saveActiveStaffSession(null);
+    clearStaffSession();
     setCurrentView('home');
   };
 
@@ -1327,7 +1333,7 @@ if (isLoading) {
             <button
               onClick={() => {
                 if (currentStudent) handleStudentLogout();
-                if (isAdminLoggedIn) setIsAdminLoggedIn(false);
+                if (isAdminLoggedIn) handleAdminLogout();
               }}
               className="px-3 py-1.5 rounded-full text-xs text-rose-500 hover:bg-rose-500/10 border border-rose-500/30 transition cursor-pointer flex items-center gap-1 font-bold ml-1"
             >
@@ -1366,7 +1372,7 @@ if (isLoading) {
             <button
               onClick={() => {
                 if (currentStudent) handleStudentLogout();
-                if (isAdminLoggedIn) setIsAdminLoggedIn(false);
+                if (isAdminLoggedIn) handleAdminLogout();
               }}
               className="p-1.5 rounded-xl bg-rose-500/10 text-rose-500 border border-rose-500/30 text-xs font-bold"
               title="Logout"
@@ -2048,6 +2054,8 @@ if (isLoading) {
               <LecturerDashboard 
                 currentStaff={currentStaff} 
                 handleLogout={handleAdminLogout} 
+                lang={lang}
+                setLang={setLang}
               />
             ) : (
               // Authenticated Dashboard Space for Super Admin, Admin, Manager
@@ -2177,6 +2185,14 @@ if (isLoading) {
                       Payment History
                     </button>
                   )}
+                  {isTabAllowed('finance') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('finance')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'finance' ? 'bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      <span>🏛️ මූල්‍ය දෙපාර්තමේන්තුව (Finance Dept)</span>
+                    </button>
+                  )}
                   {isTabAllowed('qr_generator') && (
                     <button 
                       onClick={() => handleAdminTabChange('qr_generator')}
@@ -2303,6 +2319,15 @@ if (isLoading) {
                   {activeAdminTab === 'history' && isTabAllowed('history') && (
                     <div className="lg:col-span-12">
                        <AdminPaymentHistory students={students} />
+                    </div>
+                  )}
+
+                  {activeAdminTab === 'finance' && isTabAllowed('finance') && (
+                    <div className="col-span-12 w-full">
+                       <FinanceDepartment 
+                         currentStaff={currentStaff} 
+                         onNavigateToHistory={() => handleAdminTabChange('history')}
+                       />
                     </div>
                   )}
 
@@ -2481,6 +2506,7 @@ if (isLoading) {
                 itemSummary="Website Appearance & Configurations Section Access"
                 actionButtonText="අංශයට පිවිසෙන්න (Unlock Access)"
                 isDangerous={false}
+                expectedPassword="DANUSHKA18223"
               />
             )}
           </div>

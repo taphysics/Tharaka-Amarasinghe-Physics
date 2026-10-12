@@ -6,7 +6,8 @@ import {
   FileCheck, Users, LogOut, Plus, Clock, Play, Square, 
   Edit, Trash2, Send, EyeOff, CheckCircle2, ChevronRight, 
   Calendar, Search, Filter, AlertCircle, Sparkles, MessageCircle,
-  ExternalLink, UserCheck, ShieldAlert, RotateCcw, CheckSquare, Square as SquareIcon
+  ExternalLink, UserCheck, ShieldAlert, RotateCcw, CheckSquare, Square as SquareIcon,
+  Globe
 } from 'lucide-react';
 import AdminLiveControls from './AdminLiveControls';
 import AdminRecordingsManager from './AdminRecordingsManager';
@@ -16,9 +17,17 @@ import { emitRealtimeEvent, subscribeRealtimeEvents } from '../realtimeSync';
 interface LecturerDashboardProps {
   currentStaff: StaffMember;
   handleLogout: () => void;
+  lang?: 'si' | 'en';
+  setLang?: (l: 'si' | 'en') => void;
 }
 
-export default function LecturerDashboard({ currentStaff, handleLogout }: LecturerDashboardProps) {
+export default function LecturerDashboard({ currentStaff, handleLogout, lang = 'si', setLang }: LecturerDashboardProps) {
+  const activeLang = lang || ((localStorage.getItem('physics_hub_lang') as 'si' | 'en') || 'si');
+  const toggleLang = () => {
+    const nextLang = activeLang === 'si' ? 'en' : 'si';
+    if (setLang) setLang(nextLang);
+    localStorage.setItem('physics_hub_lang', nextLang);
+  };
   const [activeTab, setActiveTab] = useState<'overview' | 'live_classes' | 'exams' | 'grades' | 'recordings' | 'tutes' | 'students'>('overview');
   
   // Data States
@@ -110,6 +119,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
     setAssignedClasses(rawClasses);
     loadAllLecturerData(rawClasses);
 
+    // Live continuous 2s database polling
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadAllLecturerData(rawClasses);
+    }, 2000);
+
     const unsub = subscribeRealtimeEvents((type) => {
       if (['recording_added', 'recording_deleted', 'tute_added', 'tute_deleted', 'assignment_marks_updated'].includes(type)) {
         loadAllLecturerData(rawClasses);
@@ -123,13 +138,16 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
       .subscribe();
 
     return () => {
+      clearInterval(timer);
       unsub();
       supabase.removeChannel(channel);
     };
   }, [currentStaff]);
 
-  const loadAllLecturerData = async (classes: string[]) => {
-    setIsLoading(true);
+  const loadAllLecturerData = async (classes: string[], isManual = false) => {
+    if (isManual || examsList.length === 0) {
+      setIsLoading(true);
+    }
     try {
       const norm = (val?: string) => (val || '').trim().toLowerCase();
       const lecturerClasses = (classes || []).map(norm);
@@ -609,12 +627,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
             </div>
           </div>
 
-          {/* Assigned Classes Badges & Logout Button */}
+          {/* Assigned Classes Badges, Language Switcher & Logout Button */}
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="hidden md:flex items-center gap-1.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-              <span className="text-[11px] text-slate-400 font-semibold">අයත් පන්ති:</span>
+              <span className="text-[11px] text-slate-400 font-semibold">{activeLang === 'si' ? 'අයත් පන්ති:' : 'Assigned Classes:'}</span>
               {assignedClasses.length === 0 ? (
-                <span className="text-[11px] text-amber-400">සියලු පන්ති</span>
+                <span className="text-[11px] text-amber-400">{activeLang === 'si' ? 'සියලු පන්ති' : 'All Classes'}</span>
               ) : (
                 assignedClasses.map(c => (
                   <span key={c} className="text-[10px] font-bold bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded border border-indigo-800">
@@ -624,12 +642,22 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               )}
             </div>
 
+            {/* Language Switcher Button (සිංහල / English) */}
+            <button
+              onClick={toggleLang}
+              className="flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-2 rounded-xl border border-blue-500/30 transition cursor-pointer"
+              title="භාෂාව මාරු කරන්න / Switch Language"
+            >
+              <Globe size={14} className="text-blue-400" />
+              <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
+            </button>
+
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 text-xs font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-2 rounded-xl border border-rose-500/30 transition cursor-pointer"
             >
               <LogOut size={14} />
-              <span className="hidden sm:inline">ඉවත් වන්න</span>
+              <span className="hidden sm:inline">{activeLang === 'si' ? 'ඉවත් වන්න' : 'Logout'}</span>
             </button>
           </div>
 
@@ -652,7 +680,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <LayoutDashboard size={15} />
-              <span>📊 දළ විශ්ලේෂණය (Overview)</span>
+              <span>{activeLang === 'si' ? '📊 දළ විශ්ලේෂණය (Overview)' : '📊 Overview'}</span>
             </button>
 
             <button
@@ -664,7 +692,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <Video size={15} />
-              <span>🎥 සජීවී සූම් පන්ති (Live Classes)</span>
+              <span>{activeLang === 'si' ? '🎥 සජීවී සූම් පන්ති (Live Classes)' : '🎥 Live Classes'}</span>
             </button>
 
             <button
@@ -676,7 +704,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <FileCheck size={15} />
-              <span>📝 ලයිව් එක්සෑම් හා පුෂ් (Exams)</span>
+              <span>{activeLang === 'si' ? '📝 ලයිව් එක්සෑම් හා පුෂ් (Exams)' : '📝 Exams & Push'}</span>
             </button>
 
             <button
@@ -688,7 +716,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <Award size={15} />
-              <span>🏆 ලකුණු හා ඇගයීම් (Marks)</span>
+              <span>{activeLang === 'si' ? '🏆 ලකුණු හා ඇගයීම් (Marks)' : '🏆 Assignment Marks'}</span>
             </button>
 
             <button
@@ -700,7 +728,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <BookOpen size={15} />
-              <span>📹 පාඩම් හා රෙකෝඩින් (Lessons)</span>
+              <span>{activeLang === 'si' ? '📹 පාඩම් හා රෙකෝඩින් (Lessons)' : '📹 Recordings'}</span>
             </button>
 
             <button
@@ -712,7 +740,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <FileText size={15} />
-              <span>📄 ටියුට් හා පේපර්ස් (Tutes)</span>
+              <span>{activeLang === 'si' ? '📄 ටියුට් හා පේපර්ස් (Tutes)' : '📄 Tutes & Papers'}</span>
             </button>
 
             <button
@@ -724,7 +752,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout }: Lectur
               }`}
             >
               <Users size={15} />
-              <span>👥 මගේ සිසුන් (Students)</span>
+              <span>{activeLang === 'si' ? '👥 මගේ සිසුන් (Students)' : '👥 My Students'}</span>
             </button>
 
           </nav>

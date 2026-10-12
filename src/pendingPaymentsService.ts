@@ -190,17 +190,27 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
       .maybeSingle();
 
     if (stdData) {
+      const targetClasses = target.class_type 
+        ? target.class_type.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [];
+      if (targetClasses.length === 0 && target.class_type) {
+        targetClasses.push(target.class_type.trim());
+      }
+
       let currentClasses: string[] = [];
       if (stdData.class_types) {
-        if (Array.isArray(stdData.class_types)) currentClasses = stdData.class_types;
+        if (Array.isArray(stdData.class_types)) currentClasses = [...stdData.class_types];
         else if (typeof stdData.class_types === 'string') {
           try { currentClasses = JSON.parse(stdData.class_types); } catch (e) { currentClasses = [stdData.class_types]; }
         }
       }
-      // Ensure class_type is added
-      if (!currentClasses.includes(target.class_type)) {
-        currentClasses.push(target.class_type);
-      }
+      
+      // Ensure all target classes are added
+      targetClasses.forEach(cls => {
+        if (!currentClasses.includes(cls)) {
+          currentClasses.push(cls);
+        }
+      });
 
       // Ensure active_months includes target.month
       let currentActiveMonths: string[] = [];
@@ -220,7 +230,9 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
       if (!isNaN(targetYear) && !isNaN(targetMonthNum)) {
         for (let m = 1; m < targetMonthNum; m++) {
           const mStr = `${targetYear}-${String(m).padStart(2, '0')}`;
-          pastMonthsAbsent.push({ class: target.class_type, month: mStr, status: 'absent' });
+          targetClasses.forEach(cls => {
+            pastMonthsAbsent.push({ class: cls, month: mStr, status: 'absent' });
+          });
         }
       }
 
@@ -245,16 +257,18 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
         is_paid: true
       }).eq('id', stdData.id);
 
-      // Check student_class_enrollments
-      try {
-        await supabase.from('student_class_enrollments').insert({
-          id: `enr_${Date.now()}_${stdData.id}`,
-          student_id: stdData.id,
-          class_type_id: target.class_type,
-          enrollment_status: 'active',
-          enrolled_at: reviewedAt
-        });
-      } catch (e) {}
+      // Record in student_class_enrollments for each class
+      for (const cls of targetClasses) {
+        try {
+          await supabase.from('student_class_enrollments').insert({
+            id: `enr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${stdData.id}`,
+            student_id: stdData.id,
+            class_type_id: cls,
+            enrollment_status: 'active',
+            enrolled_at: reviewedAt
+          });
+        } catch (e) {}
+      }
 
       // Update in localStorage students
       try {
@@ -264,9 +278,11 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
           const student = sList.find((s: any) => s.username === target.username);
           if (student) {
             student.classTypes = student.classTypes || [];
-            if (!student.classTypes.includes(target.class_type)) {
-              student.classTypes.push(target.class_type);
-            }
+            targetClasses.forEach(cls => {
+              if (!student.classTypes.includes(cls)) {
+                student.classTypes.push(cls);
+              }
+            });
             student.activeMonths = student.activeMonths || [];
             if (!student.activeMonths.includes(target.month)) {
               student.activeMonths.push(target.month);
@@ -280,14 +296,14 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
 
       // Automatically mark previous months as 'absent' in payments table
       for (const p of pastMonthsAbsent) {
-        const absentRecordId = `${target.student_id}_${p.month}_${target.class_type}`;
+        const absentRecordId = `${target.student_id}_${p.month}_${p.class}`;
         try {
           await supabase.from('payments').upsert({
             record_id: absentRecordId,
             student_id: target.student_id,
             username: target.username,
-            class_type: target.class_type,
-            class_name: target.class_type,
+            class_type: p.class,
+            class_name: p.class,
             month: p.month,
             target_month: p.month,
             amount: 0,
@@ -300,8 +316,8 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
               record_id: absentRecordId,
               student_id: target.student_id,
               username: target.username,
-              class_type: target.class_type,
-              class_name: target.class_type,
+              class_type: p.class,
+              class_name: p.class,
               month: p.month,
               target_month: p.month,
               amount: 0,
@@ -316,37 +332,43 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
     console.warn('Failed to update student in remote table:', e);
   }
 
-  // 3. Insert paid record into `payments` table
-  const recordId = `${target.student_id}_${target.month}_${target.class_type}`;
-  try {
-    await supabase.from('payments').upsert({
-      record_id: recordId,
-      student_id: target.student_id,
-      username: target.username,
-      class_type: target.class_type,
-      class_name: target.class_type,
-      month: target.month,
-      target_month: target.month,
-      amount: target.amount,
-      status: 'paid',
-      reminder_sent: false
-    }, { onConflict: 'record_id' });
-  } catch (e) {
-    // If onConflict fails or record_id has different constraint, fallback insert
+  // 3. Insert paid record into `payments` table for each class paid
+  const targetClasses = target.class_type 
+    ? target.class_type.split(',').map((s: string) => s.trim()).filter(Boolean)
+    : [target.class_type];
+  const feePerClass = targetClasses.length > 0 ? Math.round(target.amount / targetClasses.length) : target.amount;
+
+  for (const cls of targetClasses) {
+    const recordId = `${target.student_id}_${target.month}_${cls}`;
     try {
-      await supabase.from('payments').insert({
+      await supabase.from('payments').upsert({
         record_id: recordId,
         student_id: target.student_id,
         username: target.username,
-        class_type: target.class_type,
-        class_name: target.class_type,
+        class_type: cls,
+        class_name: cls,
         month: target.month,
         target_month: target.month,
-        amount: target.amount,
+        amount: feePerClass,
         status: 'paid',
         reminder_sent: false
-      });
-    } catch (e2) {}
+      }, { onConflict: 'record_id' });
+    } catch (e) {
+      try {
+        await supabase.from('payments').insert({
+          record_id: recordId,
+          student_id: target.student_id,
+          username: target.username,
+          class_type: cls,
+          class_name: cls,
+          month: target.month,
+          target_month: target.month,
+          amount: feePerClass,
+          status: 'paid',
+          reminder_sent: false
+        });
+      } catch (e2) {}
+    }
   }
 
   // 4. Send Instant Approval Notification to Student
@@ -458,3 +480,52 @@ export async function rejectPendingPayment(requestId: string, reason?: string): 
 
   return true;
 }
+
+// Permanently delete a pending payment request (e.g. when student dismisses approved/rejected alert)
+export async function deletePendingPaymentRequest(requestId: string): Promise<boolean> {
+  if (!requestId) return false;
+
+  // 1. Remove from local store
+  const current = getLocalPendingPayments();
+  const targetReq = current.find(p => p.id === requestId);
+  const filtered = current.filter(p => p.id !== requestId);
+  saveLocalPendingPayments(filtered);
+
+  // 2. Delete from Supabase pending_payments table (with fallback update)
+  try {
+    const { error } = await supabase.from('pending_payments').delete().eq('id', requestId);
+    if (error) {
+      console.warn('Pending payment delete error, falling back to status update:', error);
+      await supabase.from('pending_payments').update({ status: 'dismissed' }).eq('id', requestId);
+    }
+  } catch (e) {
+    console.warn('Failed to delete pending payment from remote:', e);
+    try {
+      await supabase.from('pending_payments').update({ status: 'dismissed' }).eq('id', requestId);
+    } catch (e2) {}
+  }
+
+  // 3. Delete any associated notification announcements in Supabase
+  try {
+    await supabase.from('announcements').delete().ilike('id', `%${requestId}%`);
+  } catch (e) {}
+
+  // 4. Remove from user's local notification feed if stored
+  if (targetReq?.username) {
+    try {
+      const notifKey = `notifications_${targetReq.username}`;
+      const raw = localStorage.getItem(notifKey);
+      if (raw) {
+        const notifs = JSON.parse(raw);
+        const filteredNotifs = notifs.filter((n: any) => !n.id?.includes(requestId));
+        localStorage.setItem(notifKey, JSON.stringify(filteredNotifs));
+      }
+    } catch (e) {}
+  }
+
+  // 5. Emit realtime event to notify components
+  emitRealtimeEvent('pending_payment_deleted', { requestId });
+  return true;
+}
+
+

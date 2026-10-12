@@ -29,10 +29,17 @@ export default function AdminPendingPayments() {
   useEffect(() => {
     loadRequests();
 
+    // Live continuous 1.5s polling from database
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadRequests();
+    }, 1500);
+
     // Subscribe to realtime updates from students or other admin tabs
     const unsubscribe = subscribeRealtimeEvents((type) => {
       if (
         type === 'pending_payment_submitted' || 
+        type === 'pending_payment_deleted' ||
         type === 'payment_approved' || 
         type === 'payment_rejected'
       ) {
@@ -40,7 +47,10 @@ export default function AdminPendingPayments() {
       }
     });
 
-    return unsubscribe;
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
   }, []);
 
   const handleCopy = (text: string, id: string) => {
@@ -96,9 +106,11 @@ export default function AdminPendingPayments() {
   const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const [monthFilter, setMonthFilter] = useState<'current' | 'all'>('current');
 
-  // Extract distinct class types for tabs
+  // Extract distinct class types for tabs (supporting multi-class entries)
   const distinctClassTypes = Array.from(
-    new Set(requests.map(r => r.class_type).filter(Boolean))
+    new Set(
+      requests.flatMap(r => (r.class_type || '').split(',').map(s => s.trim()).filter(Boolean))
+    )
   ).sort();
 
   const STATUS_PRIORITY: Record<string, number> = {
@@ -110,7 +122,10 @@ export default function AdminPendingPayments() {
   const filteredRequests = requests
     .filter(req => {
       if (filterStatus !== 'all' && req.status !== filterStatus) return false;
-      if (filterClass !== 'all' && req.class_type.toLowerCase().trim() !== filterClass.toLowerCase().trim()) return false;
+      if (filterClass !== 'all') {
+        const reqClasses = (req.class_type || '').split(',').map(s => s.trim().toLowerCase());
+        if (!reqClasses.includes(filterClass.toLowerCase().trim())) return false;
+      }
       if (monthFilter === 'current' && req.month && req.month !== currentMonthKey) return false;
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
@@ -314,8 +329,14 @@ export default function AdminPendingPayments() {
               සියලුම පන්ති ({requests.length})
             </button>
             {distinctClassTypes.map(cName => {
-              const countForClass = requests.filter(r => r.class_type.toLowerCase().trim() === cName.toLowerCase().trim() && (filterStatus === 'all' || r.status === filterStatus)).length;
-              const pendingForClass = requests.filter(r => r.class_type.toLowerCase().trim() === cName.toLowerCase().trim() && r.status === 'pending').length;
+              const countForClass = requests.filter(r => {
+                const reqClasses = (r.class_type || '').split(',').map(s => s.trim().toLowerCase());
+                return reqClasses.includes(cName.toLowerCase().trim()) && (filterStatus === 'all' || r.status === filterStatus);
+              }).length;
+              const pendingForClass = requests.filter(r => {
+                const reqClasses = (r.class_type || '').split(',').map(s => s.trim().toLowerCase());
+                return reqClasses.includes(cName.toLowerCase().trim()) && r.status === 'pending';
+              }).length;
               return (
                 <button
                   key={cName}
@@ -342,7 +363,7 @@ export default function AdminPendingPayments() {
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-12 text-center text-slate-400 space-y-2">
           <Clock size={36} className="mx-auto text-slate-600" />
           <p className="font-bold text-sm">මෙම තත්ත්වය යටතේ කිසිදු ගෙවීම් වාර්තාවක් හමු නොවීය.</p>
-          <p className="text-xs text-slate-500">සිසුන් Other Classes හරහා ගෙවීම් තොරතුරු ඉදිරිපත් කළ විට ඒවා මෙහි ස්වයංක්‍රීයව දිස්වේ.</p>
+          <p className="text-xs text-slate-500">සිසුන් Other Classes හෝ Payment Invoice හරහා ගෙවීම් තොරතුරු ඉදිරිපත් කළ විට ඒවා මෙහි ස්වයංක්‍රීයව දිස්වේ.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -381,9 +402,23 @@ export default function AdminPendingPayments() {
                         {req.status}
                       </span>
 
-                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                        {req.class_type}
-                      </span>
+                      {/* Render ALL classes the student paid for (Single or Multi-class) */}
+                      {(req.class_type || '').split(',').map((cItem, cIdx) => {
+                        const trimmed = cItem.trim();
+                        if (!trimmed) return null;
+                        return (
+                          <span key={cIdx} className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-purple-500/20 text-purple-200 border border-purple-500/40 shadow-sm flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>
+                            {trimmed}
+                          </span>
+                        );
+                      })}
+
+                      {(req.class_type || '').includes(',') && (
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-lg bg-indigo-500/25 text-indigo-300 border border-indigo-500/40">
+                          {(req.class_type || '').split(',').length} Classes Bundle
+                        </span>
+                      )}
 
                       <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700">
                         {req.month}

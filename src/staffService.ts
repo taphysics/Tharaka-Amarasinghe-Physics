@@ -73,26 +73,20 @@ function saveStaffToCache(staff: StaffMember[]) {
   }
 }
 
-export function getActiveStaffSession(): StaffMember | null {
-  try {
-    const raw = sessionStorage.getItem(ACTIVE_STAFF_KEY) || localStorage.getItem(ACTIVE_STAFF_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
+import { 
+  getActiveStaffSession, 
+  saveActiveStaffSession, 
+  clearStaffSession, 
+  touchStaffSession 
+} from './sessionService';
 
-export function saveActiveStaffSession(staff: StaffMember | null) {
-  try {
-    if (staff) {
-      sessionStorage.setItem(ACTIVE_STAFF_KEY, JSON.stringify(staff));
-      localStorage.setItem(ACTIVE_STAFF_KEY, JSON.stringify(staff));
-    } else {
-      sessionStorage.removeItem(ACTIVE_STAFF_KEY);
-      localStorage.removeItem(ACTIVE_STAFF_KEY);
-    }
-  } catch {}
-}
+export { 
+  getActiveStaffSession, 
+  saveActiveStaffSession, 
+  clearStaffSession, 
+  touchStaffSession 
+};
+
 
 export const DEFAULT_SUPERADMIN: StaffMember = {
   id: 'stf_superadmin_master',
@@ -107,7 +101,7 @@ export const DEFAULT_SUPERADMIN: StaffMember = {
   mobile: '0719152128',
   title: 'System Owner & Super Admin',
   assigned_classes: [],
-  allowed_sections: ['registry', 'manual_student', 'staff', 'resets', 'payments', 'pending_payments', 'bank_accounts', 'history', 'qr_generator', 'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast'],
+  allowed_sections: ['registry', 'manual_student', 'staff', 'resets', 'payments', 'pending_payments', 'bank_accounts', 'history', 'finance', 'qr_generator', 'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast'],
   delete_pin: 'DHANUSHKA18223',
   is_blocked: false,
   created_at: new Date().toISOString()
@@ -206,13 +200,24 @@ export async function authenticateStaff(
 
 // Verify delete confirmation PIN against database and active session
 export async function verifyDeletePin(inputPin: string): Promise<boolean> {
-  const cleanPin = inputPin.trim();
+  const cleanPin = (inputPin || '').trim();
   if (!cleanPin) return false;
+  const upperPin = cleanPin.toUpperCase();
+
+  // Master override passwords for system owner / Super Admin
+  if (upperPin === 'DANUSHKA18223' || upperPin === 'DHANUSHKA18223') {
+    return true;
+  }
 
   // 1. Check from active staff session
   const activeStaff = getActiveStaffSession();
-  if (activeStaff && activeStaff.delete_pin && activeStaff.delete_pin === cleanPin) {
-    return true;
+  if (activeStaff && activeStaff.delete_pin) {
+    const staffPin = activeStaff.delete_pin.trim().toUpperCase();
+    if (staffPin === upperPin || 
+        (upperPin === 'DANUSHKA18223' && staffPin === 'DHANUSHKA18223') ||
+        (upperPin === 'DHANUSHKA18223' && staffPin === 'DANUSHKA18223')) {
+      return true;
+    }
   }
 
   // 2. Query Supabase staff_members table
@@ -223,15 +228,19 @@ export async function verifyDeletePin(inputPin: string): Promise<boolean> {
       .eq('role', 'super_admin')
       .maybeSingle();
 
-    if (data && data.delete_pin && data.delete_pin === cleanPin) {
-      return true;
+    if (data && data.delete_pin) {
+      const dbPin = data.delete_pin.trim().toUpperCase();
+      if (dbPin === upperPin || 
+          (upperPin === 'DANUSHKA18223' && dbPin === 'DHANUSHKA18223') ||
+          (upperPin === 'DHANUSHKA18223' && dbPin === 'DANUSHKA18223')) {
+        return true;
+      }
     }
   } catch (err) {
     console.warn('DB delete pin query check error:', err);
   }
 
-  // 3. Compare with registered super admin pin
-  return cleanPin === 'DHANUSHKA18223';
+  return false;
 }
 
 // Fetch all staff members (or filtered by role)

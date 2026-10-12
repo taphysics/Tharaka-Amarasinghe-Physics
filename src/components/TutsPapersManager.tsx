@@ -12,8 +12,22 @@ interface Props {
 }
 
 export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
-  const [resources, setResources] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [resources, setResources] = useState<any[]>(() => {
+    try {
+      const raw = localStorage.getItem('physics_hub_tutes');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('physics_hub_tutes');
+      return !(raw && JSON.parse(raw).length > 0);
+    } catch {
+      return true;
+    }
+  });
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -49,11 +63,27 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
         fetchResources();
       }
     });
-    return unsub;
-  }, [currentStudent]);
+
+    const channelName = `student-tutes-realtime-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const channel = supabase.channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'class_resources' }, () => {
+        fetchResources();
+      })
+      .subscribe();
+
+    return () => {
+      unsub();
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {}
+    };
+  }, [currentStudent?.id, currentStudent?.username, JSON.stringify(currentStudent?.class_types || currentStudent?.classTypes)]);
 
   const fetchResources = async () => {
-    setIsLoading(true);
+    // Only show loading if we don't have any items yet
+    if (resources.length === 0) {
+      setIsLoading(true);
+    }
     try {
       // 1. Try Supabase
       const { data, error } = await supabase
@@ -81,11 +111,12 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
   };
 
   // Student enrolled classes
-  const studentClasses: string[] = Array.isArray(currentStudent?.class_types) 
-    ? currentStudent.class_types 
-    : typeof currentStudent?.class_types === 'string' 
-    ? [currentStudent.class_types] 
-    : currentStudent?.class ? [currentStudent.class] : [];
+  const rawClasses = currentStudent?.class_types || currentStudent?.classTypes || currentStudent?.class || [];
+  const studentClasses: string[] = Array.isArray(rawClasses) 
+    ? rawClasses 
+    : typeof rawClasses === 'string' 
+    ? [rawClasses] 
+    : [];
 
   // Helper to convert Google Drive URL to embedded preview mode
   const getDrivePreviewUrl = (url: string) => {

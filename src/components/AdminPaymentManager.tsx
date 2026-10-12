@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Search, X, Plus, MessageCircle, Bell, LayoutDashboard } from 'lucide-react';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 
 const parseStudentClasses = (classTypes: any): string[] => {
   if (!classTypes) return [];
@@ -27,6 +28,29 @@ export default function PaymentManager() {
 
   useEffect(() => {
     fetchData();
+
+    // Continuous 2s live database sync
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchData();
+    }, 2000);
+
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (['student_updated', 'payment_approved', 'payment_rejected', 'payment_status_changed'].includes(type)) {
+        fetchData();
+      }
+    });
+
+    const channel = supabase.channel('admin-payments-sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      clearInterval(timer);
+      unsub();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const fetchData = async () => {

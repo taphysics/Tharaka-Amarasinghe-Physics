@@ -1,6 +1,7 @@
 // Cross-tab and in-memory Realtime Synchronization Hub for Smart Physics
 export type SyncEventType = 
   | 'pending_payment_submitted'
+  | 'pending_payment_deleted'
   | 'payment_approved'
   | 'payment_rejected'
   | 'payment_status_changed'
@@ -16,6 +17,9 @@ export type SyncEventType =
   | 'class_types_updated'
   | 'banner_page_viewed'
   | 'banner_page_updated'
+  | 'exam_submitted'
+  | 'exam_created'
+  | 'assignment_marks_updated'
   | 'staff_updated';
 
 interface RealtimeMessage {

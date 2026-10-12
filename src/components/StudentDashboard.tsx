@@ -4,15 +4,17 @@ import {
   Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
   ChevronLeft, ChevronRight, Clock, Calendar, Play, ExternalLink, Menu,
   Trophy, Award, PenTool, Package, Radio, ArrowLeft, Check, Sparkles, Layers,
-  ChevronDown, AlertCircle, ShieldAlert, CreditCard, QrCode, Copy, Maximize2, MessageCircle
+  ChevronDown, AlertCircle, ShieldAlert, CreditCard, QrCode, Copy, Maximize2, MessageCircle, Globe
 } from 'lucide-react';
 import { 
   PendingPaymentRequest, 
   fetchAllPendingPayments, 
-  submitClassJoinPayment 
+  submitClassJoinPayment,
+  deletePendingPaymentRequest
 } from '../pendingPaymentsService';
 import { BankAccount, fetchBankAccounts } from '../bankAccountsService';
 import { subscribeRealtimeEvents } from '../realtimeSync';
+import { normalizeStudent } from '../sessionService';
 
 import LiveClassPlayer from './LiveClassPlayer';
 import StudentRecordings from './StudentRecordings';
@@ -95,7 +97,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
 
-  const [liveStudentData, setLiveStudentData] = useState<any>(currentStudent);
+  const [liveStudentData, setLiveStudentData] = useState<any>(() => normalizeStudent(currentStudent));
+  const lastStudentJsonRef = useRef<string>(JSON.stringify(normalizeStudent(currentStudent)));
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
@@ -137,7 +140,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Dynamic Bank Accounts & Database Class Types
   const [bankAccountsList, setBankAccountsList] = useState<BankAccount[]>([]);
-  const [dbClassTypes, setDbClassTypes] = useState<any[]>([]);
+  const [dbClassTypes, setDbClassTypes] = useState<any[]>(() => {
+    try {
+      const raw = localStorage.getItem('cached_class_types_config');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
   const [isQrZoomModalOpen, setIsQrZoomModalOpen] = useState(false);
 
   // Real-time live notifications for payment approval/rejection
@@ -150,15 +160,44 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
 
-  const handleDismissAlert = (id: string) => {
+  const handleDismissAlert = async (id: string) => {
     setLiveAlerts(prev => prev.filter(a => a.id !== id));
     dismissNotification(id);
+
+    // Extract underlying payment request ID
+    let reqId = '';
+    if (id.startsWith('app_')) reqId = id.replace('app_', '');
+    else if (id.startsWith('rej_')) reqId = id.replace('rej_', '');
+
+    if (reqId) {
+      // 1. Permanently delete from Supabase pending_payments table and local store
+      try {
+        await deletePendingPaymentRequest(reqId);
+      } catch (err) {
+        console.warn('Error deleting pending payment on alert dismiss:', err);
+      }
+      setStudentPendingRequests(prev => prev.filter(r => r.id !== reqId));
+    }
+
+    // 2. Permanently record this dismissal in localStorage so it NEVER shows again to this student
+    try {
+      const permKey = 'physics_hub_permanently_dismissed_alerts';
+      const raw = localStorage.getItem(permKey);
+      const list: string[] = raw ? JSON.parse(raw) : [];
+      if (!list.includes(id)) {
+        list.push(id);
+      }
+      if (reqId && !list.includes(reqId)) {
+        list.push(reqId);
+      }
+      localStorage.setItem(permKey, JSON.stringify(list));
+    } catch (e) {}
   };
 
-  // Dismissed notifications (in sessionStorage so it disappears when student leaves)
+  // Dismissed notifications (in persistent localStorage and sessionStorage)
   const [dismissedNotifIds, setDismissedNotifIds] = useState<string[]>(() => {
     try {
-      const raw = sessionStorage.getItem('physics_hub_dismissed_notifications');
+      const raw = localStorage.getItem('physics_hub_dismissed_notifications') || sessionStorage.getItem('physics_hub_dismissed_notifications');
       return raw ? JSON.parse(raw) : [];
     } catch (e) {
       return [];
@@ -169,6 +208,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setDismissedNotifIds(prev => {
       const updated = [...prev, id];
       try {
+        localStorage.setItem('physics_hub_dismissed_notifications', JSON.stringify(updated));
         sessionStorage.setItem('physics_hub_dismissed_notifications', JSON.stringify(updated));
       } catch (e) {}
       return updated;
@@ -188,18 +228,21 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     try {
       const allReqs = await fetchAllPendingPayments();
       const sUsername = liveStudentData?.username || currentStudent?.username;
-      const mine = allReqs.filter(r => r.username === sUsername);
+      const mine = allReqs.filter(r => r.username === sUsername && (r.status as string) !== 'dismissed');
       setStudentPendingRequests(mine);
 
-      // Check for approved or rejected alerts that haven't been dismissed in this session
-      const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
-      const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+      // Check for approved or rejected alerts that haven't been dismissed (session or permanently)
+      const dismissedRaw = localStorage.getItem('physics_hub_dismissed_notifications') || sessionStorage.getItem('physics_hub_dismissed_notifications');
+      const sessionDismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
+      const permDismissedRaw = localStorage.getItem('physics_hub_permanently_dismissed_alerts');
+      const permDismissed: string[] = permDismissedRaw ? JSON.parse(permDismissedRaw) : [];
+      const allDismissed = new Set([...sessionDismissed, ...permDismissed]);
 
       const newAlerts: LiveAlert[] = [];
       mine.forEach(m => {
         if (m.status === 'approved') {
           const aId = `app_${m.id}`;
-          if (!dismissed.includes(aId)) {
+          if (!allDismissed.has(aId)) {
             newAlerts.push({
               id: aId,
               type: 'approved',
@@ -210,7 +253,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           }
         } else if (m.status === 'rejected') {
           const aId = `rej_${m.id}`;
-          if (!dismissed.includes(aId)) {
+          if (!allDismissed.has(aId)) {
             newAlerts.push({
               id: aId,
               type: 'rejected',
@@ -246,16 +289,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .select('*');
       if (!error && data && data.length > 0) {
         setDbClassTypes(data);
+        try {
+          localStorage.setItem('cached_class_types_config', JSON.stringify(data));
+        } catch (e) {}
       }
     } catch (e) {}
   };
 
-  // Realtime Subscriptions (Both Supabase & BroadcastChannel)
+  // Realtime Subscriptions & Live Continuous Polling (Both Supabase & BroadcastChannel)
   useEffect(() => {
     fetchDashboardData();
     loadStudentPendingPayments();
     loadBankAccounts();
     fetchDbClassConfigs();
+
+    // Continuous 1.5s Live Database Sync
+    const pollTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchDashboardData();
+      loadStudentPendingPayments();
+    }, 1500);
 
     const unsubRealtime = subscribeRealtimeEvents((type, payload) => {
       fetchDashboardData();
@@ -277,7 +330,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           const aId = `app_${p.id || Date.now()}`;
           const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
           const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
-          if (!dismissed.includes(aId)) {
+          const permDismissedRaw = localStorage.getItem('physics_hub_permanently_dismissed_alerts');
+          const permDismissed: string[] = permDismissedRaw ? JSON.parse(permDismissedRaw) : [];
+          if (!dismissed.includes(aId) && !permDismissed.includes(aId)) {
             setLiveAlerts(prev => [
               {
                 id: aId,
@@ -297,7 +352,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           const aId = `rej_${p.id || Date.now()}`;
           const dismissedRaw = sessionStorage.getItem('physics_hub_dismissed_notifications');
           const dismissed: string[] = dismissedRaw ? JSON.parse(dismissedRaw) : [];
-          if (!dismissed.includes(aId)) {
+          const permDismissedRaw = localStorage.getItem('physics_hub_permanently_dismissed_alerts');
+          const permDismissed: string[] = permDismissedRaw ? JSON.parse(permDismissedRaw) : [];
+          if (!dismissed.includes(aId) && !permDismissed.includes(aId)) {
             setLiveAlerts(prev => [
               {
                 id: aId,
@@ -336,6 +393,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_payments' }, () => {
           loadStudentPendingPayments();
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'class_types_config' }, () => {
+          fetchDbClassConfigs();
+        })
         .subscribe();
 
       const broadcastChannel = supabase.channel(`student_dashboard_${currentStudent.id}`)
@@ -348,6 +408,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .subscribe();
 
       return () => {
+        clearInterval(pollTimer);
         unsubRealtime();
         supabase.removeChannel(channel);
         supabase.removeChannel(broadcastChannel);
@@ -355,12 +416,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
 
     return () => {
+      clearInterval(pollTimer);
       unsubRealtime();
     };
   }, [currentStudent.id, supabase]);
 
-  const fetchDashboardData = async () => {
-    setIsRefreshing(true);
+  const fetchDashboardData = async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+    }
     
     if (supabase) {
       try {
@@ -371,16 +435,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           .eq('id', currentStudent.id)
           .single();
 
-        const studentToUse = freshStudentData || currentStudent;
-        setLiveStudentData(studentToUse);
+        const rawStudent = freshStudentData || currentStudent;
+        const normalized = normalizeStudent(rawStudent);
+        const serialized = JSON.stringify(normalized);
 
-        let enrolledClasses: string[] = [];
-        if (studentToUse.class_types) {
-          if (Array.isArray(studentToUse.class_types)) enrolledClasses = studentToUse.class_types;
-          else if (typeof studentToUse.class_types === 'string') {
-            try { enrolledClasses = JSON.parse(studentToUse.class_types); } catch(e) { enrolledClasses = [studentToUse.class_types]; }
-          }
+        // Deep comparison: ONLY trigger React state update if student actually changed
+        if (serialized !== lastStudentJsonRef.current) {
+          lastStudentJsonRef.current = serialized;
+          setLiveStudentData(normalized);
         }
+
+        const studentToUse = normalized;
+
+        let enrolledClasses: string[] = studentToUse.class_types || [];
 
         const isFreeStudent = studentToUse.is_paid === false || studentToUse.free_months?.includes(currentMonthKey);
 
@@ -1282,21 +1349,62 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       { id: '8', name: '2028 Paper Class', fee: 3500 },
     ];
 
-    // Read directly from Supabase class_types_config table with fallback
-    const systemClasses = dbClassTypes.length > 0
-      ? dbClassTypes
-          .filter(c => c.is_active !== false)
-          .map(c => ({
-            id: c.id,
-            name: (c.class_types || c.class_type || '').trim(),
-            fee: Number(c.monthly_fee ?? 3500),
-            whatsapp_link: c.whatsapp_link
-          }))
-          .filter(c => c.name)
-      : defaultClasses;
+    // Collect all classes the student is already registered for
+    const studentEnrolledClassesSet = new Set<string>();
+    const extractEnrolled = (raw: any) => {
+      if (!raw) return;
+      if (Array.isArray(raw)) {
+        raw.forEach(extractEnrolled);
+      } else if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const arr = JSON.parse(trimmed);
+            if (Array.isArray(arr)) arr.forEach(extractEnrolled);
+            else studentEnrolledClassesSet.add(trimmed.toLowerCase());
+          } catch {
+            studentEnrolledClassesSet.add(trimmed.toLowerCase());
+          }
+        } else if (trimmed.includes(',')) {
+          trimmed.split(',').forEach(s => studentEnrolledClassesSet.add(s.trim().toLowerCase()));
+        } else if (trimmed) {
+          studentEnrolledClassesSet.add(trimmed.toLowerCase());
+        }
+      }
+    };
 
+    extractEnrolled(liveStudentData?.class_types);
+    extractEnrolled(liveStudentData?.classTypes);
+    extractEnrolled(liveStudentData?.class);
+    extractEnrolled(liveStudentData?.enrolled_classes);
+
+    // Read directly from Supabase class_types_config table:
+    // id (uuid), monthly_fee (numeric), is_active (bool), created_at (timestamptz), class_types (text), whatsapp_link (text)
+    const systemClasses = (dbClassTypes.length > 0 ? dbClassTypes : defaultClasses)
+      .filter((c: any) => c.is_active !== false)
+      .map((c: any) => {
+        const name = String(c.class_types || c.class_type || c.name || '').trim();
+        const fee = Number(c.monthly_fee ?? c.fee ?? 3500);
+        return {
+          id: c.id,
+          name,
+          fee,
+          whatsapp_link: c.whatsapp_link || '',
+          created_at: c.created_at,
+          is_active: c.is_active !== false
+        };
+      })
+      .filter((c: any) => Boolean(c.name));
+
+    // Show ONLY classes the student is NOT registered for yet!
     const unenrolledClasses = systemClasses.filter(sc => {
-      return !enrolledClasses.some(ec => ec.toLowerCase().trim() === sc.name.toLowerCase().trim());
+      const scLower = sc.name.toLowerCase().trim();
+      for (const enrolled of studentEnrolledClassesSet) {
+        if (enrolled === scLower || enrolled.includes(scLower) || scLower.includes(enrolled)) {
+          return false;
+        }
+      }
+      return true;
     });
 
     const sinhalaMonths = [
@@ -1308,6 +1416,30 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const currentYear = now.getFullYear();
     const currentMonthDisplay = `${currentYear} ${currentMonthSinhala}`;
 
+    // Classes the student IS registered for
+    const enrolledClasses = systemClasses.filter(sc => {
+      const scLower = sc.name.toLowerCase().trim();
+      for (const enrolled of studentEnrolledClassesSet) {
+        if (enrolled === scLower || enrolled.includes(scLower) || scLower.includes(enrolled)) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    // Verify if student has paid or is free for this class
+    const isStudentEligibleForWhatsApp = (className: string) => {
+      if (liveStudentData?.plan_type === 'free') return true;
+      const historyForClass = paymentHistory[className];
+      if (historyForClass && historyForClass.some(m => m.status === 'Paid' || m.status === 'Free')) {
+        return true;
+      }
+      if (liveStudentData?.is_paid && liveStudentData?.active_months && liveStudentData.active_months.length > 0) {
+        return true;
+      }
+      return false;
+    };
+
     return (
       <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
         
@@ -1318,23 +1450,112 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <Package size={26} />
             </div>
             <div>
-              <h3 className="text-xl font-black text-white flex items-center gap-2">
-                වෙනත් පන්ති (Other Classes)
+              <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                {activeLang === 'si' ? 'පන්ති සහ WhatsApp සමූහ (Classes & Official Groups)' : 'Classes & Official WhatsApp Groups'}
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                ඔබ තවමත් ලියාපදිංචි වී නොමැති අනෙකුත් පන්ති සඳහා මෙතැනින් පහසුවෙන් සම්බන්ධ වන්න.
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                {activeLang === 'si' ? 'ඔබ ලියාපදිංචි වී ඇති පන්තිවල නිල WhatsApp සමූහ සහ සම්බන්ධ විය හැකි අනෙකුත් පන්ති.' : 'Official WhatsApp groups for your enrolled classes and available new classes to join.'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* SECTION 1: UNENROLLED CLASSES (JOIN BUTTON & PENDING BADGES) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
-          <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-            <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
-              <Sparkles size={16} className="text-amber-400" /> ලියාපදිංචි විය හැකි නව පන්ති (Available Classes to Join)
+        {/* SECTION 1: ENROLLED CLASSES & VERIFIED WHATSAPP GROUPS (ONLY FOR REGISTERED/PAID CLASSES) */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
+          <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                <MessageCircle size={18} />
+              </div>
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  {activeLang === 'si' ? 'ඔබ ලියාපදිංචි වී ඇති පන්ති සහ නිල WhatsApp සමූහ' : 'Your Enrolled Classes & Official WhatsApp Groups'}
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {activeLang === 'si' ? 'ඔබ ලියාපදිංචි වී ගෙවීම් කළ පන්තිවල නිල WhatsApp සමූහ සඳහා පමණක් මෙතැනින් එක්විය හැක.' : 'Join WhatsApp groups exclusively for the classes you have registered and paid for.'}
+                </p>
+              </div>
+            </div>
+            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+              {enrolledClasses.length} Enrolled
+            </span>
+          </div>
+
+          {enrolledClasses.length === 0 ? (
+            <div className="py-8 text-center text-slate-500 text-xs bg-slate-50 dark:bg-slate-950 rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
+              {activeLang === 'si' ? 'ඔබ මෙතෙක් කිසිදු පන්තියක් සඳහා ලියාපදිංචි වී නොමැත. කරුණාකර පහතින් පන්ති තෝරාගෙන සම්බන්ධ වන්න.' : 'You are not enrolled in any classes yet. Please join a class below.'}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {enrolledClasses.map((cls) => {
+                const isEligible = isStudentEligibleForWhatsApp(cls.name);
+
+                return (
+                  <div
+                    key={cls.id}
+                    className="p-5 bg-gradient-to-br from-emerald-500/5 via-slate-50 to-slate-50 dark:from-emerald-950/20 dark:via-slate-950 dark:to-slate-950 border border-emerald-500/30 rounded-2xl flex flex-col justify-between gap-4 transition shadow-md"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                          {cls.name}
+                        </span>
+                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md">
+                          <CheckCircle2 size={12} /> {activeLang === 'si' ? 'ලියාපදිංචි වී ඇත' : 'Enrolled'}
+                        </span>
+                      </div>
+
+                      <h4 className="text-base font-extrabold text-slate-900 dark:text-white">
+                        {cls.name} Official Class
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                        {activeLang === 'si' ? 'සජීවී පන්ති සබැඳි, නිවේදන සහ අධ්‍යයන ද්‍රව්‍ය ලබා ගැනීමට මෙම පන්තියේ නිල WhatsApp සමූහයට එක්වන්න.' : 'Join the official WhatsApp group for live links, notices, and updates.'}
+                      </p>
+                    </div>
+
+                    {/* WhatsApp Action based on payment eligibility */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                      {isEligible ? (
+                        cls.whatsapp_link ? (
+                          <a
+                            href={cls.whatsapp_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl transition shadow-lg shadow-emerald-700/20 flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <MessageCircle size={15} />
+                            <span>{activeLang === 'si' ? 'නිල WhatsApp සමූහයට සම්බන්ධ වන්න' : 'Join Official WhatsApp Group'}</span>
+                          </a>
+                        ) : (
+                          <div className="text-center py-2 text-xs font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 rounded-xl">
+                            WhatsApp සමූහ ලින්ක් එක ඉක්මනින් යාවත්කාලීන කෙරේ
+                          </div>
+                        )
+                      ) : (
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
+                          <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-bold text-xs">
+                            <Clock size={13} /> {activeLang === 'si' ? 'ගෙවීම් කළ පසු WhatsApp සබැඳිය සක්‍රිය වේ' : 'WhatsApp link activates after payment'}
+                          </div>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                            {activeLang === 'si' ? 'මෙම පන්තිය සඳහා ගෙවීම් තහවුරු වූ පසු WhatsApp සමූහයට එක්විය හැක.' : 'Once payment is confirmed, the official WhatsApp link will appear here.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* SECTION 2: UNENROLLED CLASSES (JOIN BUTTON & PENDING BADGES - NO WHATSAPP LINK) */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
+          <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex items-center justify-between">
+            <h4 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <Sparkles size={16} className="text-amber-400" /> {activeLang === 'si' ? 'ලියාපදිංචි විය හැකි නව පන්ති (Available Classes to Join)' : 'Available Classes to Join'}
             </h4>
-            <span className="text-[11px] font-mono text-slate-400">
+            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
               {unenrolledClasses.length} Classes Available
             </span>
           </div>
@@ -1353,45 +1574,45 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 return (
                   <div
                     key={cls.id}
-                    className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-2xl flex flex-col justify-between gap-4 transition shadow-md"
+                    className="p-5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/40 rounded-2xl flex flex-col justify-between gap-4 transition shadow-md"
                   >
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                        <span className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30">
                           {cls.name}
                         </span>
-                        <span className="text-sm font-black font-mono text-emerald-400">
-                          රු. {cls.fee.toLocaleString()}/= <span className="text-[10px] font-sans text-slate-400 font-normal">/ මසකට</span>
+                        <span className="text-sm font-black font-mono text-emerald-600 dark:text-emerald-400">
+                          රු. {cls.fee.toLocaleString()}/= <span className="text-[10px] font-sans text-slate-500 dark:text-slate-400 font-normal">/ {activeLang === 'si' ? 'මසකට' : 'month'}</span>
                         </span>
                       </div>
 
-                      <h4 className="text-base font-extrabold text-white">
+                      <h4 className="text-base font-extrabold text-slate-900 dark:text-white">
                         {cls.name} Class Session
                       </h4>
-                      <p className="text-xs text-slate-300 dark:text-slate-300 font-medium leading-relaxed">
-                        <span className="text-emerald-400 font-bold">{currentMonthDisplay}</span> මාසය සඳහා සජීවී Zoom පන්ති, පන්ති රෙකෝඩින් සහ නිල Google Drive ටියුට්ස් සියල්ලම ඇතුළත් වේ.
+                      <p className="text-xs text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">{currentMonthDisplay}</span> {activeLang === 'si' ? 'මාසය සඳහා සජීවී Zoom පන්ති, පන්ති රෙකෝඩින් සහ නිල Google Drive ටියුට්ස් සියල්ලම ඇතුළත් වේ.' : 'Includes full access to live classes, recordings, and study materials.'}
                       </p>
                     </div>
 
-                    {/* Pending State or Join Button */}
+                    {/* Pending State or Join Button (NO WhatsApp link for unenrolled classes) */}
                     {pendingReq ? (
                       <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
-                        <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
-                          <Clock size={14} className="animate-spin" /> ⏳ අනුමැතිය පොරොත්තුවෙන් (Pending Approval)
+                        <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-bold text-xs">
+                          <Clock size={14} className="animate-spin" /> ⏳ {activeLang === 'si' ? 'අනුමැතිය පොරොත්තුවෙන් (Pending Approval)' : 'Pending Approval'}
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono">
-                          Transaction ID: <span className="text-amber-300 font-bold">{pendingReq.transaction_id}</span>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                          Transaction ID: <span className="text-amber-600 dark:text-amber-300 font-bold">{pendingReq.transaction_id}</span>
                         </p>
                         <p className="text-[10px] text-slate-500">
-                          ඇඩ්මින් විසින් ගෙවීම් තහවුරු කළ විගස පන්තිය සක්‍රිය වේ.
+                          {activeLang === 'si' ? 'ඇඩ්මින් විසින් ගෙවීම් තහවුරු කළ විගස පන්තිය සක්‍රිය වේ.' : 'Class activates once admin confirms payment.'}
                         </p>
                       </div>
                     ) : (
                       <button
                         onClick={() => handleOpenJoinModal(cls)}
-                        className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2 cursor-pointer"
+                        className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer"
                       >
-                        <Sparkles size={14} /> සම්බන්ධ වන්න (Join Class) →
+                        <Sparkles size={14} /> {activeLang === 'si' ? 'සම්බන්ධ වන්න (Join Class) →' : 'Join Class →'}
                       </button>
                     )}
                   </div>
@@ -1402,44 +1623,48 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         {/* SECTION 2: ENROLLED CLASSES & PAYMENT STATUS */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-          <div className="border-b border-slate-800 pb-3">
-            <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
-              <CheckCircle2 size={16} className="text-emerald-400" /> ඔබ දැනට ලියාපදිංචි වී ඇති පන්ති (Enrolled Classes)
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+          <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+            <h4 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <CheckCircle2 size={16} className="text-emerald-500" /> {activeLang === 'si' ? 'ඔබ දැනට ලියාපදිංචි වී ඇති පන්ති (Enrolled Classes)' : 'Your Enrolled Classes & Payment Status'}
             </h4>
           </div>
 
           {Object.keys(paymentHistory).length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {Object.entries(paymentHistory).map(([className, months]) => (
-                <div key={className} className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80">
-                  <p className="font-bold text-slate-200 mb-3 flex items-center gap-2 text-sm">
-                    <Book size={15} className="text-cyan-400" /> {className}
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {months.map((m, idx) => (
-                      <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
-                        m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                        m.status === 'Free' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                        m.status === 'Absent' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                        'bg-red-500/10 text-red-400 border-red-500/20'
-                      }`}>
-                        <span>{m.monthName} ({m.monthKey})</span>
-                        <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-black/40 font-medium">
-                          {m.status === 'Paid' && '🟢 Paid'}
-                          {m.status === 'Free' && '🔵 Free Card'}
-                          {m.status === 'Absent' && '🟡 Absent (ඇබ්සන්)'}
-                          {m.status === 'Unpaid' && '🔴 Unpaid (ගෙවා නැත)'}
-                        </span>
-                      </div>
-                    ))}
+              {Object.entries(paymentHistory).map(([className, months]) => {
+                // Filter out Absent months per user instructions (ඇබ්සන් මාස පෙන්වන්න එපා)
+                const visibleMonths = months.filter(m => !m.status || m.status.toLowerCase().trim() !== 'absent');
+                if (visibleMonths.length === 0) return null;
+
+                return (
+                  <div key={className} className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800/80">
+                    <p className="font-bold text-slate-900 dark:text-slate-200 mb-3 flex items-center gap-2 text-sm">
+                      <Book size={15} className="text-cyan-500" /> {className}
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {visibleMonths.map((m, idx) => (
+                        <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between p-2.5 rounded-xl border text-xs font-bold transition-all ${
+                          m.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' :
+                          m.status === 'Free' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20' :
+                          'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
+                        }`}>
+                          <span>{m.monthName} ({m.monthKey})</span>
+                          <span className="text-[11px] mt-1 sm:mt-0 px-2 py-0.5 rounded-md bg-white/70 dark:bg-black/40 font-medium">
+                            {m.status === 'Paid' && '🟢 Paid'}
+                            {m.status === 'Free' && '🔵 Free Card'}
+                            {m.status === 'Unpaid' && (activeLang === 'si' ? '🔴 Unpaid (ගෙවා නැත)' : '🔴 Unpaid')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="text-center py-6 text-slate-500 text-xs">
-              මෙතෙක් කිසිදු පන්තියක් සඳහා ලියාපදිංචි වී නොමැත.
+              {activeLang === 'si' ? 'මෙතෙක් කිසිදු පන්තියක් සඳහා ලියාපදිංචි වී නොමැත.' : 'No enrolled classes found.'}
             </div>
           )}
         </div>
@@ -1764,11 +1989,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
             {/* Method Details: LankaQR */}
             {joinPaymentMethod === 'qr' && (
-              <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center space-y-2">
-                <div className="relative inline-block bg-white p-2.5 rounded-2xl border border-slate-800 mx-auto group">
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 text-center space-y-2">
+                <div className="relative inline-block bg-white p-2.5 rounded-2xl border border-slate-200 dark:border-slate-800 mx-auto group shadow-sm">
                   <img
-                    src="/qr-payment.PNG"
-                    alt="LankaQR"
+                    src="/qr-payment.png"
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      if (!target.src.endsWith('/qr-payment.PNG')) {
+                        target.src = '/qr-payment.PNG';
+                      }
+                    }}
+                    alt="LankaQR Payment"
                     className="w-40 h-40 object-contain cursor-zoom-in"
                     onClick={() => setIsQrZoomModalOpen(true)}
                   />
@@ -1779,7 +2010,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <Maximize2 size={16} />
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
                   iPay, People's Wave, BOC, Commercial Q+ ආදී ඕනෑම LankaQR සහය දක්වන බැංකු ඇප් එකකින් ස්කෑන් කර ගෙවන්න.
                 </p>
               </div>
@@ -1788,29 +2019,29 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {/* Transaction ID input & Submit Form */}
             <form onSubmit={handleJoinFormSubmit} className="space-y-3 pt-1">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1">
-                  මුදල් ගෙවූ රිසීට් පත්‍රයේ Transaction ID / Invoice අංකය *
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  {activeLang === 'si' ? 'මුදල් ගෙවූ රිසීට් පත්‍රයේ Transaction ID / Invoice අංකය *' : 'Receipt Transaction ID / Invoice Ref Number *'}
                 </label>
                 <input
                   type="text"
                   value={joinTransactionId}
                   onChange={(e) => setJoinTransactionId(e.target.value)}
                   placeholder="උදා: TXN-89472619 / REF-12345"
-                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs px-3.5 py-2.5 rounded-xl font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-600"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-xs px-3.5 py-2.5 rounded-xl font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-400"
                 />
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  රිසීට් පතේ ඇති Reference / Transaction අංකය නිවැරදිව මෙහි සදහන් කරන්න.
+                  {activeLang === 'si' ? 'රිසීට් පතේ ඇති Reference / Transaction අංකය නිවැරදිව මෙහි සදහන් කරන්න.' : 'Please enter the exact Reference or Transaction number from your bank receipt.'}
                 </span>
               </div>
 
               {joinErrorMessage && (
-                <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl text-rose-400 text-xs font-bold flex items-center gap-2">
+                <div className="p-3 bg-rose-500/15 border border-rose-500/30 rounded-xl text-rose-500 dark:text-rose-400 text-xs font-bold flex items-center gap-2">
                   <AlertCircle size={15} /> {joinErrorMessage}
                 </div>
               )}
 
               {joinSuccessMessage && (
-                <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold flex items-center gap-2">
+                <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-600 dark:text-emerald-400 text-xs font-bold flex items-center gap-2">
                   <CheckCircle2 size={15} /> {joinSuccessMessage}
                 </div>
               )}
@@ -1819,17 +2050,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsJoinModalOpen(false)}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition cursor-pointer"
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
                 >
-                  අවලංගු කරන්න (Cancel)
+                  {activeLang === 'si' ? 'අවලංගු කරන්න (Cancel)' : 'Cancel'}
                 </button>
                 <button
                   type="submit"
                   disabled={joinSubmitting || !joinTransactionId.trim()}
-                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-950/40 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Sparkles size={14} className={joinSubmitting ? 'animate-spin' : ''} />
-                  {joinSubmitting ? 'යොමු වෙමින් පවතී...' : 'ගෙවීම් තහවුරු කරන්න'}
+                  {joinSubmitting ? (activeLang === 'si' ? 'යොමු වෙමින් පවතී...' : 'Submitting...') : (activeLang === 'si' ? 'ගෙවීම් තහවුරු කරන්න' : 'Confirm Payment')}
                 </button>
               </div>
             </form>
@@ -1844,7 +2075,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <X size={24} />
           </button>
           <div className="bg-white p-4 rounded-3xl max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <img src="/qr-payment.PNG" alt="QR Large" className="w-full h-auto object-contain rounded-xl" />
+            <img 
+              src="/qr-payment.png" 
+              onError={(e) => {
+                const target = e.currentTarget as HTMLImageElement;
+                if (!target.src.endsWith('/qr-payment.PNG')) {
+                  target.src = '/qr-payment.PNG';
+                }
+              }}
+              alt="QR Large" 
+              className="w-full h-auto object-contain rounded-xl" 
+            />
           </div>
         </div>
       )}
@@ -1965,23 +2206,38 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* ======================================================== */}
           <aside className="hidden md:flex flex-col justify-between w-64 lg:w-72 shrink-0 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 shadow-sm sticky top-6 min-h-[calc(100vh-3rem)]">
             <div>
-              {/* BRANDING: Website Logo & Name */}
-              <div className="flex items-center gap-3 px-1 mb-5 pb-4 border-b border-slate-200/80 dark:border-slate-800">
-                {siteConfig?.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
-                  <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20" />
-                ) : (
-                  <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black text-lg flex items-center justify-center shadow-sm">
-                    Ω
+              {/* BRANDING: Website Logo, Name & Language Switcher */}
+              <div className="flex items-center justify-between gap-2 px-1 mb-5 pb-4 border-b border-slate-200/80 dark:border-slate-800">
+                <div className="flex items-center gap-3 min-w-0">
+                  {siteConfig?.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
+                    <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20 shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black text-lg flex items-center justify-center shadow-sm shrink-0">
+                      Ω
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
+                      Smart Physics
+                    </h2>
+                    <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 truncate">
+                      {activeLang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe'}
+                    </p>
                   </div>
-                )}
-                <div className="min-w-0">
-                  <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                    Smart Physics
-                  </h2>
-                  <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 truncate">
-                    තාරක අමරසිංහ
-                  </p>
                 </div>
+
+                <button
+                  onClick={() => {
+                    const next = activeLang === 'si' ? 'en' : 'si';
+                    if (setLang) setLang(next);
+                    localStorage.setItem('physics_hub_lang', next);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-bold transition cursor-pointer shrink-0"
+                  title="Switch Language / භාෂාව මාරු කරන්න"
+                >
+                  <Globe size={13} className="text-blue-500" />
+                  <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
+                </button>
               </div>
 
               {/* TOP LEFT: Profile Photo & Student Name & ID (Clickable) */}
@@ -2088,6 +2344,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <span>මෙනුව (Menu)</span>
               </button>
               <div className="flex items-center gap-2">
+                {/* Language Switcher */}
+                <button
+                  onClick={() => {
+                    const next = activeLang === 'si' ? 'en' : 'si';
+                    if (setLang) setLang(next);
+                    localStorage.setItem('physics_hub_lang', next);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] font-bold cursor-pointer"
+                  title="Switch Language / භාෂාව මාරු කරන්න"
+                >
+                  <Globe size={12} />
+                  <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
+                </button>
+
                 <button
                   onClick={() => setIsNotificationsDrawerOpen(true)}
                   className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 relative"

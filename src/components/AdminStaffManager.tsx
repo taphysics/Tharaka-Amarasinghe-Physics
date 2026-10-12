@@ -73,6 +73,7 @@ const AVAILABLE_SECTIONS = [
   { id: 'pending_payments', label: 'පොරොත්තු ගෙවීම් (Pending Approvals)' },
   { id: 'bank_accounts', label: 'බැංකු ගිණුම් (Bank Accounts)' },
   { id: 'history', label: 'ගෙවීම් ඉතිහාසය (Payment History)' },
+  { id: 'finance', label: 'මූල්‍ය දෙපාර්තමේන්තුව (Finance Department)' },
   { id: 'qr_generator', label: 'QR Generator (Banner Landing)' },
   { id: 'site_configs', label: 'වෙබ් අඩවි සැකසුම් (Site Configs)' },
   { id: 'planner', label: 'දින දර්ශනය (Calendar Planner)' },
@@ -183,20 +184,26 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
     }
   };
 
-  const loadStaff = async () => {
-    setLoading(true);
-    const data = await fetchAllStaff();
-    setStaffList(data);
-    setLoading(false);
+  const loadStaff = async (silent = false) => {
+    if (!silent && staffList.length === 0) {
+      setLoading(true);
+    }
+    try {
+      const data = await fetchAllStaff();
+      setStaffList(data);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    loadStaff();
+    loadStaff(false);
     fetchClassesFromDb();
 
+    // Event listener for realtime staff updates (no jitter, no loading flicker)
     const unsubscribe = subscribeRealtimeEvents((type) => {
       if (type === 'staff_updated') {
-        loadStaff();
+        loadStaff(true);
       }
     });
 
@@ -207,7 +214,14 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
       })
       .subscribe();
 
+    // Occasional gentle background check (every 30s) without flashing the loading spinner
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadStaff(true);
+    }, 30000);
+
     return () => {
+      clearInterval(timer);
       unsubscribe();
       supabase.removeChannel(channel);
     };
@@ -446,7 +460,7 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
 
           <div className="flex items-center gap-2">
             <button
-              onClick={loadStaff}
+              onClick={() => loadStaff(false)}
               className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 transition"
               title="Refresh"
             >

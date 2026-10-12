@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;605;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -15,31 +15,33 @@ html:not(.dark), html:not(.dark) body, html:not(.dark) #root {
   min-height: 100vh;
 }
 
-/* Day Mode (Light Theme) Text Clarity & Contrast Enhancements */
+/* Day Mode (Light Theme) Universal Contrast Enhancements */
 html:not(.dark) {
   color-scheme: light;
 }
 
-/* Base text contrast inside non-dark surfaces */
-html:not(.dark) body {
-  background-color: #f8fafc;
-  color: #0f172a;
+/* Text clarity inside Day Mode surfaces (except inside dedicated dark media players) */
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-white:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+  color: #0f172a !important;
 }
 
-/* Ensure secondary and muted texts are crystal clear in Day Mode */
-html:not(.dark) .text-slate-400:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-100:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+  color: #1e293b !important;
+}
+
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-200:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+  color: #1e293b !important;
+}
+
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-300:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #334155 !important;
 }
 
-html:not(.dark) .text-slate-350:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
-  color: #1e293b !important;
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-400:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+  color: #475569 !important;
 }
 
-html:not(.dark) .text-slate-300:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
-  color: #1e293b !important;
-}
-
-html:not(.dark) .text-slate-500:not([class*="bg-slate-9"]):not([class*="bg-slate-8"]):not([class*="bg-blue-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-purple-6"]):not([class*="bg-indigo-6"]):not([class*="bg-amber-6"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-500 {
   color: #475569 !important;
 }
 
@@ -47,11 +49,13 @@ html:not(.dark) .text-slate-600 {
   color: #334155 !important;
 }
 
-/* Make inputs, selects and textareas crisp and visible in Day Mode */
+/* Form input, select, textarea styling for Day Mode */
 html:not(.dark) input:not([type="checkbox"]):not([type="radio"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]),
 html:not(.dark) select:not([class*="bg-slate-900"]):not([class*="bg-slate-950"]),
 html:not(.dark) textarea:not([class*="bg-slate-900"]):not([class*="bg-slate-950"]) {
   color: #0f172a;
+  background-color: #ffffff;
+  border-color: #cbd5e1;
 }
 
 html:not(.dark) input::placeholder,
@@ -63,6 +67,32 @@ html:not(.dark) textarea::placeholder {
 html:not(.dark) .border-slate-200,
 html:not(.dark) .border-slate-200\/80 {
   border-color: #cbd5e1 !important;
+}
+
+/* =========================================================================
+   UNIVERSAL MOBILE & DASHBOARD BUTTON CLARITY STYLES
+   Ensures buttons never look like dull/pitch-black boxes and are clearly identifiable
+   ========================================================================= */
+
+/* Secondary/Cancel buttons in Day Mode: Light crisp slate instead of dark black */
+html:not(.dark) button.bg-slate-800:not([class*="from-"]):not([class*="text-amber"]),
+html:not(.dark) button.bg-slate-900:not([class*="from-"]):not([class*="text-amber"]):not([class*="text-emerald"]):not([class*="text-blue"]) {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+html:not(.dark) button.bg-slate-800:hover,
+html:not(.dark) button.bg-slate-900:hover {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* Save / Submit / Primary Action buttons receive vivid, clear recognizable accents */
+button[type="submit"]:not([class*="bg-"]):not([class*="from-"]) {
+  background: linear-gradient(135deg, #059669, #0d9488) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
 }
 
 @layer utilities {
@@ -92,4 +122,3 @@ html:not(.dark) .border-slate-200\/80 {
   25% { transform: translateX(-4px); }
   75% { transform: translateX(4px); }
 }
-

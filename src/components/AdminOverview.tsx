@@ -3,6 +3,7 @@ import { StaffMember } from '../types';
 import { supabase } from '../supabaseClient';
 import { fetchAllPendingPayments, PendingPaymentRequest } from '../pendingPaymentsService';
 import { fetchAllStaff } from '../staffService';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 import { 
   Briefcase, GraduationCap, ShieldCheck, UserCheck, Users, 
   Clock, CheckCircle, BookOpen, Video, FileText, ArrowRight, 
@@ -45,8 +46,8 @@ export default function AdminOverview({
   const isAdmin = role === 'admin';
   const isSuperAdmin = role === 'super_admin';
 
-  const loadOverviewData = async () => {
-    setLoading(true);
+  const loadOverviewData = async (isManual = false) => {
+    if (isManual) setLoading(true);
     try {
       // 1. Fetch pending payment requests
       const pList = await fetchAllPendingPayments();
@@ -95,6 +96,23 @@ export default function AdminOverview({
 
   useEffect(() => {
     loadOverviewData();
+
+    // Live continuous 1.5s database synchronization
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadOverviewData();
+    }, 1500);
+
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (['pending_payment_submitted', 'pending_payment_deleted', 'payment_approved', 'payment_rejected', 'student_updated', 'staff_updated'].includes(type)) {
+        loadOverviewData();
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      unsub();
+    };
   }, [currentStaff]);
 
   // Derived metrics
@@ -177,7 +195,7 @@ export default function AdminOverview({
 
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={loadOverviewData}
+              onClick={() => loadOverviewData(true)}
               className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
               title="Refresh Stats"
             >
