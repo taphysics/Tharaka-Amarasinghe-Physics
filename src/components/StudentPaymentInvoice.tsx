@@ -576,7 +576,7 @@ export default function StudentPaymentInvoice() {
               className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-900/30 transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <Send size={14} className={submittingReceipt ? 'animate-spin' : ''} />
-              {submittingReceipt ? 'යොමු වෙමින් පවතී...' : 'Submit Payment (ඔබගේ මුදල් ගෙවූ ලදුපතේ ස්ක්‍රීන්ශොට් එකක් හෝ ඡායාරූපයක් වට්ස් ඇප් කිරීමට කාරුණික වන්න. 0779630100)'}
+              {submittingReceipt ? 'යොමු වෙමින් පවතී...' : 'ගෙවීම් තහවුරු කිරීමට යොමු කරන්න (Submit Payment)'}
             </button>
           </form>
         </div>

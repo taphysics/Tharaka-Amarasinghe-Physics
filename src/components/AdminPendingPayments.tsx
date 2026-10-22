@@ -3,12 +3,14 @@ import {
   PendingPaymentRequest, 
   fetchAllPendingPayments, 
   approvePendingPayment, 
-  rejectPendingPayment 
+  rejectPendingPayment,
+  deletePendingPaymentRequest
 } from '../pendingPaymentsService';
 import { subscribeRealtimeEvents } from '../realtimeSync';
 import { 
   Clock, CheckCircle, XCircle, Search, MessageSquare, Copy, 
-  Check, RefreshCw, AlertTriangle, ShieldCheck, Filter, User, CreditCard, QrCode
+  Check, RefreshCw, AlertTriangle, ShieldCheck, Filter, User, CreditCard, QrCode,
+  Trash2
 } from 'lucide-react';
 
 export default function AdminPendingPayments() {
@@ -18,6 +20,7 @@ export default function AdminPendingPayments() {
   const [searchTerm, setSearchTerm] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PendingPaymentRequest | null>(null);
 
   const loadRequests = async () => {
     setLoading(true);
@@ -97,6 +100,21 @@ export default function AdminPendingPayments() {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setProcessingId(deleteTarget.id);
+    try {
+      await deletePendingPaymentRequest(deleteTarget.id);
+      setRequests(prev => prev.filter(r => r.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (e) {
+      console.error(e);
+      alert('වාර්තාව මකා දැමීමේදී දෝෂයක් ඇති විය.');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const [filterClass, setFilterClass] = useState<string>('all');
 
   const pendingCount = requests.filter(r => r.status === 'pending').length;
@@ -104,7 +122,8 @@ export default function AdminPendingPayments() {
   const rejectedCount = requests.filter(r => r.status === 'rejected').length;
 
   const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-  const [monthFilter, setMonthFilter] = useState<'current' | 'all'>('current');
+  // Default to 'all' so pending requests are never hidden from admin on entry
+  const [monthFilter, setMonthFilter] = useState<'current' | 'all'>('all');
 
   // Extract distinct class types for tabs (supporting multi-class entries)
   const distinctClassTypes = Array.from(
@@ -126,7 +145,14 @@ export default function AdminPendingPayments() {
         const reqClasses = (req.class_type || '').split(',').map(s => s.trim().toLowerCase());
         if (!reqClasses.includes(filterClass.toLowerCase().trim())) return false;
       }
-      if (monthFilter === 'current' && req.month && req.month !== currentMonthKey) return false;
+      if (monthFilter === 'current' && req.month && req.status !== 'pending') {
+        const curYear = new Date().getFullYear().toString();
+        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+        const curMonthName = monthNames[new Date().getMonth()];
+        const mLower = req.month.toLowerCase();
+        const matchCurrent = mLower.includes(currentMonthKey) || (mLower.includes(curYear) && mLower.includes(curMonthName));
+        if (!matchCurrent) return false;
+      }
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
         const matchName = (req.student_name || '').toLowerCase().includes(q);
@@ -519,12 +545,36 @@ export default function AdminPendingPayments() {
                         </button>
                       </>
                     ) : isApproved ? (
-                      <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-2xl text-center text-xs font-bold flex items-center gap-1.5">
-                        <CheckCircle size={15} /> ගෙවීම අනුමත කර පන්තිය සක්‍රිය කරන ලදී
+                      <div className="flex flex-col sm:flex-row lg:flex-col gap-2">
+                        <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-2xl text-center text-xs font-bold flex items-center justify-center gap-1.5">
+                          <CheckCircle size={15} /> ගෙවීම අනුමත කර ඇත
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => setDeleteTarget(req)}
+                          className="px-4 py-2.5 bg-slate-800/80 hover:bg-rose-950/40 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                          title="මෙම වාර්තාව ලැයිස්තුවෙන් මකා දමන්න"
+                        >
+                          <Trash2 size={13} className="text-rose-400" /> 
+                          <span>වාර්තාව මකන්න (Delete)</span>
+                        </button>
                       </div>
                     ) : (
-                      <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-2xl text-center text-xs font-bold flex items-center gap-1.5">
-                        <XCircle size={15} /> ගෙවීම ප්‍රතික්ෂේප කර ඇත
+                      <div className="flex flex-col sm:flex-row lg:flex-col gap-2">
+                        <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-400 rounded-2xl text-center text-xs font-bold flex items-center justify-center gap-1.5">
+                          <XCircle size={15} /> ගෙවීම ප්‍රතික්ෂේප කර ඇත
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => setDeleteTarget(req)}
+                          className="px-4 py-2.5 bg-slate-800/80 hover:bg-rose-950/40 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                          title="මෙම වාර්තාව ලැයිස්තුවෙන් මකා දමන්න"
+                        >
+                          <Trash2 size={13} className="text-rose-400" /> 
+                          <span>වාර්තාව මකන්න (Delete)</span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -679,6 +729,77 @@ export default function AdminPendingPayments() {
                   <>
                     <XCircle size={15} />
                     <span>ප්‍රතික්ෂේප කරන්න</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl w-full max-w-md shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center border border-rose-500/30 shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white font-display">වාර්තාව මකා දැමීම (Delete Record)</h3>
+                <p className="text-xs text-slate-400">Permanently Remove from Pending Payments Table</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-400">සිසුවා:</span>
+                <span className="font-bold text-white">{deleteTarget.student_name} ({deleteTarget.username})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">පන්ති වර්ගය:</span>
+                <span className="font-bold text-purple-400">{deleteTarget.class_type}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">මාසය:</span>
+                <span className="font-bold text-slate-300">{deleteTarget.month}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">තත්ත්වය:</span>
+                <span className={`font-bold uppercase ${deleteTarget.status === 'approved' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {deleteTarget.status}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Tx / Ref ID:</span>
+                <span className="font-mono font-bold text-amber-300">{deleteTarget.transaction_id}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-300 leading-relaxed bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">
+              මෙම වාර්තාව මෙම පොරොත්තු ලැයිස්තුවෙන් (pending_payments table) ස්ථිරවම මකා දැමෙනු ඇත. (සිසුවාගේ පන්ති ප්‍රවේශයට හෝ ස්ථිර ගෙවීම් ඉතිහාසයට මෙයින් බාධාවක් නොවේ).
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                අවලංගු කරන්න
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={processingId === deleteTarget.id}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold transition shadow-lg shadow-rose-900/30 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {processingId === deleteTarget.id ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <Trash2 size={15} />
+                    <span>ඔව්, මකා දමන්න</span>
                   </>
                 )}
               </button>

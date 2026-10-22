@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 import { format, differenceInSeconds } from 'date-fns';
 import { 
   Maximize2, 
@@ -163,11 +164,19 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string, classObj?: any)
       b64User = btoa(trimmedUser);
     }
 
+    let baseOrigin = 'https://zoom.us';
+    try {
+      if (joinUrl.startsWith('http')) {
+        baseOrigin = new URL(joinUrl).origin;
+      }
+    } catch {}
+
     const params = new URLSearchParams();
     params.set('prefer', '1');
     if (pwd) {
       params.set('pwd', pwd);
       params.set('password', pwd);
+      params.set('passcode', pwd);
     }
     params.set('uname', trimmedUser);
     params.set('un', b64User);
@@ -175,7 +184,7 @@ const getEmbeddableZoomUrl = (joinUrl: string, userName: string, classObj?: any)
     params.set('name', trimmedUser);
     params.set('dn', trimmedUser);
 
-    return `https://zoom.us/wc/join/${meetingId}?${params.toString()}`;
+    return `${baseOrigin}/wc/join/${meetingId}?${params.toString()}`;
   } catch (error) {
     return joinUrl;
   }
@@ -189,6 +198,14 @@ const getDirectZoomJoinUrl = (joinUrl: string, userName: string, classObj?: any)
     if (!meetingId) return joinUrl;
 
     const trimmedUser = (userName || 'Student').trim();
+
+    let baseOrigin = 'https://zoom.us';
+    try {
+      if (joinUrl.startsWith('http')) {
+        baseOrigin = new URL(joinUrl).origin;
+      }
+    } catch {}
+
     const params = new URLSearchParams();
     if (pwd) {
       params.set('pwd', pwd);
@@ -198,7 +215,7 @@ const getDirectZoomJoinUrl = (joinUrl: string, userName: string, classObj?: any)
       params.set('userName', trimmedUser);
       params.set('name', trimmedUser);
     }
-    return `https://zoom.us/j/${meetingId}?${params.toString()}`;
+    return `${baseOrigin}/j/${meetingId}?${params.toString()}`;
   } catch {
     return joinUrl;
   }
@@ -377,12 +394,32 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     };
   }, [isFloatingDragging, isFloatingCollapsed]);
 
-  // 1. Initial Fetch and Realtime Subscriptions
+  // 1. Initial Fetch, Fast Realtime Subscriptions, and 1.5s Continuous Database Sync
   useEffect(() => {
     fetchData();
 
+    // Fast 1.5s database polling so live status updates within 1 second without manual refresh
+    const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchData();
+    }, 1500);
+
+    // BroadcastChannel cross-tab & in-memory realtime event listener
+    const unsubRealtime = subscribeRealtimeEvents((type) => {
+      if (
+        type === 'calendar_updated' || 
+        type === 'payment_approved' || 
+        type === 'payment_status_changed' ||
+        type === 'payments_updated' ||
+        type === 'student_updated'
+      ) {
+        fetchData();
+      }
+    });
+
+    const channelName = `live-class-player-${currentUser?.id || 'guest'}-${Date.now()}`;
     const channel = supabase
-      .channel('live-class-player-realtime')
+      .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchData())
@@ -391,6 +428,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       .subscribe();
 
     return () => {
+      clearInterval(pollInterval);
+      unsubRealtime();
       supabase.removeChannel(channel);
     };
   }, [currentUser?.id, currentUser?.username]);
@@ -1137,9 +1176,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
   if (isLoading || viewState === 'loading') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] bg-slate-950 rounded-2xl border border-slate-800 text-white font-semibold gap-3">
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-white dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-white font-semibold gap-3">
         <RefreshCw size={24} className="animate-spin text-blue-500" />
-        <span className="text-sm text-slate-400">සජීවී පන්ති සොයමින්...</span>
+        <span className="text-sm text-slate-500 dark:text-slate-400">සජීවී පන්ති සොයමින්...</span>
       </div>
     );
   }
@@ -1157,46 +1196,46 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     const waUrl = `https://wa.me/94719152128?text=${encodeURIComponent(whatsappNotice)}`;
 
     return (
-      <div className="w-full bg-slate-950 text-white flex flex-col p-4 md:p-6 rounded-2xl border border-rose-900/40 shadow-2xl animate-in fade-in duration-300">
+      <div className="w-full bg-white dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col p-4 md:p-6 rounded-2xl border border-rose-200 dark:border-rose-900/40 shadow-xl dark:shadow-2xl animate-in fade-in duration-300">
         <div className="max-w-3xl mx-auto w-full space-y-6">
           
           {/* Locked Header Banner */}
-          <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-b from-rose-950/40 to-slate-900/90 border border-rose-500/30 shadow-[0_0_40px_rgba(244,63,94,0.12)] text-center relative overflow-hidden">
-            <div className="w-16 h-16 md:w-20 md:h-20 bg-rose-500/15 border-2 border-rose-500/40 rounded-2xl flex items-center justify-center mx-auto mb-5 text-rose-400 shadow-lg">
+          <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-b from-rose-50 via-white to-white dark:from-rose-950/40 dark:to-slate-900/90 border border-rose-300 dark:border-rose-500/30 shadow-md text-center relative overflow-hidden">
+            <div className="w-16 h-16 md:w-20 md:h-20 bg-rose-500/15 border-2 border-rose-400 dark:border-rose-500/40 rounded-2xl flex items-center justify-center mx-auto mb-5 text-rose-600 dark:text-rose-400 shadow-lg">
               <Lock size={36} className="animate-pulse" />
             </div>
 
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold uppercase tracking-wider mb-4">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-rose-500/15 dark:bg-rose-500/20 border border-rose-300 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-xs font-bold uppercase tracking-wider mb-4">
               <ShieldAlert size={14} /> සජීවී පන්තිය අක්‍රීය කර ඇත (Live Class Disabled)
             </div>
 
-            <h1 className="text-xl md:text-3xl font-extrabold text-white mb-3 leading-snug">
+            <h1 className="text-xl md:text-3xl font-extrabold text-slate-900 dark:text-white mb-3 leading-snug">
               {targetClass.title}
             </h1>
 
-            <p className="text-sm md:text-base text-rose-200/90 max-w-xl mx-auto leading-relaxed">
-              ඔබ තෝරාගෙන ඇති <strong className="text-white underline decoration-rose-500 underline-offset-4">{currentClassType}</strong> පන්තියේ <strong className="text-white">{currentMonthFormatted}</strong> මාසික ගාස්තු ගෙවීම් තහවුරු කර නොමැත. කරුණාකර මුදල් ගෙවා සජීවී පන්තියට සම්බන්ධ වන්න.
+            <p className="text-sm md:text-base text-slate-700 dark:text-rose-200/90 max-w-xl mx-auto leading-relaxed">
+              ඔබ තෝරාගෙන ඇති <strong className="text-slate-900 dark:text-white underline decoration-rose-500 underline-offset-4">{currentClassType}</strong> පන්තියේ <strong className="text-slate-900 dark:text-white">{currentMonthFormatted}</strong> මාසික ගාස්තු ගෙවීම් තහවුරු කර නොමැත. කරුණාකර මුදල් ගෙවා සජීවී පන්තියට සම්බන්ධ වන්න.
             </p>
 
             {/* Target Class & Month Meta Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto mt-6 text-left">
-              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+              <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-3">
+                <div className="p-2 bg-blue-500/10 rounded-lg text-blue-600 dark:text-blue-400">
                   <Calendar size={18} />
                 </div>
                 <div>
-                  <span className="text-[11px] text-slate-400 block">අදාළ පන්ති වර්ගය</span>
-                  <span className="text-xs md:text-sm font-bold text-white">{currentClassType}</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">අදාළ පන්ති වර්ගය</span>
+                  <span className="text-xs md:text-sm font-bold text-slate-900 dark:text-white">{currentClassType}</span>
                 </div>
               </div>
 
-              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 flex items-center gap-3">
-                <div className="p-2 bg-amber-500/10 rounded-lg text-amber-400">
+              <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-3">
+                <div className="p-2 bg-amber-500/10 rounded-lg text-amber-600 dark:text-amber-400">
                   <Clock size={18} />
                 </div>
                 <div>
-                  <span className="text-[11px] text-slate-400 block">වත්මන් මාසය</span>
-                  <span className="text-xs md:text-sm font-bold text-amber-300">{currentMonthFormatted}</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">වත්මන් මාසය</span>
+                  <span className="text-xs md:text-sm font-bold text-amber-600 dark:text-amber-300">{currentMonthFormatted}</span>
                 </div>
               </div>
             </div>
@@ -1224,7 +1263,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               <button
                 onClick={handleManualPaymentRefresh}
                 disabled={isRefreshingPayment}
-                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs md:text-sm flex items-center justify-center gap-2 border border-slate-700 transition cursor-pointer"
+                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs md:text-sm flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
               >
                 <RefreshCw size={14} className={isRefreshingPayment ? 'animate-spin' : ''} />
                 {isRefreshingPayment ? 'පරීක්ෂා කරමින්...' : 'Refresh Status'}
@@ -1240,11 +1279,11 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   // 1. NO SCHEDULED OR LIVE CLASSES AVAILABLE
   if (viewState === 'no-classes') {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] bg-slate-950 text-white p-6 rounded-2xl border border-slate-800">
-        <div className="w-full max-w-md bg-slate-900/80 border border-slate-800 rounded-2xl p-8 text-center shadow-xl">
-          <Calendar size={40} className="mx-auto mb-3 text-slate-500" />
-          <h2 className="text-xl md:text-2xl font-bold text-slate-300 mb-2">පන්ති නොමැත</h2>
-          <p className="text-slate-400 text-xs md:text-sm">
+      <div className="flex flex-col items-center justify-center min-h-[400px] bg-white dark:bg-slate-950 text-slate-900 dark:text-white p-6 rounded-2xl border border-slate-200 dark:border-slate-800">
+        <div className="w-full max-w-md bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-md dark:shadow-xl">
+          <Calendar size={40} className="mx-auto mb-3 text-slate-400 dark:text-slate-500" />
+          <h2 className="text-xl md:text-2xl font-bold text-slate-800 dark:text-slate-300 mb-2">පන්ති නොමැත</h2>
+          <p className="text-slate-600 dark:text-slate-400 text-xs md:text-sm">
             ඉදිරි දින සඳහා ඔබගේ විෂයයන්ට අදාළව සජීවී පන්ති කාලසටහන් කර නොමැත. නව පන්ති පිළිබඳ තොරතුරු ඉක්මනින් මෙහි දිස්වනු ඇත.
           </p>
         </div>
@@ -1255,25 +1294,25 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   // 2. UPCOMING CLASS LIST
   if (viewState === 'upcoming-list') {
     return (
-      <div className="flex flex-col items-center min-h-[450px] bg-slate-950 text-white p-4 md:p-8 rounded-2xl border border-slate-800">
-        <h2 className="text-xl md:text-2xl font-bold text-slate-200 mb-6 text-center">
+      <div className="flex flex-col items-center min-h-[450px] bg-white dark:bg-slate-950 text-slate-900 dark:text-white p-4 md:p-8 rounded-2xl border border-slate-200 dark:border-slate-800">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-slate-200 mb-6 text-center">
           ඉදිරියේදී පැවැත්වීමට නියමිත පන්ති
         </h2>
         <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-4">
           {calendarEvents.map((ev, idx) => (
-            <div key={idx} className={`p-6 rounded-2xl border bg-slate-900/80 shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
-              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-black/40 inline-block shadow-sm mb-3">
+            <div key={idx} className={`p-6 rounded-2xl border bg-slate-50 dark:bg-slate-900/80 shadow-md dark:shadow-lg ${getClassColor(ev.target_class_type || ev.class_type)} border-opacity-30 hover:border-opacity-100 transition-all duration-300`}>
+              <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-white/80 dark:bg-black/40 text-slate-800 dark:text-white inline-block shadow-sm mb-3">
                 {ev.target_class_type || ev.class_type}
               </span>
-              <h3 className="text-lg text-white font-bold mb-3 line-clamp-2 leading-tight">{ev.title}</h3>
-              <div className="flex flex-col gap-2 text-xs bg-black/30 p-3 rounded-xl">
+              <h3 className="text-lg text-slate-900 dark:text-white font-bold mb-3 line-clamp-2 leading-tight">{ev.title}</h3>
+              <div className="flex flex-col gap-2 text-xs bg-white dark:bg-black/30 p-3 rounded-xl border border-slate-200 dark:border-transparent">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">දිනය:</span>
-                  <span className="text-slate-200 font-semibold">{ev.date}</span>
+                  <span className="text-slate-500 dark:text-slate-400">දිනය:</span>
+                  <span className="text-slate-800 dark:text-slate-200 font-semibold">{ev.date}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">වේලාව:</span>
-                  <span className="text-slate-200 font-semibold">{ev.start_time}</span>
+                  <span className="text-slate-500 dark:text-slate-400">වේලාව:</span>
+                  <span className="text-slate-800 dark:text-slate-200 font-semibold">{ev.start_time}</span>
                 </div>
               </div>
             </div>
@@ -1308,30 +1347,30 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   };
 
   return (
-    <div className="w-full bg-slate-950 text-white flex flex-col p-2 md:p-4 rounded-2xl border border-slate-800 relative">
+    <div className="w-full bg-white dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col p-2 md:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 relative">
 
       {/* =========================================================================
           FEATURE: ALREADY COMPLETED EXAM BANNER (PREVENTS RE-POPUP ON REFRESH)
          ========================================================================= */}
       {alreadyCompletedExam && (
-        <div className="w-full mb-4 bg-emerald-950/40 border-2 border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
+        <div className="w-full mb-4 bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-500/40 rounded-2xl p-4 sm:p-5 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 shrink-0">
               <CheckCircle2 size={24} />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">
+                <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded border border-emerald-400 dark:border-emerald-500/30">
                   විභාගය අවසන් කර ඇත
                 </span>
-                <span className="text-xs text-slate-300 font-mono font-bold">
+                <span className="text-xs text-slate-700 dark:text-slate-300 font-mono font-bold">
                   {alreadyCompletedExam.meta_data?.exam_title || activeExam?.title || 'Online Exam'}
                 </span>
               </div>
-              <p className="text-xs sm:text-sm font-semibold text-white mt-1">
-                ඔබ මෙම සජීවී විභාගය සාර්ථකව අවසන් කර ඇත &bull; ලකුණු: <span className="text-emerald-400 font-bold">{alreadyCompletedExam.score} / {alreadyCompletedExam.meta_data?.total_questions || 50}</span> ({alreadyCompletedExam.meta_data?.percentage ?? Math.round((alreadyCompletedExam.score / 50) * 100)}%)
+              <p className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-white mt-1">
+                ඔබ මෙම සජීවී විභාගය සාර්ථකව අවසන් කර ඇත &bull; ලකුණු: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{alreadyCompletedExam.score} / {alreadyCompletedExam.meta_data?.total_questions || 50}</span> ({alreadyCompletedExam.meta_data?.percentage ?? Math.round((alreadyCompletedExam.score / 50) * 100)}%)
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                 ගුරුභවතා විසින් නැවත Retake අවසරයක් (Re-Push) ලබා දුනහොත් පමණක් ඔබට මෙම විභාගය නැවත කළ හැක.
               </p>
             </div>
@@ -1358,45 +1397,46 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       )}
 
       {/* =========================================================================
+      {/* =========================================================================
           FEATURE: PUSHED ONLINE EXAM FULL-STAGE SPLIT VIEW (PDF + MCQ ANSWER SHEET)
          ========================================================================= */}
       {isExamOpen && activeExam && (
-        <div className="w-full mb-6 bg-slate-900 border-2 border-amber-500/40 rounded-3xl p-4 md:p-6 shadow-2xl relative overflow-hidden animate-in fade-in duration-300">
+        <div className="w-full mb-6 bg-white dark:bg-slate-900 border-2 border-amber-400 dark:border-amber-500/40 rounded-3xl p-4 md:p-6 shadow-xl dark:shadow-2xl relative overflow-hidden animate-in fade-in duration-300">
           
           {/* Top Header of Pushed Paper */}
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4 mb-4">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30 flex items-center gap-1">
                   <FileText size={12} /> සජීවී විභාග පත්‍රිකාව (Active Online Exam)
                 </span>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
                   {activeExam.class_type || currentClassType}
                 </span>
               </div>
-              <h2 className="text-lg md:text-2xl font-black text-white">{activeExam.title}</h2>
+              <h2 className="text-lg md:text-2xl font-black text-slate-900 dark:text-white">{activeExam.title}</h2>
             </div>
 
             {/* Live Exam Timer & Top Close Button */}
             <div className="flex items-center gap-3">
               {!isExamSubmitted && (
-                <div className={`px-4 py-2 rounded-2xl border flex items-center gap-2.5 font-mono font-bold shadow-lg ${
+                <div className={`px-4 py-2 rounded-2xl border flex items-center gap-2.5 font-mono font-bold shadow-sm dark:shadow-lg ${
                   examSecondsLeft <= 300 
-                    ? 'bg-red-500/20 border-red-500/50 text-red-400 animate-pulse' 
+                    ? 'bg-red-500/15 border-red-500/50 text-red-600 dark:text-red-400 animate-pulse' 
                     : examSecondsLeft <= 900 
-                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' 
-                    : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                    ? 'bg-amber-500/15 border-amber-400 dark:border-amber-500/40 text-amber-700 dark:text-amber-300' 
+                    : 'bg-emerald-500/15 border-emerald-400 dark:border-emerald-500/40 text-emerald-700 dark:text-emerald-300'
                 }`}>
                   <Clock size={16} />
-                  <span className="text-xs uppercase font-sans text-slate-400">ඉතිරි කාලය:</span>
+                  <span className="text-xs uppercase font-sans text-slate-500 dark:text-slate-400">ඉතිරි කාලය:</span>
                   <span className="text-base md:text-lg">{formatExamTime(examSecondsLeft)}</span>
                 </div>
               )}
 
-              {/* TOP CLOSE BUTTON (ඉහළින් ඇති Close බොත්තම) */}
+              {/* TOP CLOSE BUTTON */}
               <button
                 onClick={handleCloseExamAndRestoreZoom}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
                 title="ප්‍රශ්න පත්‍රය වසා නැවත සූම් පන්තියට යන්න"
               >
                 <X size={15} />
@@ -1408,28 +1448,28 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
           {/* If Exam is NOT Submitted yet: Check Camera Verification First */}
           {!isExamSubmitted ? (
             !isExamStarted ? (
-              /* EXAM START & CAMERA VERIFICATION NOTICE (කැමරාව On කර විභාගය ආරම්භ කිරීමට උපදෙස් ලබා දෙන අතර කැමරාව නොමැතිවද ආරම්භ කළ හැක) */
-              <div className="w-full bg-slate-950/95 border-2 border-emerald-500/30 rounded-3xl p-6 sm:p-10 flex flex-col items-center text-center max-w-2xl mx-auto shadow-2xl my-4 animate-in fade-in">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-4 shadow-lg shadow-emerald-950/40">
+              /* EXAM START & CAMERA VERIFICATION NOTICE */
+              <div className="w-full bg-slate-50 dark:bg-slate-950/95 border-2 border-emerald-300 dark:border-emerald-500/30 rounded-3xl p-6 sm:p-10 flex flex-col items-center text-center max-w-2xl mx-auto shadow-md dark:shadow-2xl my-4 animate-in fade-in">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-4 shadow-lg shadow-emerald-950/40">
                   <FileText size={32} />
                 </div>
 
-                <h3 className="text-xl sm:text-2xl font-black text-white mb-2">
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white mb-2">
                   සජීවී විභාගය ආරම්භ කිරීම (Start Live Exam)
                 </h3>
 
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 max-w-lg mb-6 text-left sm:text-center">
-                  <p className="text-blue-300 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 mb-1">
-                    <Camera size={18} className="shrink-0 text-cyan-400" />
+                <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-2xl p-4 max-w-lg mb-6 text-left sm:text-center">
+                  <p className="text-blue-800 dark:text-blue-300 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 mb-1">
+                    <Camera size={18} className="shrink-0 text-cyan-600 dark:text-cyan-400" />
                     කරුණාකර කැමරාව On කර විභාගය ආරම්භ කරන්න
                   </p>
-                  <p className="text-slate-300 text-xs leading-relaxed">
+                  <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed">
                     සමහර උපාංග (Devices) වල කැමරා පහසුකම් නොමැති අවස්ථාවන්ද පැවතිය හැකි බැවින්, කැමරාව On කර තිබීම අනිවාර්ය නොවේ. කැමරාව On කළද නැතද ඔබට විභාගය ආරම්භ කළ හැක.
                   </p>
                 </div>
 
                 {/* Real-time Video Stream Preview */}
-                <div className="relative w-full max-w-sm rounded-2xl overflow-hidden border-2 border-slate-700 bg-slate-900 shadow-xl mb-5 aspect-video flex items-center justify-center">
+                <div className="relative w-full max-w-sm rounded-2xl overflow-hidden border-2 border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 shadow-xl mb-5 aspect-video flex items-center justify-center">
                   {isCameraActive ? (
                     <video
                       ref={examGateVideoRef}
@@ -1439,10 +1479,10 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                       className="w-full h-full object-cover scale-x-[-1]"
                     />
                   ) : (
-                    <div className="flex flex-col items-center justify-center text-slate-500 p-4">
-                      <VideoOff size={38} className="mb-2 text-slate-600" />
-                      <span className="text-xs font-semibold text-slate-300">කැමරාව ක්‍රියා විරහිතයි (Camera OFF)</span>
-                      <span className="text-[11px] text-slate-400 mt-1">කැමරා පහසුකම නැතත් ඔබට පහතින් විභාගය ආරම්භ කළ හැක</span>
+                    <div className="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 p-4">
+                      <VideoOff size={38} className="mb-2 text-slate-400 dark:text-slate-600" />
+                      <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">කැමරාව ක්‍රියා විරහිතයි (Camera OFF)</span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">කැමරා පහසුකම නැතත් ඔබට පහතින් විභාගය ආරම්භ කළ හැක</span>
                     </div>
                   )}
 
@@ -1463,19 +1503,19 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </div>
 
                 {cameraError && (
-                  <div className="text-xs text-amber-300 bg-amber-950/40 border border-amber-800/60 rounded-xl p-3 mb-4 max-w-md">
+                  <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 rounded-xl p-3 mb-4 max-w-md">
                     {cameraError}
                   </div>
                 )}
 
-                {/* Gate Action Buttons: Support Turn Cam On AND Start Exam whether Cam is on or off */}
+                {/* Gate Action Buttons */}
                 <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
                   {!isCameraActive ? (
                     <>
                       <button
                         onClick={() => startCameraStream(true)}
                         disabled={isRequestingCamera}
-                        className="flex-1 py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-blue-300 hover:text-white border border-blue-500/40 font-bold text-xs sm:text-sm rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md"
+                        className="flex-1 py-3.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-white border border-blue-300 dark:border-blue-500/40 font-bold text-xs sm:text-sm rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                         title="කැමරාව On කිරීමට උත්සාහ කරන්න"
                       >
                         <Camera size={16} />
@@ -1505,7 +1545,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 {!isCameraActive && (
                   <button
                     onClick={() => setShowBrowserPermModal(true)}
-                    className="text-[11px] text-blue-400 hover:text-blue-300 mt-3.5 underline cursor-pointer"
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline mt-3.5 cursor-pointer font-semibold"
                   >
                     බ්‍රවුසරයේ කැමරා සහ මයික් අවසර ලබා දෙන ආකාරය බලන්න
                   </button>
@@ -1515,52 +1555,52 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               /* SIDE 1 & SIDE 2: FULL STAGE SPLIT VIEW (Google Drive PDF Viewer + Answer Sheet) */
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[680px]">
                 
-                {/* SIDE 1: GOOGLE DRIVE PDF VIEWER (Interactive Zoom, Pan, Drag, Scroll) */}
-                <div className="lg:col-span-7 flex flex-col bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-inner">
+                {/* SIDE 1: GOOGLE DRIVE PDF VIEWER */}
+                <div className="lg:col-span-7 flex flex-col bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-inner">
                   {/* PDF Interactive Toolbar */}
-                  <div className="bg-slate-900/90 border-b border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-1 text-slate-300 font-semibold">
+                  <div className="bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1 text-slate-700 dark:text-slate-300 font-semibold">
                       <span>PDF පත්‍රිකා පාලනය:</span>
-                      <span className="text-[11px] font-mono text-amber-400 ml-1">{Math.round(pdfZoom * 100)}%</span>
+                      <span className="text-[11px] font-mono text-amber-600 dark:text-amber-400 ml-1">{Math.round(pdfZoom * 100)}%</span>
                     </div>
 
                   {/* PDF Controls */}
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setPdfZoom(z => Math.min(2.5, z + 0.25))}
-                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 transition"
+                      className="p-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 transition"
                       title="Zoom In (විශාල කරන්න)"
                     >
                       <ZoomIn size={15} />
                     </button>
                     <button
                       onClick={() => setPdfZoom(z => Math.max(0.7, z - 0.25))}
-                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 transition"
+                      className="p-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 transition"
                       title="Zoom Out (කුඩා කරන්න)"
                     >
                       <ZoomOut size={15} />
                     </button>
                     <button
                       onClick={() => { setPdfZoom(1); setPdfPan({ x: 0, y: 0 }); }}
-                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 transition"
+                      className="p-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 transition"
                       title="Reset (මූලික ප්‍රමාණය)"
                     >
                       <RotateCcw size={15} />
                     </button>
 
-                    <div className="h-4 w-px bg-slate-700 mx-1"></div>
+                    <div className="h-4 w-px bg-slate-300 dark:bg-slate-700 mx-1"></div>
 
                     {/* Page Scrolling Buttons */}
                     <button
                       onClick={() => handlePdfScroll('up')}
-                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 transition flex items-center gap-1 text-[11px] font-medium"
+                      className="p-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 transition flex items-center gap-1 text-[11px] font-medium"
                       title="පෙර පිටුවට / Scroll Up"
                     >
                       <ChevronUp size={14} /> <span className="hidden sm:inline">ඉහළට</span>
                     </button>
                     <button
                       onClick={() => handlePdfScroll('down')}
-                      className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-200 transition flex items-center gap-1 text-[11px] font-medium"
+                      className="p-1.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200 dark:border-slate-700 transition flex items-center gap-1 text-[11px] font-medium"
                       title="ඊළඟ පිටුවට / Scroll Down"
                     >
                       <ChevronDown size={14} /> <span className="hidden sm:inline">පහළට</span>
@@ -1571,7 +1611,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                         href={activeExam.pdf_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="p-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-lg transition ml-1"
+                        className="p-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-300 rounded-lg transition ml-1 border border-blue-300 dark:border-transparent"
                         title="Google Drive එකෙන් Open කරන්න"
                       >
                         <ExternalLink size={14} />
@@ -1586,7 +1626,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                   onMouseDown={handlePdfMouseDown}
                   onMouseMove={handlePdfMouseMove}
                   onMouseUp={handlePdfMouseUp}
-                  className={`flex-1 relative overflow-auto bg-slate-900 select-none min-h-[500px] ${
+                  className={`flex-1 relative overflow-auto bg-slate-100 dark:bg-slate-900 select-none min-h-[500px] ${
                     pdfZoom > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
                   }`}
                 >
@@ -1608,8 +1648,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                         allow="autoplay"
                       />
                     ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-400 p-8 text-center">
-                        <FileText size={48} className="mb-3 text-slate-600" />
+                      <div className="flex flex-col items-center justify-center h-full text-slate-500 p-8 text-center">
+                        <FileText size={48} className="mb-3 text-slate-400 dark:text-slate-600" />
                         <p>Google Drive PDF ලින්ක් එක ලබා දී නොමැත.</p>
                       </div>
                     )}
@@ -1617,25 +1657,25 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </div>
               </div>
 
-              {/* SIDE 2: ONLINE MCQ ANSWER SHEET (Interactive radio cards, progress & submit) */}
-              <div className="lg:col-span-5 flex flex-col bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-5 shadow-inner">
+              {/* SIDE 2: ONLINE MCQ ANSWER SHEET */}
+              <div className="lg:col-span-5 flex flex-col bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-5 shadow-sm">
                 {/* Answer Sheet Header & Progress */}
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-3">
                   <div>
-                    <h3 className="font-bold text-sm text-white">Online Answer Sheet</h3>
-                    <span className="text-xs text-slate-400">
-                      පිළිතුරු ලියා ඇත: <strong className="text-emerald-400">{answeredCount}</strong> / {totalExamQuestions}
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white">Online Answer Sheet</h3>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      පිළිතුරු ලියා ඇත: <strong className="text-emerald-600 dark:text-emerald-400">{answeredCount}</strong> / {totalExamQuestions}
                     </span>
                   </div>
 
-                  <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono font-bold text-amber-400">
+                  <div className="px-3 py-1 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-mono font-bold text-amber-600 dark:text-amber-400">
                     {Math.round((answeredCount / totalExamQuestions) * 100)}% Complete
                   </div>
                 </div>
 
-                {/* Quick Question Palette (jump to question) */}
-                <div className="mb-4 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800 max-h-24 overflow-y-auto">
-                  <div className="text-[10px] text-slate-400 font-semibold mb-1.5">ප්‍රශ්න ලැයිස්තුව (Quick Navigator):</div>
+                {/* Quick Question Palette */}
+                <div className="mb-4 bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 max-h-24 overflow-y-auto">
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold mb-1.5">ප්‍රශ්න ලැයිස්තුව (Quick Navigator):</div>
                   <div className="flex flex-wrap gap-1.5">
                     {Array.from({ length: totalExamQuestions }, (_, i) => i + 1).map((qNum) => {
                       const isAnswered = !!examAnswers[qNum];
@@ -1648,8 +1688,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                           }}
                           className={`w-6 h-6 rounded-md text-[10px] font-mono font-bold flex items-center justify-center transition cursor-pointer ${
                             isAnswered
-                              ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                              : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                              ? 'bg-emerald-500 text-white shadow-sm'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                           }`}
                         >
                           {qNum}
@@ -1669,20 +1709,20 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                         id={`mcq-question-${qNum}`}
                         className={`p-3 rounded-xl border transition-all ${
                           selectedOpt
-                            ? 'bg-slate-900/90 border-blue-500/40 shadow-sm'
-                            : 'bg-slate-900/40 border-slate-800/80 hover:border-slate-700'
+                            ? 'bg-blue-50/80 dark:bg-slate-900/90 border-blue-400/50 dark:border-blue-500/40 shadow-sm'
+                            : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700'
                         }`}
                       >
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-bold font-mono text-slate-200">
+                          <span className="text-xs font-bold font-mono text-slate-800 dark:text-slate-200">
                             ප්‍රශ්න අංක {qNum}:
                           </span>
                           {selectedOpt ? (
-                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-400 dark:border-emerald-500/30">
                               තෝරාගත් පිළිතුර: ({selectedOpt})
                             </span>
                           ) : (
-                            <span className="text-[10px] font-mono text-slate-500">පිළිතුරක් තෝරන්න</span>
+                            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">පිළිතුරක් තෝරන්න</span>
                           )}
                         </div>
 
@@ -1697,8 +1737,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                                 onClick={() => setExamAnswers(prev => ({ ...prev, [qNum]: opt }))}
                                 className={`py-2 rounded-lg font-bold font-mono text-xs transition flex items-center justify-center border cursor-pointer ${
                                   isSelected
-                                    ? 'bg-blue-600 border-blue-400 text-white shadow-md shadow-blue-900/40 scale-[1.03]'
-                                    : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-300'
+                                    ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-900/40 scale-[1.03]'
+                                    : 'bg-white hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
                                 }`}
                               >
                                 ({opt})
@@ -1712,7 +1752,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </div>
 
                 {/* Submit Action Button */}
-                <div className="pt-4 border-t border-slate-800 mt-3">
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-800 mt-3">
                   <button
                     onClick={() => setShowSubmitConfirmModal(true)}
                     className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-sm rounded-xl shadow-lg shadow-emerald-900/30 transition flex items-center justify-center gap-2 cursor-pointer"
@@ -1731,31 +1771,31 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             examResult && (
               <div className="space-y-6 animate-in fade-in duration-300">
                 {/* Scorecard Header */}
-                <div className="p-6 md:p-8 bg-gradient-to-b from-slate-950 to-slate-900 border border-slate-800 rounded-3xl text-center relative overflow-hidden shadow-2xl">
-                  <div className="w-16 h-16 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-400">
+                <div className="p-6 md:p-8 bg-slate-50 dark:bg-gradient-to-b dark:from-slate-950 dark:to-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl text-center relative overflow-hidden shadow-md dark:shadow-2xl">
+                  <div className="w-16 h-16 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-600 dark:text-amber-400">
                     <Award size={36} />
                   </div>
 
-                  <h3 className="text-xl md:text-2xl font-black text-white mb-1">
+                  <h3 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white mb-1">
                     විභාග ප්‍රතිඵල සටහන (Exam Evaluation)
                   </h3>
-                  <p className="text-xs text-slate-400 mb-6">
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-6">
                     නිවැරදි පිළිතුරු සමඟ සසඳන ලද ඔබගේ අවසන් ලකුණු මට්ටම පහත පරිදි වේ:
                   </p>
 
-                  <div className="inline-flex items-center gap-6 p-4 rounded-2xl bg-slate-950/80 border border-slate-800 shadow-inner">
+                  <div className="inline-flex items-center gap-6 p-4 rounded-2xl bg-white dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 shadow-inner">
                     <div>
-                      <span className="text-[11px] text-slate-400 block font-mono">ලබාගත් ලකුණු</span>
-                      <span className="text-3xl md:text-4xl font-black text-emerald-400 font-mono">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-mono">ලබාගත් ලකුණු</span>
+                      <span className="text-3xl md:text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
                         {examResult.score} <span className="text-lg text-slate-500 font-bold">/ {examResult.total}</span>
                       </span>
                     </div>
 
-                    <div className="h-10 w-px bg-slate-800"></div>
+                    <div className="h-10 w-px bg-slate-200 dark:bg-slate-800"></div>
 
                     <div>
-                      <span className="text-[11px] text-slate-400 block font-mono">ප්‍රතිශතය</span>
-                      <span className="text-3xl md:text-4xl font-black text-amber-400 font-mono">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-mono">ප්‍රතිශතය</span>
+                      <span className="text-3xl md:text-4xl font-black text-amber-600 dark:text-amber-400 font-mono">
                         {examResult.percentage}%
                       </span>
                     </div>
@@ -1763,9 +1803,9 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </div>
 
                 {/* Question Breakdown List (Green for Correct, Red for Wrong) */}
-                <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 md:p-6 shadow-inner space-y-4">
-                  <h4 className="font-bold text-sm text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-                    <CheckCircle2 size={18} className="text-emerald-400" />
+                <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 md:p-6 shadow-inner space-y-4">
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+                    <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400" />
                     ප්‍රශ්න පත්‍රයේ පිළිතුරු සමාලෝචනය (Correct: Green | Wrong: Red):
                   </h4>
 
@@ -1777,15 +1817,15 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                           key={item.questionNumber}
                           className={`p-3 rounded-xl border flex items-center justify-between text-xs transition ${
                             isCorrect
-                              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
-                              : 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-200'
+                              : 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-200'
                           }`}
                         >
                           <div className="flex items-center gap-2 font-bold">
                             {isCorrect ? (
-                              <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                              <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                             ) : (
-                              <X size={16} className="text-rose-400 shrink-0" />
+                              <X size={16} className="text-rose-600 dark:text-rose-400 shrink-0" />
                             )}
                             <span>ප්‍රශ්න අංක {item.questionNumber}</span>
                           </div>
@@ -1879,35 +1919,35 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
       {/* 3. 24-HOUR COUNTDOWN SCREEN */}
       {viewState === 'waiting-24h' && targetClass && (
-        <div className="flex flex-col items-center justify-center w-full min-h-[500px] bg-slate-900/90 rounded-2xl border border-slate-800 shadow-2xl relative p-6">
+        <div className="flex flex-col items-center justify-center w-full min-h-[500px] bg-white dark:bg-slate-900/90 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl dark:shadow-2xl relative p-6">
           <div className="z-10 text-center flex flex-col items-center w-full max-w-2xl">
             <div className="flex items-center gap-2 mb-4">
               <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full ${getClassColor(currentClassType)}`}>
                 {currentClassType}
               </span>
-              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                 <CheckCircle2 size={12} /> {paymentStatus.reason === 'free' ? 'Free Access' : 'Paid'}
               </span>
             </div>
 
-            <h1 className="text-2xl md:text-4xl font-extrabold text-white mb-4 leading-tight">{targetClass.title}</h1>
-            <p className="text-slate-400 mb-6 text-sm md:text-base">පන්තිය ආරම්භ වීමට තව...</p>
+            <h1 className="text-2xl md:text-4xl font-extrabold text-slate-900 dark:text-white mb-4 leading-tight">{targetClass.title}</h1>
+            <p className="text-slate-600 dark:text-slate-400 mb-6 text-sm md:text-base">පන්තිය ආරම්භ වීමට තව...</p>
 
             <div className="flex gap-3 md:gap-6 text-center">
               {['h', 'm', 's'].map((unit) => (
                 <div key={unit} className="flex flex-col items-center">
-                  <div className="w-16 h-16 md:w-24 md:h-24 bg-slate-950 border border-slate-700 rounded-2xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-white shadow-inner">
+                  <div className="w-16 h-16 md:w-24 md:h-24 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-center justify-center text-3xl md:text-5xl font-mono font-black text-slate-900 dark:text-white shadow-inner">
                     {String(unit === 'h' ? timer.h : unit === 'm' ? timer.m : timer.s).padStart(2, '0')}
                   </div>
-                  <span className="text-slate-500 text-xs md:text-sm mt-2 font-medium">
+                  <span className="text-slate-500 dark:text-slate-400 text-xs md:text-sm mt-2 font-medium">
                     {unit === 'h' ? 'පැය' : unit === 'm' ? 'විනාඩි' : 'තත්පර'}
                   </span>
                 </div>
               ))}
             </div>
 
-            <div className="mt-8 text-xs text-slate-400 bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-800">
-              👤 ශිෂ්‍ය නාමය (Username): <strong className="text-blue-400">{studentUsername}</strong> (පන්තිය ආරම්භ වූ වහාම Zoom වෙත ස්වයංක්‍රීයව එක් වේ)
+            <div className="mt-8 text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800">
+              👤 ශිෂ්‍ය නාමය (Username): <strong className="text-blue-600 dark:text-blue-400">{studentUsername}</strong> (පන්තිය ආරම්භ වූ වහාම Zoom වෙත ස්වයංක්‍රීයව එක් වේ)
             </div>
           </div>
         </div>
@@ -1915,30 +1955,30 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
       {/* 4. 30-MINUTE COUNTDOWN WITH BACKGROUND VIDEO */}
       {viewState === 'waiting-30m' && targetClass && (
-        <div className="flex flex-col items-center justify-center w-full min-h-[500px] relative rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 shadow-2xl p-6">
+        <div className="flex flex-col items-center justify-center w-full min-h-[500px] relative rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6">
           <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none">
             <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
 
-          <div className="relative z-10 flex flex-col items-center p-8 bg-slate-950/70 rounded-3xl backdrop-blur-md border border-white/10 shadow-2xl text-center max-w-lg">
+          <div className="relative z-10 flex flex-col items-center p-8 bg-white/90 dark:bg-slate-950/70 rounded-3xl backdrop-blur-md border border-slate-200 dark:border-white/10 shadow-xl text-center max-w-lg">
             <div className="flex items-center gap-2 mb-4">
               <span className={`text-xs font-bold uppercase tracking-widest px-4 py-1.5 rounded-full ${getClassColor(currentClassType)}`}>
                 {currentClassType}
               </span>
-              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center gap-1">
+              <span className="text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                 <CheckCircle2 size={12} /> {paymentStatus.reason === 'free' ? 'Free Access' : 'Paid'}
               </span>
             </div>
 
-            <h2 className="text-base md:text-lg text-slate-200 mb-4">{targetClass.title}</h2>
-            <p className="text-xs text-slate-400 mb-3">පන්තිය ආරම්භ වීමට තව සුළු වේලාවකි...</p>
+            <h2 className="text-base md:text-lg text-slate-900 dark:text-slate-200 mb-4">{targetClass.title}</h2>
+            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">පන්තිය ආරම්භ වීමට තව සුළු වේලාවකි...</p>
 
-            <div className="text-5xl md:text-7xl font-mono font-black text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.4)] animate-pulse">
+            <div className="text-5xl md:text-7xl font-mono font-black text-slate-900 dark:text-white drop-shadow-[0_0_20px_rgba(0,0,0,0.15)] dark:drop-shadow-[0_0_20px_rgba(255,255,255,0.4)] animate-pulse">
               {String(timer.m).padStart(2, '0')}:{String(timer.s).padStart(2, '0')}
             </div>
 
-            <div className="mt-6 text-xs text-slate-400 bg-black/40 px-3 py-1.5 rounded-lg border border-slate-800">
-              👤 ශිෂ්‍ය නාමය: <strong className="text-blue-400">{studentUsername}</strong>
+            <div className="mt-6 text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-black/40 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800">
+              👤 ශිෂ්‍ය නාමය: <strong className="text-blue-600 dark:text-blue-400">{studentUsername}</strong>
             </div>
           </div>
         </div>
@@ -1946,21 +1986,21 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
       {/* 5. 0-SECONDS SCREEN WAITING FOR TEACHER */}
       {viewState === 'waiting-0s' && targetClass && (
-        <div className="flex flex-col items-center justify-center w-full min-h-[500px] relative rounded-2xl overflow-hidden bg-slate-950 border border-emerald-500/40 p-6">
+        <div className="flex flex-col items-center justify-center w-full min-h-[500px] relative rounded-2xl overflow-hidden bg-slate-50 dark:bg-slate-950 border border-emerald-400 dark:border-emerald-500/40 p-6">
           <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-40 pointer-events-none">
             <source src={targetClass.pre_class_video_path || "/videos/waiting-video.mp4"} type="video/mp4" />
           </video>
 
-          <div className="relative z-10 flex flex-col items-center p-8 bg-slate-950/80 rounded-3xl backdrop-blur-lg border border-emerald-500/30 text-center shadow-2xl max-w-lg">
+          <div className="relative z-10 flex flex-col items-center p-8 bg-white/95 dark:bg-slate-950/80 rounded-3xl backdrop-blur-lg border border-emerald-300 dark:border-emerald-500/30 text-center shadow-2xl max-w-lg">
             <span className="animate-ping h-4 w-4 rounded-full bg-emerald-500 mb-4"></span>
-            <h2 className="text-xl md:text-2xl font-bold text-white mb-3">{targetClass.title}</h2>
+            <h2 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-white mb-3">{targetClass.title}</h2>
             
             <div className="bg-emerald-500/10 px-5 py-3 rounded-xl border border-emerald-500/20 mb-4">
-              <p className="text-emerald-300 font-medium text-xs md:text-sm">ගුරුවරයා පන්තිය ආරම්භ කරන තෙක් රැඳී සිටින්න...</p>
+              <p className="text-emerald-700 dark:text-emerald-300 font-medium text-xs md:text-sm">ගුරුවරයා පන්තිය ආරම්භ කරන තෙක් රැඳී සිටින්න...</p>
             </div>
 
-            <p className="text-xs text-slate-400">
-              ගුරුවරයා Zoom ආරම්භ කළ වහාම ඔබගේ Username (<strong className="text-blue-400">{studentUsername}</strong>) සමඟින් Zoom Web Client මෙම සෙක්ෂන් එක තුළම ක්‍රියාත්මක වේ.
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              ගුරුවරයා Zoom ආරම්භ කළ වහාම ඔබගේ Username (<strong className="text-blue-600 dark:text-blue-400">{studentUsername}</strong>) සමඟින් Zoom Web Client මෙම සෙක්ෂන් එක තුළම ක්‍රියාත්මක වේ.
             </p>
           </div>
         </div>
@@ -1968,22 +2008,49 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
       {/* 6. LIVE ZOOM PLAYER EMBEDDED DIRECTLY IN SECTION */}
       {viewState === 'live' && targetClass && (
-        <div
-          ref={playerContainerRef}
-          style={isExamOpen && isZoomMinimized && floatingPos ? { 
-            left: `${floatingPos.x}px`, 
-            top: `${floatingPos.y}px`, 
-            right: 'auto', 
-            bottom: 'auto' 
-          } : undefined}
-          className={`flex flex-col bg-slate-950 border-emerald-500/40 overflow-hidden transition-all duration-150 relative ${
-            isFullscreen
-              ? 'fixed inset-0 z-[999999] w-screen h-screen m-0 p-0 rounded-none bg-black'
-              : isExamOpen && isZoomMinimized
-              ? `fixed z-[99999] ${!floatingPos ? 'bottom-4 right-4' : ''} ${isFloatingCollapsed ? 'w-44' : 'w-56 sm:w-64'} rounded-2xl border-2 border-emerald-500 shadow-2xl shadow-emerald-950/80 backdrop-blur select-none ${isFloatingDragging ? 'cursor-grabbing opacity-90' : ''}`
-              : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(16,185,129,0.15)] min-h-[600px]'
-          }`}
-        >
+        <>
+          {/* Mobile Direct Auto-Join Banner without Passcode */}
+          {!isExamOpen && !isFullscreen && (
+            <div className="block md:hidden mb-3 p-3 bg-gradient-to-r from-emerald-950/90 via-slate-900 to-blue-950/90 border-2 border-emerald-500/50 rounded-2xl shadow-lg">
+              <div className="flex items-center justify-between gap-2.5">
+                <div className="flex-1">
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    Mobile Direct Access (පාස්කෝඩ් අවශ්‍ය නැත)
+                  </span>
+                  <p className="text-xs text-white font-bold mt-0.5">
+                    එක ටච් එකෙන් කෙලින්ම සූම් එකට එක්වන්න:
+                  </p>
+                </div>
+                <a
+                  href={getDirectZoomJoinUrl(zoomDirectUrl, studentUsername, targetClass)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/30 shrink-0 cursor-pointer"
+                >
+                  <Play size={13} fill="currentColor" />
+                  <span>Join Live</span>
+                </a>
+              </div>
+            </div>
+          )}
+
+          <div
+            ref={playerContainerRef}
+            style={isExamOpen && isZoomMinimized && floatingPos ? { 
+              left: `${floatingPos.x}px`, 
+              top: `${floatingPos.y}px`, 
+              right: 'auto', 
+              bottom: 'auto' 
+            } : undefined}
+            className={`flex flex-col bg-slate-950 border-emerald-500/40 overflow-hidden transition-all duration-150 relative ${
+              isFullscreen
+                ? 'fixed inset-0 z-[999999] w-screen h-screen m-0 p-0 rounded-none bg-black'
+                : isExamOpen && isZoomMinimized
+                ? `fixed z-[99999] ${!floatingPos ? 'bottom-4 right-4' : ''} ${isFloatingCollapsed ? 'w-44' : 'w-56 sm:w-64'} rounded-2xl border-2 border-emerald-500 shadow-2xl shadow-emerald-950/80 backdrop-blur select-none ${isFloatingDragging ? 'cursor-grabbing opacity-90' : ''}`
+                : 'flex-1 rounded-2xl border shadow-[0_0_30px_rgba(16,185,129,0.15)] min-h-[600px]'
+            }`}
+          >
           {/* Top Player Control Header (Auto-hides in Fullscreen on both Desktop & Mobile; reveals on movement/touch) */}
           <div 
             onMouseEnter={() => {
@@ -2036,7 +2103,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                   }`
                 : isExamOpen && isZoomMinimized 
                 ? 'px-2 py-1.5 flex items-center justify-between cursor-grab active:cursor-grabbing hover:bg-slate-800/90 select-none bg-slate-900/95 text-slate-200 border-b border-slate-800 text-xs z-10' 
-                : 'px-4 py-2.5 flex flex-wrap items-center justify-between md:text-sm gap-2 bg-slate-900/95 text-slate-200 border-b border-slate-800 text-xs z-10'
+                : 'px-4 py-2.5 flex flex-wrap items-center justify-between md:text-sm gap-2 bg-slate-50 dark:bg-slate-900/95 text-slate-800 dark:text-slate-200 border-b border-slate-200 dark:border-slate-800 text-xs z-10'
             }
             title={isExamOpen && isZoomMinimized ? "Drag to move anywhere on screen (තිරයේ ඕනෑම තැනකට ගෙන යන්න)" : undefined}
           >
@@ -2213,46 +2280,47 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             </div>
           )}
         </div>
+        </>
       )}
 
       {/* =========================================================================
           FEATURE: BROWSER CAMERA & MIC PERMISSION ASSISTANCE MODAL
          ========================================================================= */}
       {showBrowserPermModal && (
-        <div className="fixed inset-0 z-[9999999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="fixed inset-0 z-[9999999] flex items-center justify-center bg-black/60 dark:bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <Camera size={20} className="text-amber-400" />
-                <h3 className="font-bold text-base text-white">බ්‍රවුසරයේ කැමරා සහ මයික් අවසර ලබා දීම</h3>
+                <Camera size={20} className="text-amber-500 dark:text-amber-400" />
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">බ්‍රවුසරයේ කැමරා සහ මයික් අවසර ලබා දීම</h3>
               </div>
-              <button onClick={() => setShowBrowserPermModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setShowBrowserPermModal(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer">
                 <X size={18} />
               </button>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
               සමහර බ්‍රවුසර ආරක්ෂක හේතූන් මත ස්වයංක්‍රීයව කැමරාව සහ මයික්‍රෆෝනය අවහිර (Block) කරයි. ඔබගේ බ්‍රවුසරය අනුව පහත පියවර අනුගමනය කරන්න:
             </p>
 
-            <div className="space-y-3 text-xs bg-slate-950 p-4 rounded-2xl border border-slate-800">
+            <div className="space-y-3 text-xs bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
               <div className="space-y-1">
-                <span className="font-bold text-amber-300">📱 Mobile Phone / Chrome:</span>
-                <p className="text-slate-400 text-[11px]">
+                <span className="font-bold text-amber-700 dark:text-amber-300">📱 Mobile Phone / Chrome:</span>
+                <p className="text-slate-600 dark:text-slate-400 text-[11px]">
                   URL එකේ වම්පස ඇති 🔒 (Lock) හෝ Settings අයිකනය ඔබන්න &rarr; <strong>Permissions</strong> &rarr; <strong>Camera & Microphone</strong> &rarr; <strong>Allow</strong> කරන්න.
                 </p>
               </div>
 
               <div className="space-y-1">
-                <span className="font-bold text-cyan-300">🍎 Apple Safari (iPhone / Mac):</span>
-                <p className="text-slate-400 text-[11px]">
+                <span className="font-bold text-cyan-700 dark:text-cyan-300">🍎 Apple Safari (iPhone / Mac):</span>
+                <p className="text-slate-600 dark:text-slate-400 text-[11px]">
                   Address bar එකේ <strong>AA</strong> අයිකනය ඔබන්න &rarr; <strong>Website Settings</strong> &rarr; Camera සහ Microphone &rarr; <strong>Allow</strong> කරන්න.
                 </p>
               </div>
 
               <div className="space-y-1">
-                <span className="font-bold text-indigo-300">💻 PC / Laptop (Chrome / Edge / Firefox):</span>
-                <p className="text-slate-400 text-[11px]">
+                <span className="font-bold text-indigo-700 dark:text-indigo-300">💻 PC / Laptop (Chrome / Edge / Firefox):</span>
+                <p className="text-slate-600 dark:text-slate-400 text-[11px]">
                   URL තීරුවේ වම්පස ඇති 🔒 හෝ View Site Info ඔබා <strong>Camera / Microphone Toggle එක On කරන්න</strong>. අනතුරුව පිටුව Refresh කරන්න.
                 </p>
               </div>
@@ -2281,7 +2349,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               )}
               <button
                 onClick={() => setShowBrowserPermModal(false)}
-                className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl border border-slate-700 transition cursor-pointer"
+                className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium text-xs rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
               >
                 වසන්න (Close)
               </button>

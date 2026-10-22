@@ -7,7 +7,7 @@ import {
   Edit, Trash2, Send, EyeOff, CheckCircle2, ChevronRight, 
   Calendar, Search, Filter, AlertCircle, Sparkles, MessageCircle,
   ExternalLink, UserCheck, ShieldAlert, RotateCcw, CheckSquare, Square as SquareIcon,
-  Globe
+  Globe, Sun, Moon
 } from 'lucide-react';
 import AdminLiveControls from './AdminLiveControls';
 import AdminRecordingsManager from './AdminRecordingsManager';
@@ -28,6 +28,23 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
     if (setLang) setLang(nextLang);
     localStorage.setItem('physics_hub_lang', nextLang);
   };
+
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('physics_hub_theme');
+    return (saved === 'dark' || saved === 'light') ? saved : 'light';
+  });
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('physics_hub_theme', next);
+    if (next === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
   const [activeTab, setActiveTab] = useState<'overview' | 'live_classes' | 'exams' | 'grades' | 'recordings' | 'tutes' | 'students'>('overview');
   
   // Data States
@@ -602,12 +619,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
   const unattemptedStudents = studentsInExamClass.filter(std => !completedUsernames.has(std.username));
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-16">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-16 transition-colors">
       
       {/* =========================================================================
           TOP NAVBAR: Clean, Student-Dashboard Style (Anti-Cockpit)
           ========================================================================= */}
-      <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           
           {/* Lecturer Identity Branding */}
@@ -617,44 +634,53 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-white text-sm sm:text-base tracking-tight">
+                <span className="font-extrabold text-slate-900 dark:text-white text-sm sm:text-base tracking-tight">
                   {currentStaff.first_name} {currentStaff.last_name}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 font-mono">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                 @{currentStaff.username}
               </p>
             </div>
           </div>
 
-          {/* Assigned Classes Badges, Language Switcher & Logout Button */}
+          {/* Assigned Classes Badges, Day/Night Toggle, Language Switcher & Logout Button */}
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden md:flex items-center gap-1.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-              <span className="text-[11px] text-slate-400 font-semibold">{activeLang === 'si' ? 'අයත් පන්ති:' : 'Assigned Classes:'}</span>
+            <div className="hidden md:flex items-center gap-1.5 bg-slate-100 dark:bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-semibold">{activeLang === 'si' ? 'අයත් පන්ති:' : 'Assigned Classes:'}</span>
               {assignedClasses.length === 0 ? (
-                <span className="text-[11px] text-amber-400">{activeLang === 'si' ? 'සියලු පන්ති' : 'All Classes'}</span>
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-bold">{activeLang === 'si' ? 'සියලු පන්ති' : 'All Classes'}</span>
               ) : (
                 assignedClasses.map(c => (
-                  <span key={c} className="text-[10px] font-bold bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded border border-indigo-800">
+                  <span key={c} className="text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800">
                     {c}
                   </span>
                 ))
               )}
             </div>
 
+            {/* Day / Night Mode Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+              title={theme === 'dark' ? 'Day Mode එකට මාරු වන්න' : 'Night Mode එකට මාරු වන්න'}
+            >
+              {theme === 'dark' ? <Sun size={15} className="text-amber-400" /> : <Moon size={15} className="text-slate-700" />}
+            </button>
+
             {/* Language Switcher Button (සිංහල / English) */}
             <button
               onClick={toggleLang}
-              className="flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-2 rounded-xl border border-blue-500/30 transition cursor-pointer"
+              className="flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 px-3 py-2 rounded-xl border border-blue-200 dark:border-blue-500/30 transition cursor-pointer"
               title="භාෂාව මාරු කරන්න / Switch Language"
             >
-              <Globe size={14} className="text-blue-400" />
+              <Globe size={14} className="text-blue-600 dark:text-blue-400" />
               <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
             </button>
 
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 text-xs font-bold text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-2 rounded-xl border border-rose-500/30 transition cursor-pointer"
+              className="flex items-center gap-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 px-3 py-2 rounded-xl border border-rose-200 dark:border-rose-500/30 transition cursor-pointer"
             >
               <LogOut size={14} />
               <span className="hidden sm:inline">{activeLang === 'si' ? 'ඉවත් වන්න' : 'Logout'}</span>
@@ -667,7 +693,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
       {/* =========================================================================
           NAVIGATION TABS (Simple, Vibrant, High-Readability)
           ========================================================================= */}
-      <div className="bg-slate-900 border-b border-slate-800 sticky top-16 z-20">
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-16 z-20 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <nav className="flex space-x-1 sm:space-x-2 overflow-x-auto py-2.5 no-scrollbar">
             
@@ -676,7 +702,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'overview'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <LayoutDashboard size={15} />
@@ -688,7 +714,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'live_classes'
                   ? 'bg-red-600 text-white shadow-md shadow-red-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <Video size={15} />
@@ -700,7 +726,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'exams'
                   ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <FileCheck size={15} />
@@ -712,7 +738,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'grades'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <Award size={15} />
@@ -724,7 +750,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'recordings'
                   ? 'bg-purple-600 text-white shadow-md shadow-purple-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <BookOpen size={15} />
@@ -736,7 +762,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'tutes'
                   ? 'bg-teal-600 text-white shadow-md shadow-teal-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <FileText size={15} />
@@ -748,7 +774,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition cursor-pointer ${
                 activeTab === 'students'
                   ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
               <Users size={15} />

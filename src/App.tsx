@@ -123,19 +123,12 @@ export default function App() {
     });
   };
 
-  // Day / Night Theme State
+  // Day / Night Theme State (Default to Day Mode 'light')
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('physics_hub_theme') as 'light' | 'dark') || 'dark';
+    const saved = localStorage.getItem('physics_hub_theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return 'light';
   });
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('physics_hub_theme', theme);
-  }, [theme]);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -189,6 +182,10 @@ export default function App() {
     const student = getActiveStudentSession();
     if (student) {
       return 'dashboard';
+    }
+    // 3. Check for direct register query param
+    if (searchParams?.get('register') === 'true') {
+      return 'register';
     }
     return 'home';
   });
@@ -332,6 +329,18 @@ useEffect(() => {
       setIsAdminLoggedIn(true);
     }
   }, []);
+
+  // Super Admin, Admin, and Manager dashboards and admin panels strictly remain in Night Mode
+  const isNightOnlyAdmin = (currentView === 'admin' || isAdminLoggedIn) && Boolean(currentStaff) && currentStaff?.role !== 'lecturer';
+
+  useEffect(() => {
+    if (isNightOnlyAdmin || theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('physics_hub_theme', theme);
+  }, [theme, isNightOnlyAdmin, currentView]);
 
   // Permission helper: Controls which sections are accessible based on staff role and allowed_sections
   const isTabAllowed = (tabId: string): boolean => {
@@ -477,7 +486,10 @@ useEffect(() => {
   const [regLast, setRegLast] = useState('');
   const [regNIC, setRegNIC] = useState('');
   const [regDistrict, setRegDistrict] = useState('');
-  const [regClassTypes, setRegClassTypes] = useState<string[]>([]);
+  const [regClassTypes, setRegClassTypes] = useState<string[]>(() => {
+    const urlClass = searchParams?.get('class');
+    return urlClass ? [decodeURIComponent(urlClass)] : [];
+  });
   const [regWhatsApp, setRegWhatsApp] = useState('');
   const [regMobile, setRegMobile] = useState('');
   
@@ -560,6 +572,15 @@ useEffect(() => {
         setLoginAttempts(0);
         setLoginUser('');
         setLoginPass('');
+
+        // If lecturer, default to Day Mode (light); for admins/managers keep dark
+        if (staffAuth.staff.role === 'lecturer') {
+          setTheme('light');
+          localStorage.setItem('physics_hub_theme', 'light');
+        } else {
+          setTheme('dark');
+          localStorage.setItem('physics_hub_theme', 'dark');
+        }
         return;
       }
 
@@ -586,6 +607,10 @@ useEffect(() => {
         setLoginAttempts(0);
         setCurrentStudent(found);
         
+        // Ensure student dashboard automatically boots up in Day Mode ('light')
+        setTheme('light');
+        localStorage.setItem('physics_hub_theme', 'light');
+
         // Save student session with full object and 6-hour offline validity
         saveActiveStudentSession(found);
 
@@ -630,7 +655,7 @@ useEffect(() => {
     await supabase.from('students').update({ password_reset_requested: true }).eq('id', std.id);
 
     // Construct WhatsApp Message
-    const text = `හෙලෝ සර්, මගේ Taraka Physics Hub ගිණුමේ මුරපදය අමතක වී ඇත. කරුණාකර එය යථා තත්ත්වයට පත් කර දෙන්න (Password Reset). Username: ${forgotUsername.trim()} NIC: ${forgotNIC.trim()}`;
+    const text = `හෙලෝ සර්, මගේ Tharaka Physics Hub ගිණුමේ මුරපදය අමතක වී ඇත. කරුණාකර එය යථා තත්ත්වයට පත් කර දෙන්න (Password Reset). Username: ${forgotUsername.trim()} NIC: ${forgotNIC.trim()}`;
     const encText = encodeURIComponent(text);
     const waUrl = `https://wa.me/94719152128?text=${encText}`;
     window.open(waUrl, '_blank');
@@ -1143,7 +1168,7 @@ const handleClassCheckboxChange = (course: string, checked: boolean) => {
           </div>
           <div className="bg-slate-900 border border-slate-700 p-4 rounded-lg">
             <h5 className="font-semibold text-white mb-1">WhatsApp Admin Support:</h5>
-            <p className="text-sm text-slate-400">දුරකථන: 0719152128 (Taraka Physics Admin Zone)</p>
+            <p className="text-sm text-slate-400">දුරකථන: 0719152128 (Tharaka Physics Admin Zone)</p>
           </div>
           <div className="flex gap-2">
             <a 
@@ -1237,7 +1262,7 @@ if (isLoading) {
               Smart Physics
             </h1>
             <p className="text-[10px] text-blue-500 font-sans tracking-wider font-bold uppercase">
-              {lang === 'si' ? 'තාරක අමරසිංහ' : 'Taraka Amarasinghe'}
+              {lang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe'}
             </p>
           </div>
         </div>
@@ -1428,7 +1453,7 @@ if (isLoading) {
                 <div className="relative z-20 space-y-6 max-w-2xl my-auto">
                   <div>
                     <span className="inline-block px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-bold tracking-wider border border-blue-500/30">
-                      {siteConfig.homeWelcomeBadge || "Welcome to Taraka Physics Online Space"}
+                      {siteConfig.homeWelcomeBadge || "Welcome to Tharaka Physics Online Space"}
                     </span>
                   </div>
                   
@@ -1484,7 +1509,7 @@ if (isLoading) {
 
                 <div className="space-y-1 z-10">
                   <h3 className="text-2xl font-bold text-white tracking-tight">
-                    {siteConfig.directorName || (lang === 'si' ? 'තාරක අමරසිංහ' : 'Taraka Amarasinghe')}
+                    {siteConfig.directorName || (lang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe')}
                   </h3>
                   <p className="text-xs text-blue-200 font-mono tracking-widest uppercase font-semibold opacity-90">
                     {siteConfig.directorTitle || (lang === 'si' ? "B.Sc (Hon's) පේරාදෙණිය විශ්වවිද්‍යාලය | භෞතික විද්‍යා දේශක" : "B.Sc (Hon's) University of Peradeniya | Physics Teacher")}
@@ -2025,7 +2050,8 @@ if (isLoading) {
     supabase={supabase}
     lang={lang}
     setLang={setLang}
-    // අවශ්‍ය නම් තවත් props මෙතැනට එකතු කරන්න
+    theme={theme}
+    toggleTheme={toggleTheme}
   />
 )}
 

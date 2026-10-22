@@ -30,7 +30,7 @@ export default function AdminPasswordReset({ students }: { students: any[] }) {
        setNewPassword('');
 
        // Construct WhatsApp notification link for the student
-       const text = `ආයුබෝවන්, ඔබගේ Taraka Physics Hub ගිණුමේ මුරපදය සාර්ථකව අලුත් කරන ලදී.\n\nනව මුරපදය: ${newPassword.trim()}`;
+       const text = `ආයුබෝවන්, ඔබගේ Tharaka Physics Hub ගිණුමේ මුරපදය සාර්ථකව අලුත් කරන ලදී.\n\nනව මුරපදය: ${newPassword.trim()}`;
        const encText = encodeURIComponent(text);
        let phone = whatsapp;
        if (phone.startsWith('0')) {

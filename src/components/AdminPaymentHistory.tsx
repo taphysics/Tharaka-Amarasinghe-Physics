@@ -24,6 +24,7 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../supabaseClient';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 
 export interface ClassFinanceConfig {
   id?: string;
@@ -74,7 +75,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
   const defaultMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
 
   // 1. PRIMARY FILTER: Lecturer (Only lecturers, excluding Super Admin, Admin, Manager)
-  const [selectedLecturer, setSelectedLecturer] = useState<string>('තාරක අමරසිංහ (Taraka Amarasinghe)');
+  const [selectedLecturer, setSelectedLecturer] = useState<string>('තාරක අමරසිංහ (Tharaka Amarasinghe)');
   const [lecturersList, setLecturersList] = useState<LecturerItem[]>([]);
 
   // 2. SECONDARY FILTER: Date / Time Period (Single month vs. Multi-month Range)
@@ -233,7 +234,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
             map[f.class_type] = {
               id: f.id,
               class_type: f.class_type,
-              lecturer_name: f.lecturer_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+              lecturer_name: f.lecturer_name || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
               lecturer_whatsapp: f.lecturer_whatsapp || '0779630100',
               institute_percentage: Number(f.institute_percentage ?? 20),
               loan_deduction_amount: Number(f.loan_deduction_amount ?? f.loan_monthly_installment ?? 0),
@@ -271,8 +272,8 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
         const lecturersMap: Map<string, LecturerItem> = new Map();
 
         // Primary default teacher
-        lecturersMap.set('තාරක අමරසිංහ (Taraka Amarasinghe)', {
-          name: 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+        lecturersMap.set('තාරක අමරසිංහ (Tharaka Amarasinghe)', {
+          name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
           whatsapp: '0779630100',
           assignedClasses: resolvedClasses.map(c => c.name)
         });
@@ -345,6 +346,23 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
 
   useEffect(() => {
     loadDatabaseData();
+
+    // Subscribe to realtime updates
+    const unsub = subscribeRealtimeEvents((type) => {
+      if (['student_updated', 'payment_approved', 'payment_rejected', 'payment_status_changed', 'payments_updated'].includes(type)) {
+        loadDatabaseData();
+      }
+    });
+
+    const channel = supabase.channel(`admin-history-sync-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => loadDatabaseData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => loadDatabaseData())
+      .subscribe();
+
+    return () => {
+      unsub();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Helper to get finance config for a class
@@ -354,7 +372,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     }
     return {
       class_type: cName,
-      lecturer_name: 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      lecturer_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
       lecturer_whatsapp: '0779630100',
       institute_percentage: 20,
       loan_deduction_amount: 0,
@@ -401,8 +419,8 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     });
     if (financeMatches.length > 0) return financeMatches;
 
-    // 3. If Taraka Amarasinghe (primary physics teacher), all classes belong to him
-    if (selectedLecturer.includes('තාරක') || selectedLecturer.includes('Taraka')) {
+    // 3. If Tharaka Amarasinghe (primary physics teacher), all classes belong to him
+    if (selectedLecturer.includes('තාරක') || selectedLecturer.includes('Tharaka') || selectedLecturer.includes('Taraka')) {
       return classTypes;
     }
 
@@ -654,9 +672,9 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
 
   // Clean ASCII lecturer name for PDF font safety
   const cleanLecturerName = useMemo(() => {
-    const raw = currentLecturerObj.name || 'Taraka Amarasinghe';
+    const raw = currentLecturerObj.name || 'Tharaka Amarasinghe';
     const cleaned = raw.replace(/[^\x00-\x7F]/g, '').trim().replace(/^\(|\)$/g, '').trim();
-    return cleaned || 'Taraka Amarasinghe';
+    return cleaned || 'Tharaka Amarasinghe';
   }, [currentLecturerObj]);
 
   // Reusable PDF Document Builder

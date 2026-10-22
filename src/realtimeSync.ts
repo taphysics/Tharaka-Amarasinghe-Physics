@@ -5,6 +5,7 @@ export type SyncEventType =
   | 'payment_approved'
   | 'payment_rejected'
   | 'payment_status_changed'
+  | 'payments_updated'
   | 'recording_added'
   | 'recording_deleted'
   | 'tute_added'

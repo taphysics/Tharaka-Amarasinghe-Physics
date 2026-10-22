@@ -47,7 +47,7 @@ export const translations = {
   },
   en: {
     siteName: 'Smart Physics',
-    author: 'Taraka Amarasinghe',
+    author: 'Tharaka Amarasinghe',
     tagline: 'Leading Physics Classes in Sri Lanka',
     home: 'Home',
     login: 'Login',
@@ -87,6 +87,6 @@ export const translations = {
     timetableDesc: 'Check dates, times & upcoming sessions',
     backToHub: 'Back to Dashboard',
     contact: 'Contact: Smart Physics Team - 0779630100',
-    poweredBy: '🏛️ Powered by Smart Physics - Taraka Amarasinghe'
+    poweredBy: '🏛️ Powered by Smart Physics - Tharaka Amarasinghe'
   }
 };

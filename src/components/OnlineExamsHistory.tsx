@@ -305,20 +305,20 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
     <div className="space-y-8 animate-in fade-in duration-300">
       
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-400">
+          <div className="p-2.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-500 dark:text-amber-400">
             <Award size={22} />
           </div>
           <div>
-            <h3 className="font-extrabold text-lg text-white">ඔබගේ විභාග සහ පැවරුම් ලකුණු වාර්තා ලේඛනය</h3>
-            <p className="text-xs text-slate-400">ලෙක්චර්වරුන් විසින් ලබා දුන් ලයිව් විභාග, පැවරුම් ලකුණු සහ ප්‍රතිඵල.</p>
+            <h3 className="font-extrabold text-lg text-slate-900 dark:text-white">ඔබගේ විභාග සහ පැවරුම් ලකුණු වාර්තා ලේඛනය</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">ලෙක්චර්වරුන් විසින් ලබා දුන් ලයිව් විභාග, පැවරුම් ලකුණු සහ ප්‍රතිඵල.</p>
           </div>
         </div>
 
         <button 
           onClick={() => fetchAllData(true)} 
-          className="text-xs px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition font-medium self-start sm:self-auto cursor-pointer"
+          className="text-xs px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl border border-slate-200 dark:border-slate-700 transition font-medium self-start sm:self-auto cursor-pointer"
         >
           යාවත්කාලීන කරන්න (Refresh)
         </button>
@@ -343,26 +343,26 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
               return (
                 <div
                   key={exam.id}
-                  className="bg-gradient-to-r from-rose-950/40 via-slate-900 to-slate-900 border-2 border-rose-500/50 rounded-3xl p-6 shadow-2xl relative overflow-hidden"
+                  className="bg-gradient-to-r from-rose-50 via-white to-white dark:from-rose-950/40 dark:via-slate-900 dark:to-slate-900 border-2 border-rose-400 dark:border-rose-500/50 rounded-3xl p-6 shadow-md dark:shadow-2xl relative overflow-hidden"
                 >
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div className="space-y-2 max-w-xl">
                       <div className="flex items-center gap-2">
-                        <span className="px-3 py-1 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                        <span className="px-3 py-1 rounded-full text-[10px] font-black bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-400 dark:border-rose-500/40 animate-pulse">
                           LIVE PUSHED EXAM
                         </span>
-                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-950 text-indigo-300 border border-slate-800">
+                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-indigo-700 dark:bg-slate-950 dark:text-indigo-300 border border-slate-200 dark:border-slate-800">
                           {exam.class_type || exam.target_class_type}
                         </span>
                       </div>
 
-                      <h4 className="text-xl font-black text-white">
+                      <h4 className="text-xl font-black text-slate-900 dark:text-white">
                         {exam.title}
                       </h4>
 
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300">
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
                         <span className="flex items-center gap-1">
-                          <Clock size={13} className="text-amber-400" /> කාලය: {exam.duration_minutes || 90} මිනිත්තු
+                          <Clock size={13} className="text-amber-500 dark:text-amber-400" /> කාලය: {exam.duration_minutes || 90} මිනිත්තු
                         </span>
                         <span>&bull;</span>
                         <span>ප්‍රශ්න ගණන: {exam.total_questions || 50}</span>
@@ -372,11 +372,11 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                     {/* Action Button */}
                     <div>
                       {alreadySubmitted ? (
-                        <div className="bg-emerald-950/40 border border-emerald-500/40 p-4 rounded-2xl text-center">
-                          <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5 justify-center mb-1">
+                        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-500/40 p-4 rounded-2xl text-center">
+                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 justify-center mb-1">
                             <CheckCircle2 size={16} /> ඔබ මෙම විභාගය සම්පූර්ණ කර ඇත
                           </span>
-                          <span className="text-sm font-black text-white">
+                          <span className="text-sm font-black text-slate-900 dark:text-white">
                             ලබාගත් ලකුණු: {alreadySubmitted.score} / {alreadySubmitted.meta_data?.total_questions || 50}
                           </span>
                         </div>
@@ -402,30 +402,30 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
           SECTION 2: ASSIGNMENT MARKS (පැවරුම් ලකුණු)
           Requirement: "ඒ ඒ සිසුන්ගේ ලයිව් එක්සෑම් එක තුළ වෙනම සෙක්ෂන් එකක් මගින් ඒ එසයිමන්ට් වල ලකුණු පෙන්විය යුතුයි."
           ======================================================================= */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-400">
+            <div className="p-2 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-600 dark:text-emerald-400">
               <FileText size={18} />
             </div>
             <div>
-              <h4 className="font-bold text-base text-white">📝 පැවරුම් ලකුණු (Assignment Marks)</h4>
-              <p className="text-[11px] text-slate-400">දේශකතුමා විසින් ඔබගේ Assignment සඳහා ලබා දුන් ලකුණු මට්ටම.</p>
+              <h4 className="font-bold text-base text-slate-900 dark:text-white">📝 පැවරුම් ලකුණු (Assignment Marks)</h4>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium">දේශකතුමා විසින් ඔබගේ Assignment සඳහා ලබා දුන් ලකුණු මට්ටම.</p>
             </div>
           </div>
-          <span className="text-xs font-bold bg-emerald-500/15 text-emerald-300 px-3 py-1 rounded-full border border-emerald-500/30">
+          <span className="text-xs font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 px-3 py-1 rounded-full border border-emerald-500/30">
             {assignmentMarks.length} Assignments
           </span>
         </div>
 
         {assignmentMarks.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-xs">
+          <div className="p-8 text-center text-slate-500 text-xs font-medium">
             තවමත් ඔබට අදාළ පැවරුම් ලකුණු (Assignment Marks) ඇතුළත් කර නොමැත.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+              <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="p-3.5">පැවරුම් නාමය (Assignment Title)</th>
                   <th className="p-3.5">පන්තිය (Class)</th>
@@ -434,14 +434,14 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                   <th className="p-3.5">දේශකවරයා (Lecturer)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {assignmentMarks.map((mark) => (
-                  <tr key={mark.id} className="hover:bg-slate-850/50 transition">
-                    <td className="p-3.5 font-bold text-white text-sm">
+                  <tr key={mark.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                    <td className="p-3.5 font-bold text-slate-900 dark:text-white text-sm">
                       {mark.assignment_name}
                     </td>
                     <td className="p-3.5">
-                      <span className="bg-slate-950 px-2 py-0.5 rounded text-[10px] border border-slate-800 font-semibold text-slate-300">
+                      <span className="bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-800 font-semibold text-slate-700 dark:text-slate-300">
                         {mark.class_type || 'General'}
                       </span>
                     </td>
@@ -469,19 +469,19 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
           ======================================================================= */}
       <div className="space-y-4">
         <div className="flex items-center gap-2">
-          <Award size={18} className="text-amber-400" />
-          <h4 className="font-bold text-base text-white">🏆 සම්පූර්ණ කරන ලද විභාග ලකුණු සහ ප්‍රතිඵල</h4>
+          <Award size={18} className="text-amber-500 dark:text-amber-400" />
+          <h4 className="font-bold text-base text-slate-900 dark:text-white">🏆 සම්පූර්ණ කරන ලද විභාග ලකුණු සහ ප්‍රතිඵල</h4>
         </div>
 
         {isLoading ? (
-          <div className="p-12 text-center text-slate-400 text-sm">
+          <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-sm">
             විභාග වාර්තා පූරණය වෙමින් පවතී...
           </div>
         ) : records.length === 0 ? (
-          <div className="p-12 bg-slate-900/50 border border-slate-800 rounded-2xl text-center space-y-3">
-            <FileText size={40} className="mx-auto text-slate-600" />
-            <h4 className="text-base font-bold text-slate-300">තවමත් සම්පූර්ණ කළ විභාග වාර්තා නොමැත</h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+          <div className="p-12 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl text-center space-y-3">
+            <FileText size={40} className="mx-auto text-slate-400 dark:text-slate-600" />
+            <h4 className="text-base font-bold text-slate-800 dark:text-slate-300">තවමත් සම්පූර්ණ කළ විභාග වාර්තා නොමැත</h4>
+            <p className="text-xs text-slate-600 dark:text-slate-500 max-w-sm mx-auto">
               සජීවී විභාගයකට පෙනී සිටි පසු ඔබගේ ලකුණු සහ ප්‍රතිඵල මෙහි ස්වයංක්‍රීයව දිස්වනු ඇත.
             </p>
           </div>
@@ -509,27 +509,27 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
               return (
                 <div 
                   key={rec.id || rec.submitted_at} 
-                  className="bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl overflow-hidden shadow-xl transition-all duration-200"
+                  className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700/80 rounded-2xl overflow-hidden shadow-sm transition-all duration-200"
                 >
                   <div className="p-5 flex justify-between items-start gap-4">
                     <div className="space-y-2 flex-1 min-w-0">
                       <div className="flex flex-wrap gap-2 items-center">
-                        <span className="px-2.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-[10px] font-mono text-blue-400 font-bold rounded-lg uppercase tracking-wider">
+                        <span className="px-2.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold rounded-lg uppercase tracking-wider">
                           {classType}
                         </span>
-                        <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
+                        <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1">
                           <Calendar size={12} /> {formattedDate} &bull; {formattedTime}
                         </span>
                       </div>
 
-                      <h4 className="font-bold text-sm text-white truncate leading-snug" title={examTitle}>
+                      <h4 className="font-bold text-sm text-slate-900 dark:text-white truncate leading-snug" title={examTitle}>
                         {examTitle}
                       </h4>
 
                       {summaryArray.length > 0 && (
                         <button
                           onClick={() => setExpandedId(isExpanded ? null : (rec.id || rec.submitted_at))}
-                          className="text-[11px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 pt-1 transition cursor-pointer"
+                          className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-1 pt-1 transition cursor-pointer"
                         >
                           {isExpanded ? (
                             <><span>සමාලෝචනය සඟවන්න</span> <ChevronUp size={14} /></>
@@ -541,16 +541,16 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                     </div>
 
                     {/* Score Badge Display */}
-                    <div className="text-right bg-slate-950/90 p-3.5 rounded-xl border border-slate-800/80 min-w-[95px] shrink-0">
-                      <span className="text-[9px] font-mono text-slate-400 block uppercase tracking-wider font-semibold">ලකුණු</span>
+                    <div className="text-right bg-slate-50 dark:bg-slate-950/90 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800/80 min-w-[95px] shrink-0">
+                      <span className="text-[9px] font-mono text-slate-500 dark:text-slate-400 block uppercase tracking-wider font-semibold">ලකුණු</span>
                       <div className="flex items-baseline justify-end gap-0.5">
-                        <span className="text-xl font-black text-emerald-400">{scoreVal}</span>
+                        <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{scoreVal}</span>
                         <span className="text-xs text-slate-500 font-bold font-mono">/{totalQ}</span>
                       </div>
                       <span className={`text-[10px] font-mono block mt-1 px-1.5 py-0.5 rounded font-bold text-center border ${
-                        percentage >= 75 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' :
-                        percentage >= 50 ? 'bg-blue-500/15 border-blue-500/30 text-blue-300' :
-                        'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                        percentage >= 75 ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' :
+                        percentage >= 50 ? 'bg-blue-500/15 border-blue-500/30 text-blue-700 dark:text-blue-300' :
+                        'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300'
                       }`}>
                         {percentage}%
                       </span>
@@ -559,8 +559,8 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
 
                   {/* Expanded Detailed Question Breakdown */}
                   {isExpanded && summaryArray.length > 0 && (
-                    <div className="bg-slate-950/90 border-t border-slate-800 p-4 space-y-3 animate-in fade-in duration-200">
-                      <h5 className="text-xs font-bold text-slate-300 border-b border-slate-800 pb-2">
+                    <div className="bg-slate-50 dark:bg-slate-950/90 border-t border-slate-200 dark:border-slate-800 p-4 space-y-3 animate-in fade-in duration-200">
+                      <h5 className="text-xs font-bold text-slate-800 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800 pb-2">
                         ප්‍රශ්න පත්‍ර ප්‍රතිඵල විස්තරය:
                       </h5>
                       <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
@@ -571,18 +571,18 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                               key={qIdx}
                               className={`p-2 rounded-lg text-xs flex items-center justify-between border ${
                                 isCorrect 
-                                  ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200' 
-                                  : 'bg-rose-950/30 border-rose-500/30 text-rose-200'
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-200' 
+                                  : 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-500/30 text-rose-800 dark:text-rose-200'
                               }`}
                             >
                               <span className="font-bold flex items-center gap-1.5">
-                                {isCorrect ? <Check size={14} className="text-emerald-400" /> : <X size={14} className="text-rose-400" />}
+                                {isCorrect ? <Check size={14} className="text-emerald-600 dark:text-emerald-400" /> : <X size={14} className="text-rose-600 dark:text-rose-400" />}
                                 ප්‍රශ්න {item.questionNumber}
                               </span>
                               <span className="font-mono text-[11px]">
                                 ඔබගේ පිළිතුර: <strong>{item.userAnswer || 'මඟහැර ඇත'}</strong>
                                 {!isCorrect && (
-                                  <span className="ml-2 text-emerald-400 font-bold">
+                                  <span className="ml-2 text-emerald-700 dark:text-emerald-400 font-bold">
                                     (නිවැරදි: {item.correctAns})
                                   </span>
                                 )}
@@ -604,24 +604,24 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
           INTERACTIVE EXAM TAKER MODAL
           ======================================================================= */}
       {takingExam && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-center justify-center z-[70] p-2 sm:p-4">
-          <div className="bg-slate-900 border border-rose-500/40 rounded-3xl w-full max-w-5xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/95 backdrop-blur-md flex items-center justify-center z-[70] p-2 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-rose-500/40 rounded-3xl w-full max-w-5xl h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             
             {/* Modal Header */}
-            <div className="bg-slate-950 px-6 py-4 border-b border-slate-800 flex justify-between items-center">
+            <div className="bg-slate-50 dark:bg-slate-950 px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
                   🔴 සජීවී විභාගය (LIVE ONLINE EXAM)
                 </span>
-                <h3 className="text-lg font-black text-white">{takingExam.title}</h3>
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">{takingExam.title}</h3>
               </div>
 
               {/* Countdown Timer */}
               <div className="flex items-center gap-3">
                 <div className={`px-4 py-2 rounded-xl border flex items-center gap-2 font-mono font-black text-base shadow-inner ${
                   examSecondsLeft < 300 
-                    ? 'bg-red-500/20 border-red-500/50 text-red-400 animate-pulse' 
-                    : 'bg-slate-900 border-slate-700 text-amber-400'
+                    ? 'bg-red-500/20 border-red-500/50 text-red-600 dark:text-red-400 animate-pulse' 
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-amber-600 dark:text-amber-400'
                 }`}>
                   <Clock size={18} />
                   <span>{formatTimer(examSecondsLeft)}</span>
@@ -633,7 +633,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                       setTakingExam(null);
                     }
                   }}
-                  className="text-slate-400 hover:text-white p-2 rounded-lg"
+                  className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white p-2 rounded-lg cursor-pointer"
                 >
                   ✕
                 </button>
@@ -641,18 +641,18 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800">
+            <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800">
               
               {/* Left Pane: Question Paper (Google Drive PDF / Preview) */}
-              <div className="p-4 flex flex-col h-full overflow-hidden bg-slate-950/50">
+              <div className="p-4 flex flex-col h-full overflow-hidden bg-slate-50 dark:bg-slate-950/50">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-300">ප්‍රශ්න පත්‍රය (Question Paper)</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-300">ප්‍රශ්න පත්‍රය (Question Paper)</span>
                   {takingExam.pdf_url && (
                     <a
                       href={takingExam.pdf_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-[11px] text-blue-400 hover:underline flex items-center gap-1"
+                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 font-semibold"
                     >
                       <ExternalLink size={12} /> වෙනම Window එකක විවෘත කරන්න
                     </a>
@@ -662,7 +662,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                 {takingExam.pdf_url ? (
                   <iframe
                     src={takingExam.pdf_url.replace('/view', '/preview').replace('?usp=sharing', '')}
-                    className="w-full flex-1 rounded-xl border border-slate-800 bg-white"
+                    className="w-full flex-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white"
                     title="Exam PDF"
                   />
                 ) : (
@@ -673,8 +673,8 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
               </div>
 
               {/* Right Pane: MCQ Answer Selector */}
-              <div className="p-4 flex flex-col h-full overflow-y-auto">
-                <span className="text-xs font-bold text-slate-300 mb-3 block">
+              <div className="p-4 flex flex-col h-full overflow-y-auto bg-white dark:bg-slate-900">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-300 mb-3 block">
                   පිළිතුරු පත්‍රිකාව (Select 1 - 5 for each Question):
                 </span>
 
@@ -686,11 +686,11 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                         key={qNum}
                         className={`p-2.5 rounded-xl border flex items-center justify-between transition ${
                           selected 
-                            ? 'bg-indigo-950/40 border-indigo-500/40' 
-                            : 'bg-slate-950 border-slate-800'
+                            ? 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-500/40' 
+                            : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
                         }`}
                       >
-                        <span className="font-mono font-bold text-xs text-slate-300 w-8">
+                        <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-300 w-8">
                           {qNum}.
                         </span>
 
@@ -702,8 +702,8 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                               onClick={() => setExamAnswers(prev => ({ ...prev, [qNum]: opt }))}
                               className={`py-1.5 rounded-lg text-xs font-bold font-mono transition border cursor-pointer ${
                                 selected === opt
-                                  ? 'bg-blue-600 border-blue-400 text-white shadow-md'
-                                  : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-300'
+                                  ? 'bg-blue-600 border-blue-500 text-white shadow-md'
+                                  : 'bg-white hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
                               }`}
                             >
                               ({opt})
@@ -716,7 +716,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                 </div>
 
                 {/* Submit Action */}
-                <div className="pt-4 mt-3 border-t border-slate-800">
+                <div className="pt-4 mt-3 border-t border-slate-200 dark:border-slate-800">
                   <button
                     onClick={() => {
                       if (window.confirm('ප්‍රශ්න පත්‍රය අවසන් කර Submit කිරීමට සනාථ කරන්නද?')) {
@@ -737,17 +737,17 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
 
             {/* Instant Result View if just submitted */}
             {justSubmittedResult && (
-              <div className="absolute inset-0 bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-6 z-20">
-                <div className="bg-slate-900 border border-emerald-500/40 p-8 rounded-3xl max-w-md w-full text-center space-y-4 shadow-2xl">
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto text-emerald-400">
+              <div className="absolute inset-0 bg-black/60 dark:bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-6 z-20">
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-emerald-500/40 p-8 rounded-3xl max-w-md w-full text-center space-y-4 shadow-2xl">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400">
                     <Award size={36} />
                   </div>
-                  <h3 className="text-xl font-black text-white">විභාගය සාර්ථකව අවසන් කළා!</h3>
-                  <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800">
-                    <div className="text-3xl font-black text-emerald-400">
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white">විභාගය සාර්ථකව අවසන් කළා!</h3>
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <div className="text-3xl font-black text-emerald-600 dark:text-emerald-400">
                       {justSubmittedResult.score} / {justSubmittedResult.totalQ}
                     </div>
-                    <div className="text-sm font-bold text-slate-400 mt-1">
+                    <div className="text-sm font-bold text-slate-600 dark:text-slate-400 mt-1">
                       ප්‍රතිශතය: {justSubmittedResult.percentage}%
                     </div>
                   </div>
@@ -756,7 +756,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                       setTakingExam(null);
                       setJustSubmittedResult(null);
                     }}
-                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-sm transition"
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-sm transition cursor-pointer"
                   >
                     ප්‍රතිඵල ලේඛනය වෙත ආපසු යන්න
                   </button>

@@ -4,7 +4,8 @@ import {
   Phone, MapPin, Book, RefreshCw, CheckCircle2, XCircle, CalendarDays, History,
   ChevronLeft, ChevronRight, Clock, Calendar, Play, ExternalLink, Menu,
   Trophy, Award, PenTool, Package, Radio, ArrowLeft, Check, Sparkles, Layers,
-  ChevronDown, AlertCircle, ShieldAlert, CreditCard, QrCode, Copy, Maximize2, MessageCircle, Globe
+  ChevronDown, AlertCircle, ShieldAlert, CreditCard, QrCode, Copy, Maximize2, MessageCircle, Globe,
+  Sun, Moon
 } from 'lucide-react';
 import { 
   PendingPaymentRequest, 
@@ -20,6 +21,7 @@ import LiveClassPlayer from './LiveClassPlayer';
 import StudentRecordings from './StudentRecordings';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
+import { getClassMetadataMap, parseClassLinkAndMeta } from './ClassTypesFeesManager';
 
 type TabType = "live" | "recordings" | "tutes" | "exams" | "calendar" | "history" | null;
 
@@ -42,6 +44,8 @@ interface StudentDashboardProps {
   supabase: any; 
   lang?: 'si' | 'en';
   setLang?: (l: 'si' | 'en') => void;
+  theme?: 'light' | 'dark';
+  toggleTheme?: () => void;
 }
 
 const SafeComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -78,9 +82,36 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   setFilterMonth,
   supabase,
   lang = 'si',
-  setLang
+  setLang,
+  theme: propTheme,
+  toggleTheme
 }) => {
   const activeLang = lang || ((localStorage.getItem('physics_hub_lang') as 'si' | 'en') || 'si');
+  
+  // Theme state and handlers
+  const [internalTheme, setInternalTheme] = useState<'light' | 'dark'>(() => {
+    if (propTheme) return propTheme;
+    const saved = localStorage.getItem('physics_hub_theme');
+    return (saved === 'dark' || saved === 'light') ? saved : 'light';
+  });
+
+  const isCurrentDark = propTheme ? propTheme === 'dark' : internalTheme === 'dark';
+
+  const handleToggleTheme = () => {
+    if (toggleTheme) {
+      toggleTheme();
+    } else {
+      const next = internalTheme === 'dark' ? 'light' : 'dark';
+      setInternalTheme(next);
+      localStorage.setItem('physics_hub_theme', next);
+      if (next === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  };
+
   const [dbReminders, setDbReminders] = useState<any[]>([]);
   const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
@@ -93,6 +124,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
+  // Pending payment notice modal state (When touching thumbnail of already submitted month)
+  const [pendingPaymentNotice, setPendingPaymentNotice] = useState<{
+    isOpen: boolean;
+    classType: string;
+    month: string;
+    transactionId?: string;
+  } | null>(null);
+
   // Mobile sidebar and notifications modal drawer
   const [isSidebarOpenMobile, setIsSidebarOpenMobile] = useState(false);
   const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
@@ -130,7 +169,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Pending Class Payments State & Cart Modal
   const [studentPendingRequests, setStudentPendingRequests] = useState<PendingPaymentRequest[]>([]);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
-  const [selectedClassToJoin, setSelectedClassToJoin] = useState<{ id: string; name: string; fee: number } | null>(null);
+  const [selectedClassToJoin, setSelectedClassToJoin] = useState<{ id: string; name: string; fee: number; targetMonth?: string } | null>(null);
   const [joinPaymentMethod, setJoinPaymentMethod] = useState<'bank' | 'qr'>('bank');
   const [joinTransactionId, setJoinTransactionId] = useState('');
   const [joinSubmitting, setJoinSubmitting] = useState(false);
@@ -179,7 +218,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       setStudentPendingRequests(prev => prev.filter(r => r.id !== reqId));
     }
 
-    // 2. Permanently record this dismissal in localStorage so it NEVER shows again to this student
+    // 2. Permanently delete from announcements table in Supabase so it NEVER reappears
+    if (supabase) {
+      try {
+        await supabase.from('announcements').delete().or(`id.eq.${id},id.eq.${reqId},content.like.%${reqId}%`);
+      } catch (err) {
+        console.warn('Error deleting announcement from db on alert dismiss:', err);
+      }
+    }
+
+    // 3. Permanently record this dismissal in localStorage so it NEVER shows again to this student
     try {
       const permKey = 'physics_hub_permanently_dismissed_alerts';
       const raw = localStorage.getItem(permKey);
@@ -896,6 +944,21 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     setCalendarViewMonth(cMonthNum);
   };
 
+  // Check if student is enrolled in ANY class marked as Limited
+  const isStudentInLimitedClass = (): boolean => {
+    const metaMap = getClassMetadataMap();
+    return enrolledClasses.some(cls => {
+      const clsClean = (cls || '').trim();
+      if (metaMap[clsClean]?.is_limited) return true;
+      const dbCls = dbClassTypes.find((c: any) => (c.class_type || c.class_types || '').toLowerCase().trim() === clsClean.toLowerCase());
+      if (dbCls) {
+        const { is_limited } = parseClassLinkAndMeta(dbCls.whatsapp_link);
+        if (is_limited) return true;
+      }
+      return false;
+    });
+  };
+
   // Nav Menu Definitions
   const navMenuItems = [
     { id: null, label: 'Hub Overview', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
@@ -904,7 +967,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     { id: 'tutes', label: 'Documents', sinhala: 'ටියුට් & Papers', icon: FileText, badge: tutesCount > 0 ? `${tutesCount}` : null, color: 'slate' },
     { id: 'live', label: 'Live Classes', sinhala: 'සජීවී පන්තිය', icon: Radio, badge: 'LIVE', isLive: true, color: 'rose' },
     { id: 'calendar', label: 'Class Timetable', sinhala: 'කාලසටහන', icon: CalendarDays, badge: null, color: 'purple' },
-    { id: 'history', label: 'Other Classes', sinhala: 'වෙනත් පන්ති (Other Classes)', icon: Package, badge: null, color: 'emerald' },
+    ...(!isStudentInLimitedClass() ? [{ id: 'history', label: 'Other Classes', sinhala: 'වෙනත් පන්ති (Other Classes)', icon: Package, badge: null, color: 'emerald' }] : []),
   ];
 
   // Dynamically resolve custom menu tab names configured by admin and respect active language
@@ -986,19 +1049,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const activeCalendarEvents = calendarEvents.filter(ev => !isClassSessionFinished(ev));
 
     return (
-      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-4 md:p-6 shadow-2xl max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-white">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 md:p-6 shadow-sm max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300 text-slate-900 dark:text-white">
         
         {/* Top Calendar Header with Month Navigation */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-purple-500/15 border border-purple-500/30 rounded-xl text-purple-400">
+            <div className="p-2.5 bg-purple-500/15 border border-purple-500/30 rounded-xl text-purple-600 dark:text-purple-400">
               <CalendarDays size={22} />
             </div>
             <div>
-              <h3 className="text-lg md:text-xl font-black text-white flex items-center gap-2">
+              <h3 className="text-lg md:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
                 පන්ති කාලසටහන (Timetable)
               </h3>
-              <p className="text-xs text-slate-400 font-mono">
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
                 {sinhalaMonths[calendarViewMonth - 1]} {calendarViewYear}
               </p>
             </div>
@@ -1007,20 +1070,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrevMonth}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition cursor-pointer"
+              className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
               title="පෙර මාසය"
             >
               <ChevronLeft size={16} />
             </button>
             <button
               onClick={handleTodayMonth}
-              className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-bold rounded-xl border border-purple-500/30 transition cursor-pointer"
+              className="px-3 py-1.5 bg-purple-600/15 hover:bg-purple-600/25 text-purple-700 dark:text-purple-300 text-xs font-bold rounded-xl border border-purple-500/30 transition cursor-pointer"
             >
               අද (Today)
             </button>
             <button
               onClick={handleNextMonth}
-              className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl border border-slate-700 transition cursor-pointer"
+              className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200 dark:border-slate-700 transition cursor-pointer"
               title="ඊළඟ මාසය"
             >
               <ChevronRight size={16} />
@@ -1029,8 +1092,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-950/60 rounded-2xl border border-slate-800/80 text-[11px]">
-          <span className="text-slate-400 font-semibold mr-1">පන්ති වර්ග:</span>
+        <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800/80 text-[11px]">
+          <span className="text-slate-600 dark:text-slate-400 font-semibold mr-1">පන්ති වර්ග:</span>
           <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
             📘 2026 Theory
           </span>
@@ -1292,8 +1355,54 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   // Join Class Enrollment Handlers
-  const handleOpenJoinModal = (cls: { id: string; name: string; fee: number }) => {
+  const handleOpenJoinModal = (cls: { id: string; name: string; fee: number; targetMonth?: string }) => {
     setSelectedClassToJoin(cls);
+    setJoinPaymentMethod('bank');
+    setJoinTransactionId('');
+    setJoinSuccessMessage(null);
+    setJoinErrorMessage(null);
+    setIsJoinModalOpen(true);
+  };
+
+  const handleOpenMonthPayment = (classType: string, yearOrMonth: string, monthNum?: string) => {
+    let targetMonth = yearOrMonth;
+    if (monthNum) {
+      targetMonth = `${yearOrMonth}-${monthNum}`;
+    }
+
+    // Check if student has already submitted payment for this class & month and is pending
+    const matchingPending = studentPendingRequests.find(p => {
+      if (p.status !== 'pending') return false;
+      const pClass = String(p.class_type || '').toLowerCase().trim();
+      const tClass = String(classType || '').toLowerCase().trim();
+      const classMatch = pClass === tClass || pClass.includes(tClass) || tClass.includes(pClass);
+      
+      const pMonth = String(p.month || '').trim().toLowerCase();
+      const tMonthClean = String(targetMonth || '').trim().toLowerCase();
+      const monthMatch = !pMonth || !tMonthClean || pMonth === tMonthClean || tMonthClean.includes(pMonth) || pMonth.includes(tMonthClean);
+      return classMatch && monthMatch;
+    });
+
+    if (matchingPending) {
+      // Do not open invoice modal! Show the 24-hour verification notice modal instead
+      setPendingPaymentNotice({
+        isOpen: true,
+        classType,
+        month: targetMonth,
+        transactionId: matchingPending.transaction_id || ''
+      });
+      return;
+    }
+
+    const clsConfig = dbClassTypes.find((c: any) => (c.class_type || c.class_types || '').toLowerCase().trim() === classType.toLowerCase().trim());
+    const fee = clsConfig?.monthly_fee || 3500;
+
+    setSelectedClassToJoin({
+      id: classType,
+      name: classType,
+      fee: Number(fee),
+      targetMonth: targetMonth
+    });
     setJoinPaymentMethod('bank');
     setJoinTransactionId('');
     setJoinSuccessMessage(null);
@@ -1319,7 +1428,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         classType: selectedClassToJoin.name,
         amount: selectedClassToJoin.fee,
         paymentMethod: joinPaymentMethod,
-        transactionId: joinTransactionId.trim()
+        transactionId: joinTransactionId.trim(),
+        month: selectedClassToJoin.targetMonth || currentMonthKey
       });
 
       setStudentPendingRequests(prev => [newReq, ...prev.filter(p => p.id !== newReq.id)]);
@@ -1338,6 +1448,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Render Other Classes & Course Packages View (With Join Class Cart)
   const renderOtherClasses = () => {
+    if (isStudentInLimitedClass()) {
+      return (
+        <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 text-slate-500 text-xs shadow-md">
+          🔒 මෙම සෙක්ෂන් එක ඔබගේ පන්තිය සඳහා සීමා කර ඇත (Restricted by Admin).
+        </div>
+      );
+    }
+
     const defaultClasses = [
       { id: '1', name: '2026 Theory', fee: 3500 },
       { id: '2', name: '2026 Revision', fee: 3500 },
@@ -1379,9 +1497,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     extractEnrolled(liveStudentData?.enrolled_classes);
 
     // Read directly from Supabase class_types_config table:
-    // id (uuid), monthly_fee (numeric), is_active (bool), created_at (timestamptz), class_types (text), whatsapp_link (text)
+    // Filter out classes that are disabled or expired!
+    const metaMap = getClassMetadataMap();
     const systemClasses = (dbClassTypes.length > 0 ? dbClassTypes : defaultClasses)
-      .filter((c: any) => c.is_active !== false)
+      .filter((c: any) => {
+        const name = String(c.class_types || c.class_type || c.name || '').trim();
+        const { status } = parseClassLinkAndMeta(c.whatsapp_link);
+        const localMeta = metaMap[name];
+        const resolvedStatus = localMeta?.status || status || (c.is_active ? 'active' : 'disabled');
+        return resolvedStatus === 'active' && c.is_active !== false;
+      })
       .map((c: any) => {
         const name = String(c.class_types || c.class_type || c.name || '').trim();
         const fee = Number(c.monthly_fee ?? c.fee ?? 3500);
@@ -1444,16 +1569,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
         
         {/* Top Header */}
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
-            <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-emerald-400">
+            <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl text-emerald-600 dark:text-emerald-400">
               <Package size={26} />
             </div>
             <div>
               <h3 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
                 {activeLang === 'si' ? 'පන්ති සහ WhatsApp සමූහ (Classes & Official Groups)' : 'Classes & Official WhatsApp Groups'}
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">
                 {activeLang === 'si' ? 'ඔබ ලියාපදිංචි වී ඇති පන්තිවල නිල WhatsApp සමූහ සහ සම්බන්ධ විය හැකි අනෙකුත් පන්ති.' : 'Official WhatsApp groups for your enrolled classes and available new classes to join.'}
               </p>
             </div>
@@ -1674,7 +1799,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#f0f4f9] dark:bg-slate-950 text-slate-900 dark:text-white font-sans transition-colors pb-12">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-sans transition-colors pb-12">
       
       {/* 1. Student Profile Modal */}
       {isProfileOpen && (
@@ -1849,46 +1974,112 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
+      {/* 2.4 Pending Payment 24-Hour Notice Modal */}
+      {pendingPaymentNotice?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-5 animate-in zoom-in duration-200 text-slate-900 dark:text-white">
+            
+            <button 
+              onClick={() => setPendingPaymentNotice(null)}
+              className="absolute top-4 right-4 p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer border border-slate-200 dark:border-slate-700"
+            >
+              <X size={16} />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Clock size={24} />
+              </div>
+              <div>
+                <h3 className="font-black text-base md:text-lg text-slate-900 dark:text-white leading-tight">
+                  ගෙවීම් තොරතුරු ඇඩ්මින් වෙත ඉදිරිපත් කර ඇත
+                </h3>
+                <p className="text-xs text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                  Payment Pending Verification
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 space-y-2 text-xs">
+              <div className="flex justify-between items-center text-slate-600 dark:text-slate-400 font-medium">
+                <span>පන්ති වර්ගය (Class):</span>
+                <span className="font-bold text-slate-900 dark:text-white">{pendingPaymentNotice.classType}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-600 dark:text-slate-400 font-medium">
+                <span>අදාළ මාසය (Month):</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">{pendingPaymentNotice.month}</span>
+              </div>
+              {pendingPaymentNotice.transactionId && (
+                <div className="flex justify-between items-center text-slate-600 dark:text-slate-400 font-medium pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <span>Transaction ID:</span>
+                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">{pendingPaymentNotice.transactionId}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 text-xs text-blue-950 dark:text-blue-200 leading-relaxed space-y-2">
+              <p className="font-bold flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                <span>⏳</span> ඔබගේ ගෙවීම් රිසීට් පත / තොරතුරු සාර්ථකව පද්ධතියට ලැබී ඇත.
+              </p>
+              <p className="text-slate-700 dark:text-slate-300">
+                🕒 <b>පැය 24 ක කාලයක් තුළ</b> පරිපාලක (Admin) විසින් මෙම ගෙවීම පරීක්ෂා කර තහවුරු කරනු ලැබේ.
+              </p>
+              <p className="text-slate-700 dark:text-slate-300">
+                🔓 තහවුරු කළ විගස මෙම පන්තියට අදාළ වීඩියෝ රෙකෝඩින් සහ ටියුට්/පේපර්ස් ඔබ වෙනුවෙන් ස්වයංක්‍රීයව විවෘත (Unlocked) වනු ඇත. කරුණාකර ඒ වනතුරු රැඳී සිටින්න.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setPendingPaymentNotice(null)}
+              className="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs transition shadow-lg shadow-blue-600/30 cursor-pointer"
+            >
+              හරි, ස්තූතියි (Understood)
+            </button>
+
+          </div>
+        </div>
+      )}
+
       {/* 2.5 Join Class Cart & Payment Modal */}
       {isJoinModalOpen && selectedClassToJoin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-5 my-8 animate-in fade-in zoom-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-5 my-8 animate-in fade-in zoom-in duration-200 text-slate-900 dark:text-white">
             {/* Close Button */}
             <button
               onClick={() => setIsJoinModalOpen(false)}
-              className="absolute top-5 right-5 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
+              className="absolute top-5 right-5 p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer border border-slate-200 dark:border-slate-700"
             >
               <X size={16} />
             </button>
 
             {/* Header info */}
             <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[11px] font-bold mb-2">
-                <Sparkles size={13} className="text-amber-400" /> පන්ති ලියාපදිංචි කාට් එක (Checkout Cart)
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-600 dark:text-purple-300 text-[11px] font-bold mb-2">
+                <Sparkles size={13} className="text-amber-500" /> පන්ති ලියාපදිංචි කාට් එක (Checkout Cart)
               </div>
-              <h3 className="text-lg font-black text-white">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
                 {selectedClassToJoin.name} - නව පන්තියට සම්බන්ධ වන්න
               </h3>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 font-medium">
                 ගෙවීම් සිදුකර රිසීට් පතේ Transaction ID එක සදහන් කර සබ්මිට් කරන්න.
               </p>
             </div>
 
             {/* Bill summary box */}
-            <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5 text-xs">
+            <div className="p-4 bg-slate-50 dark:bg-slate-950/80 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
               <div className="flex justify-between items-center">
-                <span className="text-slate-400">පන්තිය (Class):</span>
-                <span className="font-bold text-white text-sm">{selectedClassToJoin.name}</span>
+                <span className="text-slate-600 dark:text-slate-400 font-medium">පන්තිය (Class):</span>
+                <span className="font-bold text-slate-900 dark:text-white text-sm">{selectedClassToJoin.name}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-slate-400">අදාළ මාසය:</span>
-                <span className="font-bold text-emerald-400 font-mono">
-                  {new Date().getFullYear()} {['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'][new Date().getMonth()]}
+                <span className="text-slate-600 dark:text-slate-400 font-medium">අදාළ මාසය:</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                  {selectedClassToJoin.targetMonth || `${new Date().getFullYear()} ${['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'][new Date().getMonth()]}`}
                 </span>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
-                <span className="text-slate-300 font-bold">ගෙවිය යුතු මාසික ගාස්තුව:</span>
-                <span className="font-mono font-black text-base text-emerald-400">
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-800/80">
+                <span className="text-slate-800 dark:text-slate-300 font-bold">ගෙවිය යුතු මාසික ගාස්තුව:</span>
+                <span className="font-mono font-black text-base text-emerald-600 dark:text-emerald-400">
                   රු. {selectedClassToJoin.fee.toLocaleString()}/=
                 </span>
               </div>
@@ -1901,8 +2092,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 onClick={() => setJoinPaymentMethod('bank')}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                   joinPaymentMethod === 'bank'
-                    ? 'bg-blue-600/20 border-blue-500 text-blue-400 ring-1 ring-blue-500/40'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    ? 'bg-blue-600/15 border-blue-500 text-blue-600 dark:text-blue-400 ring-1 ring-blue-500/40'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <CreditCard size={15} /> බැංකු තැන්පතු (Bank)
@@ -1912,8 +2103,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 onClick={() => setJoinPaymentMethod('qr')}
                 className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                   joinPaymentMethod === 'qr'
-                    ? 'bg-blue-600/20 border-blue-500 text-blue-400 ring-1 ring-blue-500/40'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    ? 'bg-blue-600/15 border-blue-500 text-blue-600 dark:text-blue-400 ring-1 ring-blue-500/40'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <QrCode size={15} /> LankaQR Pay
@@ -1934,9 +2125,9 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     instructions: 'Online Banking හෝ CDM මඟින් තැන්පත් කළ හැක.'
                   }
                 ]).map((acc: any) => (
-                  <div key={acc.id} className="p-3 bg-slate-950 rounded-2xl border border-slate-800/80 space-y-2 text-xs">
+                  <div key={acc.id} className="p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800/80 space-y-2 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white text-xs flex items-center gap-2">
+                      <span className="font-bold text-slate-900 dark:text-white text-xs flex items-center gap-2">
                         {acc.bank_name}
                       </span>
                       {acc.bank_logo && (
@@ -1944,10 +2135,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       )}
                     </div>
 
-                    <div className="bg-slate-900 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between">
+                    <div className="bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800/80 flex items-center justify-between">
                       <div>
                         <span className="text-[10px] text-slate-500 block">Account Number</span>
-                        <span className="text-sm font-bold font-mono text-emerald-400 select-all tracking-wider">
+                        <span className="text-sm font-bold font-mono text-emerald-600 dark:text-emerald-400 select-all tracking-wider">
                           {acc.account_number}
                         </span>
                       </div>
@@ -1958,11 +2149,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           setCopiedBankInfo(acc.id);
                           setTimeout(() => setCopiedBankInfo(null), 2000);
                         }}
-                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold rounded-lg border border-slate-700 flex items-center gap-1 transition cursor-pointer"
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-1 transition cursor-pointer"
                       >
                         {copiedBankInfo === acc.id ? (
                           <>
-                            <Check size={12} className="text-emerald-400" /> Copied!
+                            <Check size={12} className="text-emerald-500 dark:text-emerald-400" /> Copied!
                           </>
                         ) : (
                           <>
@@ -1972,13 +2163,13 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-1 text-[11px] text-slate-400">
-                      <div>නම: <span className="text-slate-200 font-medium">{acc.account_name}</span></div>
-                      <div>ශාඛාව: <span className="text-slate-200">{acc.branch}</span></div>
+                    <div className="grid grid-cols-2 gap-1 text-[11px] text-slate-600 dark:text-slate-400">
+                      <div>නම: <span className="text-slate-900 dark:text-slate-200 font-medium">{acc.account_name}</span></div>
+                      <div>ශාඛාව: <span className="text-slate-900 dark:text-slate-200">{acc.branch}</span></div>
                     </div>
 
                     {acc.instructions && (
-                      <p className="text-[10px] text-slate-500 bg-slate-900/50 p-1.5 rounded border border-slate-800/40">
+                      <p className="text-[10px] text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900/50 p-1.5 rounded border border-slate-200 dark:border-slate-800/40">
                         ℹ️ {acc.instructions}
                       </p>
                     )}
@@ -2226,18 +2417,27 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    const next = activeLang === 'si' ? 'en' : 'si';
-                    if (setLang) setLang(next);
-                    localStorage.setItem('physics_hub_lang', next);
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-bold transition cursor-pointer shrink-0"
-                  title="Switch Language / භාෂාව මාරු කරන්න"
-                >
-                  <Globe size={13} className="text-blue-500" />
-                  <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={handleToggleTheme}
+                    className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-500 dark:text-amber-400 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+                    title={isCurrentDark ? 'දිවා මාදිලියට මාරු වන්න (Day Mode)' : 'රාත්‍රී මාදිලියට මාරු වන්න (Night Mode)'}
+                  >
+                    {isCurrentDark ? <Sun size={14} /> : <Moon size={14} />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const next = activeLang === 'si' ? 'en' : 'si';
+                      if (setLang) setLang(next);
+                      localStorage.setItem('physics_hub_lang', next);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-xs font-bold transition cursor-pointer shrink-0"
+                    title="Switch Language / භාෂාව මාරු කරන්න"
+                  >
+                    <Globe size={13} className="text-blue-500" />
+                    <span>{activeLang === 'si' ? 'English' : 'සිංහල'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* TOP LEFT: Profile Photo & Student Name & ID (Clickable) */}
@@ -2344,6 +2544,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <span>මෙනුව (Menu)</span>
               </button>
               <div className="flex items-center gap-2">
+                {/* Day / Night Mode Toggle */}
+                <button
+                  onClick={handleToggleTheme}
+                  className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-amber-500 dark:text-amber-400 border border-slate-200 dark:border-slate-700 cursor-pointer"
+                  title={isCurrentDark ? 'දිවා මාදිලියට මාරු වන්න (Day Mode)' : 'රාත්‍රී මාදිලියට මාරු වන්න (Night Mode)'}
+                >
+                  {isCurrentDark ? <Sun size={13} /> : <Moon size={13} />}
+                </button>
+
                 {/* Language Switcher */}
                 <button
                   onClick={() => {
@@ -2769,13 +2978,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       <StudentRecordings 
                         student={liveStudentData} 
                         onBack={() => handleTabChange(null)} 
+                        onOpenPayment={handleOpenMonthPayment}
                       />
                     </SafeComponent>
                   )}
 
                   {dashboardTab === 'tutes' && (
                     <SafeComponent>
-                      <TutsPapersManager currentStudent={liveStudentData} isPaid={isPaidCurrentMonth} />
+                      <TutsPapersManager 
+                        currentStudent={liveStudentData} 
+                        isPaid={isPaidCurrentMonth}
+                        paymentHistory={paymentHistory}
+                        onOpenPayment={handleOpenMonthPayment}
+                      />
                     </SafeComponent>
                   )}
 

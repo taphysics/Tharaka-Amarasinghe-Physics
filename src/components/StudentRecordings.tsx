@@ -4,16 +4,18 @@ import screenfull from 'screenfull';
 import { 
   Play, Lock, ArrowLeft, Pause, Maximize, X, 
   Rewind, FastForward, Settings, Volume2, VolumeX, RotateCcw, ChevronRight,
-  Search, Calendar, Filter, Sparkles, CheckCircle, RefreshCw
+  Search, Calendar, Filter, Sparkles, CheckCircle, RefreshCw, Clock
 } from 'lucide-react';
 import { subscribeRealtimeEvents } from '../realtimeSync';
+import { fetchAllPendingPayments } from '../pendingPaymentsService';
 
 interface StudentRecordingsProps {
   student: any; 
   onBack: () => void; 
+  onOpenPayment?: (classType: string, year: string, month: string) => void;
 }
 
-export default function StudentRecordings({ student, onBack }: StudentRecordingsProps) {
+export default function StudentRecordings({ student, onBack, onOpenPayment }: StudentRecordingsProps) {
   const [recordings, setRecordings] = useState<any[]>([]);
   const [availableMonths, setAvailableMonths] = useState<{year: string, month: string}[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
@@ -22,6 +24,7 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, boolean>>({});
+  const [pendingPaymentsList, setPendingPaymentsList] = useState<any[]>([]);
   const [watchHistory, setWatchHistory] = useState<Record<string, any>>({});
   
   // Player State
@@ -70,7 +73,10 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         type === 'recording_added' || 
         type === 'recording_deleted' || 
         type === 'payment_approved' || 
-        type === 'payment_status_changed'
+        type === 'payment_rejected' ||
+        type === 'payment_status_changed' ||
+        type === 'pending_payment_submitted' ||
+        type === 'pending_payment_deleted'
       ) {
         fetchRecordingsAndPayments();
       }
@@ -249,21 +255,13 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
           .in('class_type', studentClasses)
           .order('created_at', { ascending: true }); 
         
-        if (!recError && recData && recData.length > 0) {
+        if (!recError && recData) {
           recDataToUse = recData;
+        } else if (recError) {
+          console.error('StudentRecordings fetch error:', recError);
         }
-      } catch (e) {}
-
-      if (recDataToUse.length === 0) {
-        try {
-          const local = localStorage.getItem('physics_hub_recordings');
-          if (local) {
-            const allLocal: any[] = JSON.parse(local);
-            recDataToUse = allLocal.filter(r => 
-              studentClasses.some(sc => sc.toLowerCase().trim() === (r.class_type || '').toLowerCase().trim())
-            );
-          }
-        } catch (e) {}
+      } catch (e) {
+        console.error('StudentRecordings fetch exception:', e);
       }
 
       setRecordings(recDataToUse);
@@ -340,6 +338,18 @@ export default function StudentRecordings({ student, onBack }: StudentRecordings
         });
       }
       setPaymentStatuses(statusMap);
+
+      // Fetch pending payments for this student
+      try {
+        const allPending = await fetchAllPendingPayments();
+        const mine = allPending.filter(p => 
+          (p.username === student.username || p.student_id === student.id) && 
+          p.status === 'pending'
+        );
+        setPendingPaymentsList(mine);
+      } catch (errPending) {
+        console.warn('Pending payments fetch error:', errPending);
+      }
     } catch (error) {
       console.error("Error fetching recordings & payments:", error);
     }
@@ -628,7 +638,7 @@ const startWatchTimeTracking = async () => {
   ];
 
   return (
-    <div className="bg-slate-950 min-h-screen text-white p-4 md:p-8 animate-in fade-in duration-500">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-white p-4 md:p-8 animate-in fade-in duration-500 transition-colors">
       
       <style>{`
         @keyframes unwatched-glow {
@@ -655,15 +665,15 @@ const startWatchTimeTracking = async () => {
       `}</style>
 
       {/* Header & Filter Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 mb-8 shadow-xl space-y-4">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 md:p-6 mb-8 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <button onClick={onBack} className="bg-slate-800 hover:bg-slate-700 text-white p-2.5 rounded-2xl transition flex items-center justify-center cursor-pointer">
+            <button onClick={onBack} className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white p-2.5 rounded-2xl transition flex items-center justify-center cursor-pointer border border-slate-200 dark:border-slate-700">
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1 className="text-xl md:text-2xl font-black text-amber-400">Class Recordings (පන්ති රෙකෝඩින්)</h1>
-              <p className="text-slate-400 text-xs mt-0.5">ඔබේ පන්තිවල වීඩියෝ රෙකෝඩින් අවුරුද්ද සහ මාසය අනුව පිළිවෙළින් නරඹන්න.</p>
+              <h1 className="text-xl md:text-2xl font-black text-amber-500 dark:text-amber-400">Class Recordings (පන්ති රෙකෝඩින්)</h1>
+              <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5 font-medium">ඔබේ පන්තිවල වීඩියෝ රෙකෝඩින් අවුරුද්ද සහ මාසය අනුව පිළිවෙළින් නරඹන්න.</p>
             </div>
           </div>
 
@@ -676,7 +686,7 @@ const startWatchTimeTracking = async () => {
                 setSelectedMonthFilter('all');
                 setSearchQuery('');
               }}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer border border-slate-200 dark:border-slate-700"
             >
               Reset Filters
             </button>
@@ -687,11 +697,11 @@ const startWatchTimeTracking = async () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
           {/* Class Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">පන්ති වර්ගය (Class)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">පන්ති වර්ගය (Class)</label>
             <select
               value={selectedClassFilter}
               onChange={(e) => setSelectedClassFilter(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
             >
               <option value="all">සියලුම ලියාපදිංචි පන්ති</option>
               {studentClasses.map((cls: string, idx: number) => (
@@ -702,11 +712,11 @@ const startWatchTimeTracking = async () => {
 
           {/* Year Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">වසර (Year)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">වසර (Year)</label>
             <select
               value={selectedYearFilter}
               onChange={(e) => setSelectedYearFilter(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
             >
               <option value="all">සියලුම වසර (All Years)</option>
               {['2024', '2025', '2026', '2027', '2028'].map(y => (
@@ -717,11 +727,11 @@ const startWatchTimeTracking = async () => {
 
           {/* Month Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">මාසය (Month)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">මාසය (Month)</label>
             <select
               value={selectedMonthFilter}
               onChange={(e) => setSelectedMonthFilter(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
             >
               <option value="all">සියලුම මාස (All Months)</option>
               {sinhalaMonthOptions.map(m => (
@@ -732,15 +742,15 @@ const startWatchTimeTracking = async () => {
 
           {/* Search Query */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">සෙවුම (Search)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">සෙවුම (Search)</label>
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-3 text-slate-500" />
+              <Search size={14} className="absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
                 placeholder="රෙකෝඩින් මාතෘකාව..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 text-slate-200 pl-9 pr-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 pl-9 pr-3 py-2.5 rounded-xl focus:outline-none focus:border-amber-500"
               />
             </div>
           </div>
@@ -753,11 +763,25 @@ const startWatchTimeTracking = async () => {
 ) : (
   Object.entries(groupedRecordings).map(([classType, videos]: [string, any]) => (
     <div key={classType} className="mb-10">
-      <h2 className="text-xl font-bold text-emerald-400 mb-4 border-b border-slate-800 pb-2">{classType}</h2>
+      <h2 className="text-xl font-bold text-slate-900 dark:text-emerald-400 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2">{classType}</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {videos.map((video: any) => {
           const isUnlocked = paymentStatuses[`${video.class_type}-${video.year}-${video.month}`] || false;
           
+          // Check if pending verification from pendingPaymentsList
+          const isPending = !isUnlocked && pendingPaymentsList.some(p => {
+            if (p.status !== 'pending') return false;
+            const pClass = String(p.class_type || '').toLowerCase().trim();
+            const vClass = String(video.class_type || '').toLowerCase().trim();
+            const classMatch = pClass === vClass || pClass.includes(vClass) || vClass.includes(pClass);
+            
+            const pMonth = String(p.month || '').trim().toLowerCase();
+            const vYear = String(video.year || '').trim();
+            const vMonth = String(video.month || '').trim().toLowerCase();
+            const monthMatch = pMonth.includes(vMonth) || pMonth === `${vYear}-${vMonth}`;
+            return classMatch && (monthMatch || !p.month);
+          });
+
           const viewRecord = watchHistory[video.id];
           const watchedSeconds = viewRecord ? viewRecord.watched_seconds : 0;
           const videoTotalDuration = video.duration || video.duration_seconds || 3600; 
@@ -775,7 +799,12 @@ const startWatchTimeTracking = async () => {
             <div 
               key={video.id}
               onClick={async () => {
-                if (!isUnlocked) return;
+                if (!isUnlocked) {
+                  if (onOpenPayment) {
+                    onOpenPayment(video.class_type, video.year, video.month);
+                  }
+                  return;
+                }
                 setSelectedVideo(video);
                 setIsReady(false);
                 setHasEnded(false);
@@ -796,10 +825,12 @@ const startWatchTimeTracking = async () => {
               }}
               className={`relative group rounded-2xl overflow-hidden cursor-pointer border-2 transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl ${
                 !isUnlocked 
-                  ? 'border-red-900/40 opacity-75' 
+                  ? isPending 
+                    ? 'border-amber-500/50 bg-amber-500/5 dark:bg-amber-950/10' 
+                    : 'border-rose-400/40 dark:border-red-900/40 bg-rose-50/20 dark:bg-red-950/10' 
                   : watchState === 'unwatched'
-                  ? 'border-emerald-500 animate-unwatched bg-slate-900'
-                  : 'border-slate-800 bg-slate-900 hover:border-blue-500'
+                  ? 'border-emerald-500 animate-unwatched bg-white dark:bg-slate-900'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-blue-500'
               }`}
             >
               <div className="relative aspect-video bg-slate-950">
@@ -813,9 +844,32 @@ const startWatchTimeTracking = async () => {
                 )}
 
                 {!isUnlocked ? (
-                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center p-4">
-                    <Lock className="w-8 h-8 text-red-500 mb-1" />
-                    <span className="text-red-400 font-bold text-xs">ගෙවීම් කර නොමැත</span>
+                  <div className="absolute inset-0 bg-black/75 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center select-none">
+                    {isPending ? (
+                      <div className="flex flex-col items-center gap-1.5 animate-pulse">
+                        <span className="p-2.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                          <Clock className="w-6 h-6 text-amber-400" />
+                        </span>
+                        <span className="text-amber-300 font-black text-xs tracking-wide">
+                          ⏳ පොරොත්තුවේ (Pending Verification)
+                        </span>
+                        <span className="text-[10px] text-slate-300 font-medium">
+                          ඇඩ්මින් විසින් අනුමත කළ විගස අන්ලොක් වේ
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center gap-1.5 group-hover:scale-105 transition-transform">
+                        <span className="p-2.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                          <Lock className="w-6 h-6 text-rose-400" />
+                        </span>
+                        <span className="text-rose-400 font-extrabold text-xs">
+                          🔒 ගෙවීම් කර නොමැත
+                        </span>
+                        <span className="text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-500 px-3 py-1 rounded-full shadow-md mt-1 cursor-pointer">
+                          මුදල් ගෙවීමට මෙතැන ක්ලික් කරන්න →
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -824,20 +878,20 @@ const startWatchTimeTracking = async () => {
                 )}
               </div>
               
-              <div className="p-4 bg-slate-900">
+              <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
                 <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <span className="text-[10px] font-mono font-bold text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
+                  <span className="text-[10px] font-mono font-bold text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
                     📅 {video.year} {video.month}
                   </span>
-                  <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 rounded-md truncate max-w-[140px]">
+                  <span className="text-[10px] font-bold text-blue-700 dark:text-cyan-300 bg-blue-500/15 dark:bg-cyan-500/15 border border-blue-500/30 dark:border-cyan-500/30 px-2 py-0.5 rounded-md truncate max-w-[140px]">
                     {video.class_type}
                   </span>
                 </div>
-                <h3 className="text-white font-medium text-sm line-clamp-1">{video.title}</h3>
+                <h3 className="text-slate-900 dark:text-white font-bold text-sm line-clamp-1">{video.title}</h3>
                 
-                {/* Status Text - Completed පමණක් පෙන්වයි */}
+                {/* Status Text - Completed */}
                 {isUnlocked && watchState === 'completed' && (
-                  <p className="text-emerald-400 font-semibold text-[11px] mt-1">✓ සම්පූර්ණයෙන්ම නරඹා ඇත</p>
+                  <p className="text-emerald-600 dark:text-emerald-400 font-semibold text-[11px] mt-1">✓ සම්පූර්ණයෙන්ම නරඹා ඇත</p>
                 )}
               </div>
             </div>

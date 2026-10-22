@@ -226,7 +226,7 @@ export default function AdminSiteConfig() {
                   type="text" 
                   value={localConfig.directorName || ''} 
                   onChange={(e) => handleChange('directorName', e.target.value)} 
-                  placeholder="තාරක අමරසිංහ (Taraka Amarasinghe)"
+                  placeholder="තාරක අමරසිංහ (Tharaka Amarasinghe)"
                   className="bg-slate-900 text-white w-full px-3.5 py-2 rounded-xl border border-slate-800 text-xs focus:border-blue-500 outline-none" 
                 />
               </div>

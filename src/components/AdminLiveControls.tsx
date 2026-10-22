@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import { emitRealtimeEvent } from '../realtimeSync';
 import { Video, Play, Square, Edit, Plus, Clock, Trash2, FileText, Send, EyeOff, MessageCircle, Eye, UserCheck, RotateCcw } from 'lucide-react';
 import SecurityPasswordModal from './SecurityPasswordModal';
 
@@ -31,6 +32,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
   const [examModalOpen, setExamModalOpen] = useState(false);
   const [currentLiveId, setCurrentLiveId] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGeneratingZoom, setIsGeneratingZoom] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   // Attendance State
@@ -135,23 +137,60 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
     window.open(finalUrl, '_blank');
   };
 
+  const handleRegenerateZoom = async () => {
+    if (!formData.title || !formData.date || !formData.time) {
+      alert("කරුණාකර පළමුව පන්තියේ මාතෘකාව, දිනය සහ වේලාව ඇතුළත් කරන්න.");
+      return;
+    }
+    setIsGeneratingZoom(true);
+    try {
+      const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
+        body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
+      });
+      if (edgeError || !edgeData) {
+        throw new Error(edgeError?.message || 'Zoom API එක මඟින් රැස්වීම නිර්මාණය කළ නොහැකි විය.');
+      }
+      setFormData(prev => ({
+        ...prev,
+        zoom_join_url: edgeData.join_url,
+        zoom_start_url: edgeData.start_url,
+        link: edgeData.join_url
+      }));
+      alert("⚡ Zoom Meeting එක සාර්ථකව ජනනය කරන ලදී!\nMeeting ID: " + edgeData.id);
+    } catch (err: any) {
+      alert("Zoom දෝෂයක්: " + err.message);
+    } finally {
+      setIsGeneratingZoom(false);
+    }
+  };
+
   const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
       let zoomInfo = null;
-      if (!formData.id) {
-        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
-          body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
-        });
-        if (!edgeError) zoomInfo = edgeData;
+      // Auto-invoke Zoom API if creating new session or if links are missing
+      if (!formData.id || (!formData.zoom_start_url && !formData.zoom_join_url)) {
+        try {
+          const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-zoom-meeting', {
+            body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
+          });
+          if (edgeError) {
+            console.error("Zoom API invocation warning:", edgeError);
+          } else if (edgeData) {
+            zoomInfo = edgeData;
+          }
+        } catch (zErr) {
+          console.error("Zoom invocation failed:", zErr);
+        }
       }
 
       const mainClassType = formData.target_classes[0] || 'Theory';
 
-      const zoomJoin = (formData.zoom_join_url || formData.link || (zoomInfo ? zoomInfo.join_url : '')).trim();
-      const zoomStart = (formData.zoom_start_url || (zoomInfo ? zoomInfo.start_url : '')).trim();
+      const zoomJoin = ((zoomInfo ? zoomInfo.join_url : '') || formData.zoom_join_url || formData.link || '').trim();
+      const zoomStart = ((zoomInfo ? zoomInfo.start_url : '') || formData.zoom_start_url || '').trim();
+      const zoomMeetingId = zoomInfo?.id ? String(zoomInfo.id) : ((formData as any).zoom_meeting_id || undefined);
 
       const payload: any = {
         title: formData.title,
@@ -169,8 +208,8 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         zoom_start_url: zoomStart || undefined, // HOST link for Admin/Teacher
         zoom_join_url: zoomJoin || undefined,   // JOIN link for Students
         link: zoomJoin || undefined,
-        ...(zoomInfo && {
-          zoom_meeting_id: String(zoomInfo.id),
+        ...(zoomMeetingId && {
+          zoom_meeting_id: zoomMeetingId,
         })
       };
 
@@ -337,6 +376,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         .eq('date', liveObj.date);
     }
     
+    emitRealtimeEvent('calendar_updated', { liveId: id, status: newStatus });
     await fetchInitialData();
   };
 
@@ -819,45 +859,33 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 </div>
               </div>
 
-              {/* Zoom Meeting Links (Separated strictly between Student Join & Lecturer Host) */}
-              <div className="space-y-3 p-3 bg-slate-950/90 rounded-xl border border-slate-800">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-mono text-blue-400 uppercase font-bold">
-                    Zoom Meeting Links (සූම් ලින්ක්ස්)
-                  </label>
-                  <span className="text-[10px] text-slate-400">
-                    (Auto Generate නොවුණහොත් මෙතැනට ඇතුළත් කරන්න)
-                  </span>
+              {/* Zoom Meeting Links (Auto-generated in background, optional advanced edit) */}
+              {formData.id && (formData.zoom_start_url || formData.zoom_join_url) && (
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-mono font-bold text-blue-400">Zoom Meeting Details</span>
+                    <button
+                      type="button"
+                      disabled={isGeneratingZoom}
+                      onClick={handleRegenerateZoom}
+                      className="px-2.5 py-1 bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 rounded-lg text-xs flex items-center gap-1 transition font-sans cursor-pointer"
+                    >
+                      <RotateCcw size={11} className={isGeneratingZoom ? "animate-spin" : ""} />
+                      {isGeneratingZoom ? "Generating..." : "🔄 Re-generate Zoom"}
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-1 text-[11px] font-mono">
+                    <div className="text-emerald-400 flex items-center justify-between">
+                      <span>Student Join Link:</span>
+                      <span className="text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_join_url || formData.link}</span>
+                    </div>
+                    <div className="text-amber-400 flex items-center justify-between">
+                      <span>Teacher Host Link:</span>
+                      <span className="text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_start_url}</span>
+                    </div>
+                  </div>
                 </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-300 mb-1 flex items-center justify-between">
-                    <span>🔗 Zoom Join Link <strong className="text-emerald-400">(සිසුන් සඳහා - Student Join)</strong></span>
-                    <span className="text-[10px] text-emerald-500 font-mono">ශිෂ්‍ය Dashboard එකට ස්වයංක්‍රීයව ලැබේ</span>
-                  </label>
-                  <input 
-                    type="url" 
-                    placeholder="https://us05web.zoom.us/j/... (සිසුන්ට ලැබෙන Join Link එක)"
-                    value={formData.zoom_join_url} 
-                    onChange={e => setFormData({...formData, zoom_join_url: e.target.value, link: e.target.value})} 
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-white text-xs font-mono focus:border-blue-500" 
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-slate-300 mb-1 flex items-center justify-between">
-                    <span>👑 Zoom Host / Start Link <strong className="text-amber-400">(ලෙක්චරට / ඇඩ්මින්ට පමණි - Host Link)</strong></span>
-                    <span className="text-[10px] text-amber-500 font-mono">ගුරුවරයාට පමණක් ලැබේ (සිසුන්ට නොපෙනේ)</span>
-                  </label>
-                  <input 
-                    type="url" 
-                    placeholder="https://us05web.zoom.us/s/... (ගුරුවරයාට ලැබෙන Host Start Link එක)"
-                    value={formData.zoom_start_url} 
-                    onChange={e => setFormData({...formData, zoom_start_url: e.target.value})} 
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-white text-xs font-mono focus:border-blue-500" 
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 mt-6">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>

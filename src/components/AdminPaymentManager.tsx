@@ -1,7 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Search, X, Plus, MessageCircle, Bell, LayoutDashboard } from 'lucide-react';
-import { subscribeRealtimeEvents } from '../realtimeSync';
+import { subscribeRealtimeEvents, emitRealtimeEvent } from '../realtimeSync';
+
+const dispatchBroadcast = async (channelName: string, event: string, payload: any) => {
+  try {
+    const channel = supabase.channel(channelName);
+    if (typeof (channel as any).httpSend === 'function') {
+      await (channel as any).httpSend({
+        type: 'broadcast',
+        event,
+        payload
+      });
+    } else {
+      await channel.send({
+        type: 'broadcast',
+        event,
+        payload
+      });
+    }
+    supabase.removeChannel(channel);
+  } catch (err) {
+    console.warn('Realtime broadcast error:', err);
+  }
+};
 
 const parseStudentClasses = (classTypes: any): string[] => {
   if (!classTypes) return [];
@@ -127,13 +149,8 @@ export default function PaymentManager() {
       console.error("Payment status save failed:", error);
       alert("දත්ත සුරැකීමේදී දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
     } else {
-      const channel = supabase.channel(`student_dashboard_${studentId}`);
-      await channel.send({
-        type: 'broadcast',
-        event: 'payment_updated',
-        payload: { studentId, monthKey, className, status }
-      });
-      supabase.removeChannel(channel);
+      await dispatchBroadcast(`student_dashboard_${studentId}`, 'payment_updated', { studentId, monthKey, className, status });
+      emitRealtimeEvent('payment_status_changed', { studentId, monthKey, className, status });
     }
   };
 
@@ -185,13 +202,8 @@ export default function PaymentManager() {
             });
           }
           
-          const channel = supabase.channel(`student_dashboard_${studentId}`);
-          await channel.send({
-            type: 'broadcast',
-            event: 'reminder_updated',
-            payload: { studentId, monthKey, className: cName }
-          });
-          supabase.removeChannel(channel);
+          await dispatchBroadcast(`student_dashboard_${studentId}`, 'reminder_updated', { studentId, monthKey, className: cName });
+          emitRealtimeEvent('reminder_sent', { studentId, monthKey, className: cName });
 
           sentCount++;
         }
@@ -252,13 +264,7 @@ export default function PaymentManager() {
             return [...prev, { record_id: recordId, student_id: student.id, month: monthKey, class_type: cName, status: currentStatus, whatsapp_sent: true }];
           });
           
-          const channel = supabase.channel(`student_dashboard_${student.id}`);
-          await channel.send({
-            type: 'broadcast',
-            event: 'whatsapp_status_updated',
-            payload: { studentId: student.id, monthKey, className: cName }
-          });
-          supabase.removeChannel(channel);
+          await dispatchBroadcast(`student_dashboard_${student.id}`, 'whatsapp_status_updated', { studentId: student.id, monthKey, className: cName });
         }
       }
     }
@@ -271,13 +277,8 @@ export default function PaymentManager() {
     if (error) {
       console.error("Error updating student classes:", error);
     } else {
-      const channel = supabase.channel(`student_dashboard_${studentId}`);
-      await channel.send({
-        type: 'broadcast',
-        event: 'student_classes_updated',
-        payload: { studentId, newClasses }
-      });
-      supabase.removeChannel(channel);
+      await dispatchBroadcast(`student_dashboard_${studentId}`, 'student_classes_updated', { studentId, newClasses });
+      emitRealtimeEvent('student_updated', { studentId, newClasses });
     }
   };
 

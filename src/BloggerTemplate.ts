@@ -4,12 +4,12 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
 <head>
   <meta charset='UTF-8' />
   <meta content='width=device-width, initial-scale=1.0' name='viewport' />
-  <title>Taraka Amarasinghe | Physics Online Hub</title>
+  <title>Tharaka Amarasinghe | Physics Online Hub</title>
   
   <!-- Blogger Essential Skin -->
   <b:skin><![CDATA[
     /* 
-    * Taraka Amarasinghe - Physics Online Learning Hub
+    * Tharaka Amarasinghe - Physics Online Learning Hub
     * Standard Blogger XHTML Skin
     */
     body {
@@ -1140,7 +1140,7 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
         <img src='/logo.png' class='brand-logo-circle' alt='Logo' style='object-fit: cover; background: white;' onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
         <div class='brand-logo-circle' style='display:none;'>Ω</div>
         <div>
-          <div class='brand-title'>Taraka Amarasinghe</div>
+          <div class='brand-title'>Tharaka Amarasinghe</div>
           <div class='brand-subtitle'>Physics Online Learning Hub</div>
         </div>
       </div>
@@ -1187,10 +1187,10 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
           <div class='hero-panel'>
             <div class='panel-badge'>Physics (Theory &amp; Revision)</div>
             <div class='teacher-portrait-area'>
-              <img src='/teacher.png' class='teacher-img' alt='Taraka Amarasinghe' onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+              <img src='/teacher.png' class='teacher-img' alt='Tharaka Amarasinghe' onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
               <div style='display:none; background-color:#1e293b; border-radius:50%; width:100%; height:100%; align-items:center; justify-content:center; font-family:"Space Grotesk", sans-serif; font-size:3rem; font-weight:700; color:var(--primary); box-shadow:0 0 10px rgba(0,0,0,0.5);'>TA</div>
             </div>
-            <div class='teacher-name'>Taraka Amarasinghe</div>
+            <div class='teacher-name'>Tharaka Amarasinghe</div>
             <div class='teacher-title'>B.Sc (Hon's) University of Peradeniya | Physics Tutor</div>
             <div class='teacher-quote-box'>
               <p class='teacher-quote'>
@@ -1689,7 +1689,7 @@ export const BLOGGER_TEMPLATE_CODE = `<?xml version="1.0" encoding="UTF-8" ?>
         <a class='footer-link' onclick='switchView("freeView")'>Free Notes</a>
       </div>
       <div class='footer-credits'>
-        <p>© 2026 Taraka Amarasinghe Physics Online. All rights reserved.</p>
+        <p>© 2026 Tharaka Amarasinghe Physics Online. All rights reserved.</p>
         <p style='font-size: 0.7rem; color: #334155; margin-top: 10px;'>Professional learning environment built with 100% XHTML SAX validation</p>
       </div>
     </footer>

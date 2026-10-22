@@ -1,33 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { subscribeRealtimeEvents } from '../realtimeSync';
+import { fetchAllPendingPayments } from '../pendingPaymentsService';
 import { 
   FileText, Calendar, EyeOff, Search, Filter, ShieldCheck, 
-  X, Maximize2, ShieldAlert, Sparkles, BookOpen, ChevronRight
+  X, Maximize2, ShieldAlert, Sparkles, BookOpen, ChevronRight,
+  Clock, Lock, Download
 } from 'lucide-react';
 
 interface Props {
   currentStudent: any;
   isPaid: boolean;
+  paymentHistory?: Record<string, { monthKey: string; monthName: string; status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>;
+  onOpenPayment?: (classType: string, targetMonth: string) => void;
 }
 
-export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
-  const [resources, setResources] = useState<any[]>(() => {
-    try {
-      const raw = localStorage.getItem('physics_hub_tutes');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem('physics_hub_tutes');
-      return !(raw && JSON.parse(raw).length > 0);
-    } catch {
-      return true;
-    }
-  });
+export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPaid, paymentHistory, onOpenPayment }: Props) {
+  const [resources, setResources] = useState<any[]>([]);
+  const [pendingPaymentsList, setPendingPaymentsList] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
@@ -59,7 +50,14 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
 
     // Subscribe to realtime updates
     const unsub = subscribeRealtimeEvents((type) => {
-      if (type === 'tute_added' || type === 'tute_deleted') {
+      if (
+        type === 'tute_added' || 
+        type === 'tute_deleted' ||
+        type === 'payment_approved' ||
+        type === 'payment_rejected' ||
+        type === 'pending_payment_submitted' ||
+        type === 'pending_payment_deleted'
+      ) {
         fetchResources();
       }
     });
@@ -80,34 +78,33 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
   }, [currentStudent?.id, currentStudent?.username, JSON.stringify(currentStudent?.class_types || currentStudent?.classTypes)]);
 
   const fetchResources = async () => {
-    // Only show loading if we don't have any items yet
-    if (resources.length === 0) {
-      setIsLoading(true);
-    }
     try {
-      // 1. Try Supabase
       const { data, error } = await supabase
         .from('class_resources')
         .select('*')
         .in('type', ['tute', 'paper'])
         .order('created_at', { ascending: false });
 
-      if (data && !error && data.length > 0) {
+      if (error) {
+        console.warn('Remote tutes fetch error:', error);
+      }
+      if (data) {
         setResources(data);
-        localStorage.setItem('physics_hub_tutes', JSON.stringify(data));
-        return;
       }
     } catch (err) {
-      console.warn('Remote tutes fetch error:', err);
+      console.warn('Remote tutes fetch exception:', err);
     } finally {
       setIsLoading(false);
     }
 
-    // 2. Fallback to localStorage
+    // 2. Fetch pending payments for this student
     try {
-      const local = localStorage.getItem('physics_hub_tutes');
-      if (local) setResources(JSON.parse(local));
-    } catch (e) {}
+      const allPending = await fetchAllPendingPayments();
+      const sUsername = currentStudent?.username;
+      const sId = currentStudent?.id;
+      const mine = allPending.filter(p => (p.username === sUsername || p.student_id === sId) && p.status === 'pending');
+      setPendingPaymentsList(mine);
+    } catch (err) {}
   };
 
   // Student enrolled classes
@@ -135,6 +132,34 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
     // If already has preview
     if (clean.includes('/preview')) return clean;
     return clean;
+  };
+
+  // Helper to convert Google Drive or file URL to direct download link
+  const getDirectDownloadUrl = (url: string) => {
+    if (!url) return '';
+    const clean = url.trim();
+    const matchD = clean.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (matchD && matchD[1]) {
+      return `https://drive.google.com/uc?export=download&id=${matchD[1]}`;
+    }
+    const matchId = clean.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (matchId && matchId[1]) {
+      return `https://drive.google.com/uc?export=download&id=${matchId[1]}`;
+    }
+    return clean;
+  };
+
+  // Helper to check if student is permitted to download this tute/paper
+  const isResourceDownloadAllowed = (asset: any): boolean => {
+    if (!asset) return false;
+    if (asset.allow_download === true || asset.allow_download === 'true') return true;
+    if (typeof asset.description === 'string' && asset.description.includes('[ALLOW_DOWNLOAD]')) return true;
+    return false;
+  };
+
+  const getCleanDescription = (desc: string) => {
+    if (!desc) return '';
+    return desc.replace('[ALLOW_DOWNLOAD]', '').trim();
   };
 
   // Filter resources
@@ -200,10 +225,6 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
   }, {});
 
   const handleOpenSecureViewer = (doc: any) => {
-    if (!isPaid) {
-      alert("මෙම ලේඛනය ලබා ගැනීමට කරුණාකර අදාළ මාසයේ පන්ති ගාස්තු ගෙවා සක්‍රිය කරගන්න.");
-      return;
-    }
     if (!doc.link) {
       alert("වලංගු ලේඛන ලින්ක් එකක් ඇතුළත් කර නොමැත.");
       return;
@@ -215,29 +236,29 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
     <div className="space-y-6 animate-in fade-in duration-300">
       
       {/* Header & Filter Controls Bar */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 md:p-6 shadow-xl space-y-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 md:p-6 shadow-sm space-y-4">
         
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-500/15 border border-blue-500/30 rounded-2xl text-blue-400">
+            <div className="p-3 bg-blue-500/15 border border-blue-500/30 rounded-2xl text-blue-500 dark:text-blue-400">
               <FileText size={24} />
             </div>
             <div>
-              <h3 className="font-black text-lg md:text-xl text-white">
+              <h3 className="font-black text-lg md:text-xl text-slate-900 dark:text-white">
                 ටියුට් සහ ප්‍රශ්න පත්‍ර (Tutes &amp; Papers)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">
                 ඔබ තෝරාගෙන ඇති පන්ති වර්ගයන්ට අදාළ නිල Google Drive ලේඛන සහ ප්‍රශ්න පත්‍ර මෙතැනින් ආරක්ෂිතව කියවන්න.
               </p>
             </div>
           </div>
 
           {/* Type Switcher */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 self-start sm:self-auto">
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-950 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 self-start sm:self-auto">
             <button
               onClick={() => setFilterType('all')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                filterType === 'all' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                filterType === 'all' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               සියල්ල (All)
@@ -245,7 +266,7 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
             <button
               onClick={() => setFilterType('tute')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                filterType === 'tute' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                filterType === 'tute' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               ටියුට් (Tutes)
@@ -253,7 +274,7 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
             <button
               onClick={() => setFilterType('paper')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                filterType === 'paper' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-400 hover:text-white'
+                filterType === 'paper' ? 'bg-rose-600 text-white shadow-md' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               පේපර්ස් (Papers)
@@ -266,11 +287,11 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
           
           {/* 1. Class Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">පන්ති වර්ගය (Class)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">පන්ති වර්ගය (Class)</label>
             <select
               value={selectedClassFilter}
               onChange={(e) => setSelectedClassFilter(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
             >
               <option value="all">සියලුම ලියාපදිංචි පන්ති</option>
               {studentClasses.map((cls, idx) => (
@@ -281,11 +302,11 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
 
           {/* 2. Year Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">වසර (Year)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">වසර (Year)</label>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
             >
               <option value="all">සියලුම වසර (All Years)</option>
               {years.map(y => <option key={y} value={y}>{y}</option>)}
@@ -294,11 +315,11 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
 
           {/* 3. Month Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">මාසය (Month)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">මාසය (Month)</label>
             <select
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 text-xs font-bold px-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
             >
               <option value="all">සියලුම මාස (All Months)</option>
               {months.map(m => <option key={m.num} value={m.num}>{m.name}</option>)}
@@ -307,15 +328,15 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
 
           {/* 4. Search Filter */}
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-1">සෙවුම (Search)</label>
+            <label className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider block mb-1">සෙවුම (Search)</label>
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-3 text-slate-500" />
+              <Search size={14} className="absolute left-3 top-3 text-slate-400" />
               <input
                 type="text"
                 placeholder="ටියුට් නම සොයන්න..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs pl-9 pr-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-200 text-xs pl-9 pr-3 py-2.5 rounded-xl focus:outline-none focus:border-blue-500"
               />
             </div>
           </div>
@@ -326,14 +347,14 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
 
       {/* Main Documents Stream Organized by Class & Month */}
       {isLoading ? (
-        <div className="p-16 text-center text-slate-400 text-xs">
+        <div className="p-16 text-center text-slate-500 dark:text-slate-400 text-xs">
           ටියුට් සහ ලේඛන පූරණය වෙමින් පවතී...
         </div>
       ) : filteredList.length === 0 ? (
-        <div className="p-16 bg-slate-900 border border-slate-800 rounded-3xl text-center space-y-3">
-          <FileText size={42} className="mx-auto text-slate-600" />
-          <h4 className="text-base font-extrabold text-slate-300">කිසිදු ටියුට් හෝ ප්‍රශ්න පත්‍රයක් හමු නොවීය</h4>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
+        <div className="p-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl text-center space-y-3 shadow-sm">
+          <FileText size={42} className="mx-auto text-slate-400 dark:text-slate-600" />
+          <h4 className="text-base font-extrabold text-slate-800 dark:text-slate-300">කිසිදු ටියුට් හෝ ප්‍රශ්න පත්‍රයක් හමු නොවීය</h4>
+          <p className="text-xs text-slate-600 dark:text-slate-500 max-w-md mx-auto font-medium">
             ඔබ තෝරාගත් පන්ති වර්ගය, වසර හෝ මාසය සඳහා මෙතෙක් ටියුට් හෝ පේපර්ස් ඇතුළත් කර නොමැත.
           </p>
         </div>
@@ -343,12 +364,12 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
             <div key={className} className="space-y-4">
               
               {/* Class Group Header */}
-              <div className="flex items-center gap-2.5 border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-2.5 border-b border-slate-200 dark:border-slate-800 pb-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-                <h4 className="text-base font-black text-white">
+                <h4 className="text-base font-black text-slate-900 dark:text-white">
                   {className}
                 </h4>
-                <span className="text-xs font-mono font-bold text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-md">
+                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-md">
                   {docs.length} Items
                 </span>
               </div>
@@ -357,11 +378,54 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {docs.map((asset) => {
                   const isTute = asset.type === 'tute';
+                  const targetClass = asset.target_classes?.[0] || className;
+                  const targetMonth = asset.target_month || '';
+
+                  // Determine if this item is unlocked
+                  let isItemUnlocked = defaultIsPaid;
+                  if (currentStudent?.plan_type?.toLowerCase() === 'free') {
+                    isItemUnlocked = true;
+                  } else if (paymentHistory && paymentHistory[targetClass]) {
+                    const mRecord = paymentHistory[targetClass].find(m => 
+                      m.monthKey === targetMonth || (targetMonth && (targetMonth.includes(m.monthKey) || targetMonth.includes(m.monthName)))
+                    );
+                    if (mRecord) {
+                      isItemUnlocked = mRecord.status === 'Paid' || mRecord.status === 'Free';
+                    }
+                  }
+
+                  // Check if pending verification
+                  const isPending = !isItemUnlocked && pendingPaymentsList.some(p => {
+                    if (p.status !== 'pending') return false;
+                    const pClass = String(p.class_type || '').toLowerCase().trim();
+                    const tClass = String(targetClass || '').toLowerCase().trim();
+                    const classMatch = pClass === tClass || pClass.includes(tClass) || tClass.includes(pClass);
+                    
+                    const pMonth = String(p.month || '').trim().toLowerCase();
+                    const tMonthClean = String(targetMonth || '').trim().toLowerCase();
+                    const monthMatch = !pMonth || !tMonthClean || pMonth === tMonthClean || tMonthClean.includes(pMonth) || pMonth.includes(tMonthClean);
+                    return classMatch && monthMatch;
+                  });
 
                   return (
                     <div 
                       key={asset.id} 
-                      className="p-5 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-lg group select-none"
+                      onClick={() => {
+                        if (!isItemUnlocked) {
+                          if (onOpenPayment) {
+                            onOpenPayment(targetClass, targetMonth);
+                          }
+                          return;
+                        }
+                        handleOpenSecureViewer(asset);
+                      }}
+                      className={`p-5 rounded-3xl flex flex-col justify-between gap-4 transition shadow-md group select-none cursor-pointer border ${
+                        !isItemUnlocked
+                          ? isPending
+                            ? 'bg-amber-500/5 dark:bg-amber-950/15 border-amber-500/40'
+                            : 'bg-rose-50/20 dark:bg-red-950/10 border-rose-200 dark:border-red-900/40 hover:border-rose-400'
+                          : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800 hover:border-blue-400'
+                      }`}
                       onContextMenu={(e) => e.preventDefault()}
                     >
                       <div className="space-y-2.5">
@@ -369,47 +433,78 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className={`text-[10px] font-black px-2.5 py-1 rounded-xl uppercase border ${
                             isTute 
-                              ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' 
-                              : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30' 
+                              : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30'
                           }`}>
                             {isTute ? '📚 ටියුට් (Tute)' : '📝 පේපර් (Paper)'}
                           </span>
 
                           {asset.target_month && (
-                            <span className="text-[11px] font-mono font-bold text-slate-300 bg-slate-950 border border-slate-800 px-2.5 py-0.5 rounded-lg">
+                            <span className="text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-0.5 rounded-lg">
                               📅 {asset.target_month}
                             </span>
                           )}
                         </div>
 
-                        <h4 className="font-extrabold text-sm text-white group-hover:text-blue-300 transition leading-snug line-clamp-2">
+                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-300 transition leading-snug line-clamp-2">
                           {asset.title}
                         </h4>
 
                         {asset.description && (
-                          <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                            {asset.description}
+                          <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                            {getCleanDescription(asset.description)}
                           </p>
                         )}
                       </div>
 
-                      {/* Secure In-App View Button (No direct download or share) */}
-                      <button
-                        onClick={() => handleOpenSecureViewer(asset)}
-                        disabled={!isPaid}
-                        className={`w-full py-3 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none ${
-                          !isPaid 
-                            ? 'bg-slate-950 border border-slate-800 text-slate-600 cursor-not-allowed' 
-                            : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-900/40'
-                        }`}
-                        title="ආරක්ෂිතව කියවන්න"
-                      >
-                        {!isPaid ? (
-                          <><EyeOff size={15} /> Locked (ගාස්තු ගෙවා නොමැත)</>
+                      {/* In-App View, 1-Touch Download or Payment Action */}
+                      <div>
+                        {isItemUnlocked ? (
+                          <div className="space-y-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenSecureViewer(asset);
+                              }}
+                              className="w-full py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-900/20"
+                              title="ආරක්ෂිතව කියවන්න"
+                            >
+                              <ShieldCheck size={16} /> ආරක්ෂිතව කියවන්න (Secure View)
+                            </button>
+
+                            {isResourceDownloadAllowed(asset) && (
+                              <a
+                                href={getDirectDownloadUrl(asset.link)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                download
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-full py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/20 border border-emerald-500/40"
+                                title="එක් ටච් එකෙන් PDF එක බාගත කරන්න"
+                              >
+                                <Download size={15} /> 📥 Download PDF (1-Touch)
+                              </a>
+                            )}
+                          </div>
+                        ) : isPending ? (
+                          <div className="w-full py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 animate-pulse">
+                            <Clock size={15} /> ⏳ පොරොත්තුවේ (Pending Verification)
+                          </div>
                         ) : (
-                          <><ShieldCheck size={16} /> ආරක්ෂිතව කියවන්න (Secure View)</>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onOpenPayment) onOpenPayment(targetClass, targetMonth);
+                            }}
+                            className="w-full py-3 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-900/20"
+                            title="ගෙවීම් කිරීමට ක්ලික් කරන්න"
+                          >
+                            <Lock size={15} /> 🔒 ගෙවීම් කර නොමැත - ගෙවීමට මෙතැන ක්ලික් කරන්න
+                          </button>
                         )}
-                      </button>
+                      </div>
 
                     </div>
                   );
@@ -448,12 +543,24 @@ export default function TutsPapersManager({ currentStudent, isPaid }: Props) {
                     <span className="text-emerald-400 font-bold flex items-center gap-1">
                       🛡️ ආරක්ෂිත කියවීමේ මාදිලිය (Protected View)
                     </span>
-                    <span>• Download &amp; Share Restricted</span>
+                    <span>• {isResourceDownloadAllowed(activeViewerDoc) ? 'Download Enabled' : 'Download & Share Restricted'}</span>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
+                {isResourceDownloadAllowed(activeViewerDoc) && (
+                  <a
+                    href={getDirectDownloadUrl(activeViewerDoc.link)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    download
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow"
+                    title="PDF එක Download කරන්න"
+                  >
+                    <Download size={14} /> Download PDF
+                  </a>
+                )}
                 <button
                   onClick={() => setActiveViewerDoc(null)}
                   className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition cursor-pointer"

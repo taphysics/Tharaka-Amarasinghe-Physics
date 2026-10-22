@@ -24,7 +24,8 @@ import {
   Moon,
   Smartphone,
   Maximize2,
-  X
+  X,
+  BookOpen
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { emitRealtimeEvent, subscribeRealtimeEvents } from '../realtimeSync';
@@ -52,10 +53,14 @@ export default function QrGenerator() {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
-  const [teacherName, setTeacherName] = useState('තාරක අමරසිංහ (Taraka Amarasinghe)');
+  const [teacherName, setTeacherName] = useState('තාරක අමරසිංහ (Tharaka Amarasinghe)');
   const [contactPhone, setContactPhone] = useState('0779630100');
   const [contactAddress, setContactAddress] = useState('Kandy & Online Islandwide');
   const [isActive, setIsActive] = useState(true);
+
+  // Campaign Selected Classes Filter
+  const [allAvailableClasses, setAllAvailableClasses] = useState<string[]>([]);
+  const [selectedCampaignClasses, setSelectedCampaignClasses] = useState<string[]>([]);
 
   // Social Links Builder
   const [socialLinks, setSocialLinks] = useState<SocialLinkItem[]>([]);
@@ -81,6 +86,38 @@ export default function QrGenerator() {
   // Helper to validate UUID
   const isUuid = (str?: string) => Boolean(str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str));
 
+  // Fetch all available classes from class_types_config
+  const fetchClassConfigs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('class_types_config')
+        .select('class_type')
+        .eq('is_active', true)
+        .order('class_type', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const names = data.map((c: any) => c.class_type).filter(Boolean);
+        setAllAvailableClasses(names);
+      } else {
+        setAllAvailableClasses([
+          '2026 Revision',
+          '2026 Theory',
+          '2027 Paper Class',
+          '2027 Theory',
+          '2028 Theory'
+        ]);
+      }
+    } catch (e) {
+      setAllAvailableClasses([
+        '2026 Revision',
+        '2026 Theory',
+        '2027 Paper Class',
+        '2027 Theory',
+        '2028 Theory'
+      ]);
+    }
+  };
+
   // Fetch all pages
   const fetchPages = async () => {
     try {
@@ -91,23 +128,41 @@ export default function QrGenerator() {
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        const parsed: BannerLandingPageData[] = data.map((d: any) => ({
-          id: d.id,
-          slug: d.slug,
-          title: d.title || '',
-          description: d.description || '',
-          teacher_name: d.teacher_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
-          contact_phone: d.contact_phone || '0779630100',
-          whatsapp_number: d.whatsapp_number || d.contact_phone || '0779630100',
-          contact_address: d.contact_address || 'Kandy & Online Islandwide',
-          banner_image: d.banner_image || '',
-          social_links: typeof d.social_links === 'string' ? JSON.parse(d.social_links) : d.social_links || [],
-          whatsapp_groups: typeof d.whatsapp_groups === 'string' ? JSON.parse(d.whatsapp_groups) : d.whatsapp_groups || [],
-          is_active: d.is_active !== false,
-          view_count: d.view_count || 0,
-          created_at: d.created_at,
-          updated_at: d.updated_at
-        }));
+        const parsed: BannerLandingPageData[] = data.map((d: any) => {
+          const rawSocials = typeof d.social_links === 'string' ? JSON.parse(d.social_links) : d.social_links || [];
+          let selClasses: string[] = [];
+          if (Array.isArray(d.selected_classes)) {
+            selClasses = d.selected_classes;
+          } else if (typeof d.selected_classes === 'string') {
+            try { selClasses = JSON.parse(d.selected_classes); } catch (e) {}
+          }
+          if (selClasses.length === 0 && Array.isArray(rawSocials)) {
+            const cItem = rawSocials.find((s: any) => s.id === '__classes__' || s.platform === 'classes');
+            if (cItem && cItem.label) {
+              try { selClasses = JSON.parse(cItem.label); } catch (e) {}
+            }
+          }
+          const cleanSocials = Array.isArray(rawSocials) ? rawSocials.filter((s: any) => s.id !== '__classes__' && s.platform !== 'classes') : [];
+
+          return {
+            id: d.id,
+            slug: d.slug,
+            title: d.title || '',
+            description: d.description || '',
+            teacher_name: d.teacher_name || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
+            contact_phone: d.contact_phone || '0779630100',
+            whatsapp_number: d.whatsapp_number || d.contact_phone || '0779630100',
+            contact_address: d.contact_address || 'Kandy & Online Islandwide',
+            banner_image: d.banner_image || '',
+            social_links: cleanSocials,
+            whatsapp_groups: typeof d.whatsapp_groups === 'string' ? JSON.parse(d.whatsapp_groups) : d.whatsapp_groups || [],
+            selected_classes: selClasses,
+            is_active: d.is_active !== false,
+            view_count: d.view_count || 0,
+            created_at: d.created_at,
+            updated_at: d.updated_at
+          };
+        });
         setPages(parsed);
         localStorage.setItem('physics_banner_landing_pages', JSON.stringify(parsed));
         return;
@@ -129,7 +184,7 @@ export default function QrGenerator() {
         slug: '2026-theory-physical',
         title: '2026 A/L Theory Physical Class - Kandy',
         description: 'තාරක අමරසිංහ සර්ගේ 2026 සිද්ධාන්ත පන්තිය සඳහා සම්බන්ධ වීමට QR කේතය ස්කෑන් කර හෝ මෙතැනින් නව WhatsApp සමූහයට එක්වන්න.',
-        teacher_name: 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+        teacher_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
         contact_phone: '0779630100',
         whatsapp_number: '0779630100',
         contact_address: 'Kandy & Online Islandwide',
@@ -142,6 +197,7 @@ export default function QrGenerator() {
         whatsapp_groups: [
           { id: 'g1', title: '2026 Theory Kandy Group 01', description: 'අලුතෙන් එක්වන සිසුන් සඳහා නිල WhatsApp සමූහය', url: 'https://chat.whatsapp.com/demo2026' }
         ],
+        selected_classes: ['2026 Theory'],
         is_active: true,
         view_count: 48,
         created_at: new Date().toISOString()
@@ -152,6 +208,7 @@ export default function QrGenerator() {
   };
 
   useEffect(() => {
+    fetchClassConfigs();
     fetchPages().finally(() => setLoading(false));
 
     // Live continuous sync interval (every 3 seconds for 100% accurate view counter sync)
@@ -161,8 +218,9 @@ export default function QrGenerator() {
 
     // Subscribe to realtime broadcast events
     const unsub = subscribeRealtimeEvents((type) => {
-      if (type === 'banner_page_viewed' || type === 'banner_page_updated') {
+      if (type === 'banner_page_viewed' || type === 'banner_page_updated' || type === 'class_types_updated') {
         fetchPages();
+        fetchClassConfigs();
       }
     });
 
@@ -230,12 +288,13 @@ export default function QrGenerator() {
     setTitle('');
     setSlug('');
     setDescription('');
-    setTeacherName('තාරක අමරසිංහ (Taraka Amarasinghe)');
+    setTeacherName('තාරක අමරසිංහ (Tharaka Amarasinghe)');
     setContactPhone('0779630100');
     setContactAddress('Kandy & Online Islandwide');
     setIsActive(true);
     setSocialLinks([]);
     setWhatsappGroups([]);
+    setSelectedCampaignClasses([]);
   };
 
   // Load into editor
@@ -244,12 +303,13 @@ export default function QrGenerator() {
     setTitle(p.title);
     setSlug(p.slug);
     setDescription(p.description || '');
-    setTeacherName(p.teacher_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)');
+    setTeacherName(p.teacher_name || 'තාරක අමරසිංහ (Tharaka Amarasinghe)');
     setContactPhone(p.contact_phone || '0779630100');
     setContactAddress(p.contact_address || '');
     setIsActive(p.is_active);
     setSocialLinks(p.social_links || []);
     setWhatsappGroups(p.whatsapp_groups || []);
+    setSelectedCampaignClasses(p.selected_classes || []);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -281,18 +341,30 @@ export default function QrGenerator() {
       slug: cleanSlug,
       title: title.trim(),
       description: description.trim(),
-      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
       contact_phone: contactPhone.trim() || '0779630100',
       whatsapp_number: contactPhone.trim() || '0779630100',
       contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
       social_links: socialLinks,
       whatsapp_groups: whatsappGroups,
+      selected_classes: selectedCampaignClasses,
       is_active: isActive,
       view_count: editingId ? (pages.find(p => p.id === editingId || p.slug === cleanSlug)?.view_count || 0) : 0,
       updated_at: new Date().toISOString()
     };
 
     // Save to Supabase matching EXACT existing columns of banner_landing_pages table
+    // Encode selected_classes into social_links metadata so it safely persists in Supabase schema without errors
+    const socialsWithClasses = [
+      ...socialLinks.filter(s => s.id !== '__classes__' && s.platform !== 'classes'),
+      ...(selectedCampaignClasses.length > 0 ? [{
+        id: '__classes__',
+        platform: 'classes',
+        label: JSON.stringify(selectedCampaignClasses),
+        url: ''
+      }] : [])
+    ];
+
     let savedToDb = false;
     let dbErrorMsg = '';
 
@@ -301,12 +373,12 @@ export default function QrGenerator() {
       slug: cleanSlug,
       title: title.trim(),
       description: description.trim(),
-      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
       contact_phone: contactPhone.trim() || '0779630100',
       whatsapp_number: contactPhone.trim() || '0779630100',
       contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
       banner_image: '',
-      social_links: socialLinks,
+      social_links: socialsWithClasses,
       whatsapp_groups: whatsappGroups,
       is_active: isActive,
       view_count: pagePayload.view_count,
@@ -525,7 +597,7 @@ export default function QrGenerator() {
     slug: slug.trim() || 'preview',
     title: title.trim() || '2026 A/L Physics Theory & Revision Class',
     description: description.trim() || 'තාරක අමරසිංහ සර් විසින් මෙහෙයවනු ලබන දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පන්තියට සම්බන්ධ වීමට පහත WhatsApp සමූහයට එක්වන්න.',
-    teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+    teacher_name: teacherName.trim() || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
     contact_phone: contactPhone.trim() || '0779630100',
     whatsapp_number: contactPhone.trim() || '0779630100',
     contact_address: contactAddress.trim() || 'Kandy & Online Islandwide',
@@ -652,6 +724,87 @@ export default function QrGenerator() {
                 onChange={(e) => setDescription(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl text-xs bg-slate-950 border border-slate-800 text-white focus:border-blue-500 focus:outline-none"
               />
+            </div>
+
+            {/* Campaign Selected Classes (Display only these classes on generated landing page) */}
+            <div className="p-4 bg-slate-900/70 rounded-2xl border border-purple-500/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded-lg bg-purple-500/20 text-purple-400">
+                    <BookOpen size={15} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                      ප්‍රචාරක පිටුවේ පෙන්විය යුතු පන්ති වර්ග (Classes to Display on Landing Page) *
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      මෙම ප්‍රචාරක පිටුවේ සහ QR කේතය ස්කෑන් කල විට සිසුන්ට පෙන්විය යුතු පන්ති තෝරන්න.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaignClasses([...allAvailableClasses])}
+                    className="text-[10px] text-blue-400 hover:text-blue-300 font-bold bg-blue-500/15 border border-blue-500/30 px-2 py-1 rounded-lg cursor-pointer transition"
+                  >
+                    සියල්ල තෝරන්න
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaignClasses([])}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 font-bold bg-rose-500/15 border border-rose-500/30 px-2 py-1 rounded-lg cursor-pointer transition"
+                  >
+                    ඉවත් කරන්න
+                  </button>
+                </div>
+              </div>
+
+              {allAvailableClasses.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">පන්ති ලැයිස්තුව පූරණය වෙමින් පවතී...</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
+                  {allAvailableClasses.map((clsName) => {
+                    const isChecked = selectedCampaignClasses.includes(clsName);
+                    return (
+                      <label
+                        key={clsName}
+                        className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                          isChecked 
+                            ? 'bg-purple-600/20 border-purple-500 text-white shadow-sm shadow-purple-900/20' 
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedCampaignClasses(prev => [...prev, clsName]);
+                            } else {
+                              setSelectedCampaignClasses(prev => prev.filter(c => c !== clsName));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-purple-600 bg-slate-900 border-slate-700 cursor-pointer"
+                        />
+                        <span className="truncate">{clsName}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {selectedCampaignClasses.length > 0 ? (
+                <div className="text-[10px] text-emerald-400 font-bold flex items-center gap-1.5 pt-1">
+                  <Check size={12} />
+                  <span>තෝරාගත් පන්ති {selectedCampaignClasses.length}ක් ප්‍රචාරක පිටුවේ පෙන්වනු ඇත: ({selectedCampaignClasses.join(', ')})</span>
+                </div>
+              ) : (
+                <div className="text-[10px] text-amber-400 font-medium pt-1">
+                  ⚠️ කිසිදු පන්තියක් තෝරා නොමැති නම් සියලුම සක්‍රිය පන්ති පෙන්වනු ඇත.
+                </div>
+              )}
             </div>
 
             {/* Teacher Branding & Contact */}

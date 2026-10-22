@@ -17,6 +17,7 @@ import {
 import { supabase } from '../supabaseClient';
 import { emitRealtimeEvent } from '../realtimeSync';
 import { renderRealSocialLogo, WhatsAppLogo } from './SocialLogos';
+import { getActiveStudentSession } from '../sessionService';
 
 export interface SocialLinkItem {
   id: string;
@@ -44,6 +45,7 @@ export interface BannerLandingPageData {
   contact_address?: string;
   social_links?: SocialLinkItem[];
   whatsapp_groups?: WhatsAppGroupItem[];
+  selected_classes?: string[];
   is_active: boolean;
   view_count: number;
   created_at?: string;
@@ -72,14 +74,14 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
   const [views, setViews] = useState<number>(previewData?.view_count || 0);
   const [availableClasses, setAvailableClasses] = useState<AvailableClassType[]>([]);
 
-  // Theme State (Day / Night Mode with LocalStorage Persistence)
+  // Theme State (Day / Night Mode with LocalStorage Persistence - Default to DAY MODE)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (forceTheme) return forceTheme;
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('physics_hub_theme');
       if (saved === 'light' || saved === 'dark') return saved;
     }
-    return 'dark';
+    return 'light';
   });
 
   useEffect(() => {
@@ -87,6 +89,14 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
       setTheme(forceTheme);
     }
   }, [forceTheme]);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
 
   const toggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -160,18 +170,34 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
             .maybeSingle();
 
           if (data && !error) {
+            const rawSocials = typeof data.social_links === 'string' ? JSON.parse(data.social_links) : data.social_links || [];
+            let selClasses: string[] = [];
+            if (Array.isArray(data.selected_classes)) {
+              selClasses = data.selected_classes;
+            } else if (typeof data.selected_classes === 'string') {
+              try { selClasses = JSON.parse(data.selected_classes); } catch (e) {}
+            }
+            if (selClasses.length === 0 && Array.isArray(rawSocials)) {
+              const cItem = rawSocials.find((s: any) => s.id === '__classes__' || s.platform === 'classes');
+              if (cItem && cItem.label) {
+                try { selClasses = JSON.parse(cItem.label); } catch (e) {}
+              }
+            }
+            const cleanSocials = Array.isArray(rawSocials) ? rawSocials.filter((s: any) => s.id !== '__classes__' && s.platform !== 'classes') : [];
+
             matched = {
               id: data.id,
               slug: data.slug,
               title: data.title || data.batch_name || '',
               description: data.description || data.announcement_text || '',
               banner_image: data.banner_image || '',
-              teacher_name: data.teacher_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+              teacher_name: data.teacher_name || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
               contact_phone: data.contact_phone || '0779630100',
               whatsapp_number: data.whatsapp_number || data.contact_phone || '0779630100',
               contact_address: data.contact_address || 'Kandy & Online Islandwide',
-              social_links: typeof data.social_links === 'string' ? JSON.parse(data.social_links) : data.social_links || [],
+              social_links: cleanSocials,
               whatsapp_groups: typeof data.whatsapp_groups === 'string' ? JSON.parse(data.whatsapp_groups) : data.whatsapp_groups || [],
+              selected_classes: selClasses,
               is_active: data.is_active !== false,
               view_count: data.view_count || 0,
               created_at: data.created_at,
@@ -200,7 +226,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
             slug: slug,
             title: `Smart Physics - ${slug.replace(/-/g, ' ').toUpperCase()}`,
             description: 'තාරක අමරසිංහ ගුරුතුමන් විසින් මෙහෙයවනු ලබන උසස් පෙළ භෞතික විද්‍යාව පන්ති සහ සම්මන්ත්‍රණ මාලාව පිළිබඳ සියලුම තොරතුරු සහ සම්බන්ධීකරණ සබැඳි මෙතැනින් ලබාගන්න.',
-            teacher_name: 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+            teacher_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
             contact_phone: '0779630100',
             whatsapp_number: '0779630100',
             contact_address: 'Kandy & Online Islandwide',
@@ -259,7 +285,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
     if (navigator.share) {
       navigator.share({
         title: pageData?.title || 'Smart Physics Banner',
-        text: pageData?.description || 'Smart Physics Classes by Taraka Amarasinghe',
+        text: pageData?.description || 'Smart Physics Classes by Tharaka Amarasinghe',
         url: window.location.href
       }).catch(() => {});
     } else {
@@ -274,7 +300,25 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
     else window.location.href = window.location.origin;
   };
 
+  const handleRegisterForClass = (clsName: string) => {
+    const student = getActiveStudentSession();
+    if (student) {
+      if (onNavigateHome) onNavigateHome();
+      else window.location.href = window.location.origin;
+    } else {
+      window.location.href = `${window.location.origin}?register=true&class=${encodeURIComponent(clsName)}`;
+    }
+  };
+
   const isDark = theme === 'dark';
+
+  const displayedClasses = (availableClasses || []).filter(cls => {
+    if (!cls.is_active) return false;
+    if (pageData?.selected_classes && pageData.selected_classes.length > 0) {
+      return pageData.selected_classes.includes(cls.class_type);
+    }
+    return true;
+  });
 
   if (loading) {
     return (
@@ -311,7 +355,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
 
   return (
     <div className={`min-h-screen flex flex-col font-sans transition-colors duration-200 selection:bg-blue-600 selection:text-white ${
-      isDark ? 'bg-[#0B0F19] text-slate-100' : 'bg-slate-50 text-slate-900'
+      isDark ? 'bg-[#0B0F19] text-slate-100' : 'bg-white text-slate-900'
     }`}>
       
       {/* 1. TOP HEADER WITH OFFICIAL WEBSITE LOGO & NAME */}
@@ -472,14 +516,14 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
           </div>
         </div>
 
-        {/* 3. SECTION: AVAILABLE CLASSES (FROM class_types_config TABLE) */}
-        {availableClasses.length > 0 && (
+        {/* 3. SECTION: AVAILABLE CLASSES (FILTERED BY CAMPAIGN SELECTED CLASSES) */}
+        {displayedClasses.length > 0 && (
           <div className={`p-5 sm:p-6 rounded-3xl border shadow-lg space-y-4 ${
             isDark 
-              ? 'bg-slate-900/80 border-slate-800' 
-              : 'bg-white border-slate-200'
+              ? 'bg-slate-900/90 border-slate-800' 
+              : 'bg-white border-slate-200 shadow-slate-200/60'
           }`}>
-            <div className="flex items-center justify-between border-b pb-3 border-slate-700/50 dark:border-slate-800">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400">
                   <BookOpen size={18} />
@@ -490,7 +534,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
                   }`}>
                     වෙබ් අඩවියේ පවතින පන්ති වර්ග (Available Classes & Courses)
                   </h2>
-                  <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  <p className={`text-xs mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
                     දිවයින පුරා සහ ඔන්ලයින් මෙහෙයවනු ලබන සියලුම භෞතික විද්‍යා පන්ති
                   </p>
                 </div>
@@ -499,29 +543,41 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
 
             {/* Class Cards Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {availableClasses.map((cls) => (
+              {displayedClasses.map((cls) => (
                 <div 
                   key={cls.id}
-                  className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 shadow-sm ${
                     isDark 
-                      ? 'bg-slate-950/60 border-slate-800 hover:border-purple-500/40' 
-                      : 'bg-slate-50 border-slate-200 hover:border-purple-400 hover:bg-white'
+                      ? 'bg-slate-950/80 border-slate-800 hover:border-purple-500/40' 
+                      : 'bg-slate-50/90 border-slate-200 hover:border-purple-400 hover:bg-white hover:shadow-md'
                   }`}
                 >
-                  <div className="min-w-0">
-                    <h3 className={`text-xs font-black truncate ${
-                      isDark ? 'text-white' : 'text-slate-900'
-                    }`}>
-                      {cls.class_type}
-                    </h3>
-                    <p className="text-[11px] font-mono font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                      {cls.monthly_fee > 0 ? `රු. ${cls.monthly_fee.toLocaleString()} / මාසිකව` : 'නොමිලේ (Free)'}
-                    </p>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 className={`text-sm font-black truncate ${
+                        isDark ? 'text-white' : 'text-slate-900'
+                      }`}>
+                        {cls.class_type}
+                      </h3>
+                      <p className="text-xs font-mono font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                        {cls.monthly_fee > 0 ? `රු. ${cls.monthly_fee.toLocaleString()} / මාසිකව` : 'නොමිලේ (Free)'}
+                      </p>
+                    </div>
+
+                    <span className="px-2.5 py-1 rounded-xl text-[10px] font-black bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0">
+                      Active Class
+                    </span>
                   </div>
 
-                  <span className="px-2.5 py-1 rounded-xl text-[10px] font-extrabold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 shrink-0">
-                    Active Class
-                  </span>
+                  {/* Register button for this specific class */}
+                  <button
+                    type="button"
+                    onClick={() => handleRegisterForClass(cls.class_type)}
+                    className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>දැන්ම ලියාපදිංචි වන්න (Register Now)</span>
+                    <ArrowRight size={13} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -530,7 +586,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
             <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/15 to-amber-500/15 border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="flex items-center gap-2.5 text-center sm:text-left">
                 <span className="text-xl shrink-0">📌</span>
-                <p className={`text-xs font-extrabold ${isDark ? 'text-amber-200' : 'text-amber-900'}`}>
+                <p className={`text-xs font-extrabold ${isDark ? 'text-amber-200' : 'text-amber-950'}`}>
                   එම පන්තිවලට ඇතුළත් වීම සඳහා කරුණාකර රෙජිස්ටර් වන්න.
                 </p>
               </div>
@@ -539,7 +595,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
                 onClick={handleGoHome}
                 className="px-4 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs rounded-xl shadow-md transition flex items-center gap-1.5 shrink-0 cursor-pointer"
               >
-                <span>දැන්ම රෙජිස්ටර් වන්න (Register)</span>
+                <span>ප්‍රධාන ලියාපදිංචිය (Portal)</span>
                 <ArrowRight size={13} />
               </button>
             </div>
@@ -745,7 +801,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
           <a href={`https://wa.me/${waPhone}`} target="_blank" rel="noopener noreferrer" className="hover:underline">WhatsApp Support</a>
         </div>
         <div className="font-semibold text-slate-500">
-          🏛️ Smart Physics | Taraka Amarasinghe | Powered by Amarasinghe Digital
+          🏛️ Smart Physics | Tharaka Amarasinghe | Powered by Amarasinghe Digital
         </div>
       </footer>
 

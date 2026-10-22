@@ -18,7 +18,10 @@ import {
   Info,
   Clock,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  X,
+  Trash2,
+  Edit3
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { StaffMember } from '../types';
@@ -69,7 +72,7 @@ export const FINANCE_SQL_SETUP_SCRIPT = `-- ====================================
 CREATE TABLE IF NOT EXISTS public.class_finance_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   class_type TEXT NOT NULL UNIQUE,
-  lecturer_name TEXT DEFAULT 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+  lecturer_name TEXT DEFAULT 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
   lecturer_whatsapp TEXT DEFAULT '0779630100',
   institute_percentage NUMERIC DEFAULT 20,
   is_loan_active BOOLEAN DEFAULT false,
@@ -121,7 +124,7 @@ EXCEPTION WHEN duplicate_object THEN
 END $$;
 `;
 
-export default function FinanceDepartment({ currentStaff, onNavigateToHistory }: FinanceDepartmentProps) {
+function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDepartmentProps) {
   const currentDate = new Date();
   const currentMonthStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
 
@@ -219,30 +222,56 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
   }, []);
 
   const parseDatabaseRow = (raw: any): ClassFinanceSettings => {
+    let cleanNotes = raw.notes || '';
+    let extractedLoanStart = typeof raw.loan_start_month === 'string' ? raw.loan_start_month : '';
+    let extractedLoanEnd = typeof raw.loan_end_month === 'string' ? raw.loan_end_month : '';
+    let extractedAdFreq = (raw.ad_frequency as AdFrequency) || 'monthly';
+    let extractedOtherActive = Boolean(raw.is_other_active);
+    let extractedOtherLabel = raw.other_label || 'වෙනත් අයකිරීම් (Other Charge)';
+    let extractedOtherType = (raw.other_type as OtherDeductionType) || 'fixed';
+    let extractedOtherValue = Number(raw.other_value ?? 0);
+
+    // If raw.notes contains raw JSON dump like {"loan_start":"...",...}, extract fields and clear cleanNotes
+    if (typeof cleanNotes === 'string' && cleanNotes.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(cleanNotes);
+        if (parsed.loan_start && !extractedLoanStart) extractedLoanStart = parsed.loan_start;
+        if (parsed.loan_end && !extractedLoanEnd) extractedLoanEnd = parsed.loan_end;
+        if (parsed.ad_freq && !raw.ad_frequency) extractedAdFreq = parsed.ad_freq;
+        if (parsed.other) {
+          if (parsed.other.active !== undefined && raw.is_other_active === undefined) extractedOtherActive = Boolean(parsed.other.active);
+          if (parsed.other.label && !raw.other_label) extractedOtherLabel = parsed.other.label;
+          if (parsed.other.type && !raw.other_type) extractedOtherType = parsed.other.type;
+          if (parsed.other.val !== undefined && raw.other_value === undefined) extractedOtherValue = Number(parsed.other.val);
+        }
+      } catch (e) {}
+      cleanNotes = ''; // Completely remove raw JSON dump from notes UI
+    }
+
     return {
       id: raw.id,
       class_type: raw.class_type,
-      lecturer_name: raw.lecturer_name || 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+      lecturer_name: raw.lecturer_name || 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
       lecturer_whatsapp: raw.lecturer_whatsapp || '0779630100',
       institute_percentage: Number(raw.institute_percentage ?? 20),
       is_loan_active: Boolean(raw.is_loan_active),
       loan_monthly_installment: Number(raw.loan_monthly_installment ?? raw.loan_deduction_amount ?? 0),
-      loan_start_month: raw.loan_start_month || '',
-      loan_end_month: raw.loan_end_month || '',
+      loan_start_month: extractedLoanStart,
+      loan_end_month: extractedLoanEnd,
       loan_remaining_months: Number(raw.loan_remaining_months ?? 0),
       loan_completed_acknowledged: Boolean(raw.loan_completed_acknowledged),
       is_ad_active: Boolean(raw.is_ad_active),
       ad_amount: Number(raw.ad_amount ?? raw.ad_deduction_amount ?? 0),
-      ad_frequency: (raw.ad_frequency as AdFrequency) || 'monthly',
+      ad_frequency: extractedAdFreq,
       is_tax_active: Boolean(raw.is_tax_active),
       tax_label: raw.tax_label || 'Tax / Platform Fee',
       tax_percentage: Number(raw.tax_percentage ?? 0),
       tax_amount: Number(raw.tax_amount ?? raw.tax_deduction_amount ?? 0),
-      is_other_active: Boolean(raw.is_other_active),
-      other_label: raw.other_label || 'වෙනත් අයකිරීම් (Other Charge)',
-      other_type: (raw.other_type as OtherDeductionType) || 'fixed',
-      other_value: Number(raw.other_value ?? 0),
-      notes: raw.notes || ''
+      is_other_active: extractedOtherActive,
+      other_label: extractedOtherLabel,
+      other_type: extractedOtherType,
+      other_value: extractedOtherValue,
+      notes: cleanNotes
     };
   };
 
@@ -251,7 +280,7 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
     for (const cName of Object.keys(map)) {
       const cfg = map[cName];
       if (cfg.is_loan_active && cfg.loan_end_month && !cfg.loan_completed_acknowledged) {
-        if (nowMonth >= cfg.loan_end_month) {
+        if (typeof cfg.loan_end_month === 'string' && nowMonth >= cfg.loan_end_month) {
           setLoanEndPrompt({
             classType: cfg.class_type,
             lecturerName: cfg.lecturer_name,
@@ -263,20 +292,22 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
     }
   };
 
-  // Helper to calculate months between YYYY-MM
-  const calculateMonthsDiff = (start: string, end: string): number => {
-    if (!start || !end) return 0;
+  // Helper to calculate months between YYYY-MM safely
+  const calculateMonthsDiff = (start: any, end: any): number => {
+    if (!start || !end || typeof start !== 'string' || typeof end !== 'string') return 0;
+    if (!start.includes('-') || !end.includes('-')) return 0;
     const [sY, sM] = start.split('-').map(Number);
     const [eY, eM] = end.split('-').map(Number);
-    if (!sY || !sM || !eY || !eM) return 0;
+    if (!sY || !sM || !eY || !eM || isNaN(sY) || isNaN(sM) || isNaN(eY) || isNaN(eM)) return 0;
     const diff = (eY - sY) * 12 + (eM - sM) + 1;
     return Math.max(0, diff);
   };
 
-  // Helper to calculate remaining months from current month
-  const calculateRemainingMonthsFromNow = (end: string): number => {
-    if (!end) return 0;
+  // Helper to calculate remaining months from current month safely
+  const calculateRemainingMonthsFromNow = (end: any): number => {
+    if (!end || typeof end !== 'string' || !end.includes('-')) return 0;
     const [eY, eM] = end.split('-').map(Number);
+    if (!eY || !eM || isNaN(eY) || isNaN(eM)) return 0;
     const now = new Date();
     const curY = now.getFullYear();
     const curM = now.getMonth() + 1;
@@ -288,7 +319,7 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
   const primaryClass = selectedClasses[0] || (classTypes[0]?.name || '2026 Theory');
   const currentConfig: ClassFinanceSettings = formConfig || financeConfigs[primaryClass] || {
     class_type: primaryClass,
-    lecturer_name: 'තාරක අමරසිංහ (Taraka Amarasinghe)',
+    lecturer_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
     lecturer_whatsapp: '0779630100',
     institute_percentage: 20,
     is_loan_active: false,
@@ -397,7 +428,7 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
           other_label: target.other_label,
           other_type: target.other_type,
           other_value: target.other_value,
-          notes: target.notes,
+          notes: (target.notes && !target.notes.startsWith('{')) ? target.notes : '',
           updated_at: new Date().toISOString()
         };
 
@@ -420,12 +451,7 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
             tax_deduction_amount: target.tax_amount,
             is_tax_active: target.is_tax_active,
             tax_label: target.tax_label,
-            notes: JSON.stringify({
-              loan_start: target.loan_start_month,
-              loan_end: target.loan_end_month,
-              ad_freq: target.ad_frequency,
-              other: { active: target.is_other_active, label: target.other_label, type: target.other_type, val: target.other_value }
-            }),
+            notes: (target.notes && !target.notes.startsWith('{')) ? target.notes : '',
             updated_at: new Date().toISOString()
           };
           await supabase
@@ -486,6 +512,54 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
       }
     }
     setLoanEndPrompt(null);
+  };
+
+  const handleDeleteClassPolicy = async (className: string) => {
+    if (!window.confirm(`[${className}] පන්තියේ මූල්‍ය ප්‍රතිපත්ති දත්ත ඩේටාබේස් එකෙන් සම්පූර්ණයෙන්ම ඉවත් කර (Reset) කිරීමට ඔබට සහතිකද?`)) {
+      return;
+    }
+
+    try {
+      // 1. Delete from Supabase
+      await supabase
+        .from('class_finance_settings')
+        .delete()
+        .eq('class_type', className);
+
+      // 2. Reset in state to clean standard defaults
+      const defaultPolicy: ClassFinanceSettings = {
+        class_type: className,
+        lecturer_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
+        lecturer_whatsapp: '0779630100',
+        institute_percentage: 20,
+        is_loan_active: false,
+        loan_monthly_installment: 0,
+        loan_start_month: '',
+        loan_end_month: '',
+        loan_remaining_months: 0,
+        loan_completed_acknowledged: false,
+        is_ad_active: false,
+        ad_amount: 0,
+        ad_frequency: 'monthly',
+        is_tax_active: false,
+        tax_label: 'Tax / Platform Fee',
+        tax_percentage: 0,
+        tax_amount: 0,
+        is_other_active: false,
+        other_label: 'වෙනත් අයකිරීම් (Other Charge)',
+        other_type: 'fixed',
+        other_value: 0,
+        notes: ''
+      };
+
+      const updated = { ...financeConfigs, [className]: defaultPolicy };
+      setFinanceConfigs(updated);
+      localStorage.setItem('physics_class_finance_settings', JSON.stringify(updated));
+      alert(`[${className}] පන්තියේ මූල්‍ය ප්‍රතිපත්ති සාර්ථකව ඉවත් කර පෙරනිමි අගයන්ට සකස් විය.`);
+    } catch (err) {
+      console.error('Failed to reset class policy:', err);
+      alert('ප්‍රතිපත්ති ඉවත් කිරීමේදී දෝෂයක් මතු විය.');
+    }
   };
 
   const totalMonthsLoan = calculateMonthsDiff(currentConfig.loan_start_month, currentConfig.loan_end_month);
@@ -630,27 +704,30 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
               </label>
               <input
                 type="text"
-                value={currentConfig.lecturer_name}
+                value={currentConfig.lecturer_name || ''}
                 onChange={(e) => updateCurrentConfig({ lecturer_name: e.target.value })}
-                placeholder="තාරක අමරසිංහ (Taraka Amarasinghe)"
+                placeholder="තාරක අමරසිංහ (Tharaka Amarasinghe)"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-purple-500 text-sm text-white focus:outline-none"
               />
               {lecturersList.length > 0 && (
                 <div className="mt-1.5 flex flex-wrap gap-1">
                   <span className="text-[10px] text-slate-500">Suggested:</span>
-                  {lecturersList.map(l => (
-                    <button
-                      type="button"
-                      key={l.id}
-                      onClick={() => updateCurrentConfig({ 
-                        lecturer_name: `${l.first_name} ${l.last_name}`,
-                        lecturer_whatsapp: l.whatsapp || currentConfig.lecturer_whatsapp 
-                      })}
-                      className="text-[10px] text-blue-400 hover:underline bg-slate-800 px-1.5 py-0.5 rounded cursor-pointer"
-                    >
-                      {l.first_name}
-                    </button>
-                  ))}
+                  {lecturersList.map((l: any, idx: number) => {
+                    const lFullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || l.name || l.username;
+                    return (
+                      <button
+                        type="button"
+                        key={l.id || l.username || idx}
+                        onClick={() => updateCurrentConfig({ 
+                          lecturer_name: lFullName,
+                          lecturer_whatsapp: l.whatsapp || l.mobile || currentConfig.lecturer_whatsapp 
+                        })}
+                        className="text-[10px] text-blue-400 hover:underline bg-slate-800 px-1.5 py-0.5 rounded cursor-pointer"
+                      >
+                        {l.first_name || l.name || l.username}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1070,54 +1147,262 @@ export default function FinanceDepartment({ currentStaff, onNavigateToHistory }:
 
       </form>
 
-      {/* MODAL 1: LOAN END NOTIFICATION & PROMPT MODAL */}
+      {/* 4. DEDICATED SECTION: CONFIGURATION POLICIES PER CLASS WITH EDIT & DELETE */}
+      <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-indigo-500/15 border border-indigo-500/30 rounded-2xl text-indigo-400">
+              <Receipt size={22} />
+            </div>
+            <div>
+              <h2 className="text-lg md:text-xl font-black text-white flex items-center gap-2">
+                <span>පන්ති මූල්‍ය ප්‍රතිපත්ති සහ අයකරගැනීම් ලැයිස්තුව</span>
+                <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  {classTypes.length} Classes
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                එක් එක් පන්තියෙන් අයකරන මාසික ගාස්තු, ආයතනික ප්‍රතිශතය, ණය/දැන්වීම්/ටැක්ස් අයකිරීම් වෙන වෙනම බලන්න, සංස්කරණය (Edit) හෝ ඉවත් (Delete) කරන්න.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {classTypes.map((cls) => {
+            const cfg = financeConfigs[cls.name] || {
+              class_type: cls.name,
+              lecturer_name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
+              lecturer_whatsapp: '0779630100',
+              institute_percentage: 20,
+              is_loan_active: false,
+              loan_monthly_installment: 0,
+              is_ad_active: false,
+              ad_amount: 0,
+              ad_frequency: 'monthly',
+              is_tax_active: false,
+              tax_label: 'Tax / Platform Fee',
+              tax_amount: 0,
+              is_other_active: false,
+              other_label: 'වෙනත්',
+              other_type: 'fixed',
+              other_value: 0,
+              notes: ''
+            };
+
+            const fee = cls.fee || 3500;
+            const instPct = cfg.institute_percentage ?? 20;
+            const instShare = Math.round(fee * instPct / 100);
+            const lectShare = fee - instShare;
+            const isCurrentlySelected = selectedClasses.includes(cls.name);
+
+            return (
+              <div 
+                key={cls.id || cls.name}
+                className={`p-5 rounded-2xl border transition-all space-y-4 ${
+                  isCurrentlySelected
+                    ? 'bg-indigo-950/30 border-indigo-500/60 shadow-lg shadow-indigo-950/50'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                {/* Header: Class Name, Fee & Actions */}
+                <div className="flex items-start justify-between gap-3 border-b border-slate-800/80 pb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                      <h3 className="font-black text-white text-base">
+                        {cls.name}
+                      </h3>
+                    </div>
+                    <p className="text-xs font-mono font-bold text-emerald-400 mt-1">
+                      මාසික ශිෂ්‍ය ගාස්තුව: රු. {fee.toLocaleString()}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClasses([cls.name]);
+                        window.scrollTo({ top: 380, behavior: 'smooth' });
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      title="මෙම පන්තියේ ප්‍රතිපත්ති සකසන්න"
+                    >
+                      <Edit3 size={13} />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteClassPolicy(cls.name)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      title="මෙම පන්තියේ ප්‍රතිපත්ති ඉවත් කර Reset කරන්න"
+                    >
+                      <Trash2 size={13} />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Rates Split: Institute vs Lecturer */}
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
+                    <span className="text-[10px] text-purple-300 font-bold block">🏛️ ආයතනික කොටස (Institute):</span>
+                    <span className="text-sm font-black font-mono text-purple-200 mt-0.5 block">
+                      {instPct}% (රු. {instShare.toLocaleString()})
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                    <span className="text-[10px] text-emerald-300 font-bold block">👨‍🏫 දේශකයාගේ කොටස (Lecturer):</span>
+                    <span className="text-sm font-black font-mono text-emerald-200 mt-0.5 block">
+                      {100 - instPct}% (රු. {lectShare.toLocaleString()})
+                    </span>
+                  </div>
+                </div>
+
+                {/* Lecturer details & active deductions breakdown */}
+                <div className="space-y-1.5 text-xs text-slate-300 border-t border-slate-800/80 pt-3">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">දේශකයා:</span>
+                    <span className="font-bold text-white font-mono">{cfg.lecturer_name}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">ණය වාරිකය (Loan):</span>
+                    <span className={`font-mono font-bold ${cfg.is_loan_active ? 'text-amber-400' : 'text-slate-500'}`}>
+                      {cfg.is_loan_active 
+                        ? `රු. ${Number(cfg.loan_monthly_installment || 0).toLocaleString()} / mo (${cfg.loan_start_month || '-'} සිට ${cfg.loan_end_month || '-'})`
+                        : 'නැත (None)'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">ප්‍රචාරණ (Ad Charge):</span>
+                    <span className={`font-mono font-bold ${cfg.is_ad_active ? 'text-blue-400' : 'text-slate-500'}`}>
+                      {cfg.is_ad_active 
+                        ? `රු. ${Number(cfg.ad_amount || 0).toLocaleString()} (${cfg.ad_frequency})`
+                        : 'නැත (None)'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">බදු (Tax):</span>
+                    <span className={`font-mono font-bold ${cfg.is_tax_active ? 'text-rose-400' : 'text-slate-500'}`}>
+                      {cfg.is_tax_active 
+                        ? `රු. ${Number(cfg.tax_amount || 0).toLocaleString()} (${cfg.tax_label})`
+                        : 'නැත (None)'}
+                    </span>
+                  </div>
+
+                  {cfg.is_other_active && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-slate-400">වෙනත් ({cfg.other_label}):</span>
+                      <span className="font-mono font-bold text-teal-300">
+                        {cfg.other_type === 'percentage' ? `${cfg.other_value}%` : `රු. ${Number(cfg.other_value || 0).toLocaleString()}`}
+                      </span>
+                    </div>
+                  )}
+
+                  {cfg.notes && !cfg.notes.startsWith('{') && (
+                    <div className="text-[10px] text-slate-400 italic bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                      📝 {cfg.notes}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* NON-BLOCKING LOAN END NOTIFICATION BANNER */}
       {loanEndPrompt && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl w-full max-w-lg shadow-2xl p-6 md:p-8 space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">
-                <AlertTriangle size={24} />
-              </div>
-              <div>
-                <h3 className="text-lg font-black text-white font-display">
-                  ණය වාරිකය අවසන් වී ඇත! (Loan Completed)
-                </h3>
-                <p className="text-xs text-slate-400">
-                  {loanEndPrompt.classType} • {loanEndPrompt.lecturerName}
-                </p>
-              </div>
+        <div className="p-4 bg-gradient-to-r from-amber-950/70 via-slate-900 to-amber-950/40 border-2 border-amber-500/70 rounded-2xl shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
+              <AlertTriangle size={20} />
             </div>
-
-            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2 text-xs text-slate-300 leading-relaxed">
-              <p>
-                ගුරුතුමාගේ ණය වාරික ගිවිසුම <span className="text-amber-400 font-mono font-bold">[{loanEndPrompt.endMonth}]</span> මසින් සම්පූර්ණ වී අවසන් වී ඇත.
-              </p>
-              <p className="text-white font-bold">
-                ඔහුගේ ණය වාරික නැවත අලුතින් ඇඩ් කිරීමට අවශ්‍යද?
+            <div>
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <span>ණය වාරිකය අවසන් වී ඇත! (Loan Completed)</span>
+                <span className="text-[11px] font-mono text-amber-400 font-bold">[{loanEndPrompt.classType} - {loanEndPrompt.endMonth}]</span>
+              </h4>
+              <p className="text-xs text-slate-300">
+                {loanEndPrompt.lecturerName} ගුරුතුමාගේ ණය වාරික ගිවිසුම සම්පූර්ණයි. නව වාරිකයක් එක් කිරීමට හෝ අවසන් කිරීමට තෝරන්න.
               </p>
             </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => handleLoanEndDecision(false)}
-                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer transition"
-              >
-                නැත, ණය සියල්ල අවසන් (Finish Loan)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleLoanEndDecision(true)}
-                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer transition shadow-lg shadow-amber-500/30"
-              >
-                ඔව්, නව ණය වාරිකයක් එක් කරන්න (Add New)
-              </button>
-            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => handleLoanEndDecision(false)}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs cursor-pointer border border-slate-700"
+            >
+              ණය අවසන් (Finish)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleLoanEndDecision(true)}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs cursor-pointer shadow-md shadow-amber-500/30"
+            >
+              නව වාරිකයක් (Add New)
+            </button>
+            <button
+              type="button"
+              onClick={() => setLoanEndPrompt(null)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              title="Close"
+            >
+              <X size={16} />
+            </button>
           </div>
         </div>
       )}
 
     </div>
+  );
+}
+
+// Error Boundary to prevent mobile white/black screen crash
+export class FinanceErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error("FinanceDepartment render error caught:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 md:p-8 rounded-3xl bg-slate-900 border border-rose-500/40 text-center space-y-4 shadow-2xl max-w-2xl mx-auto my-8">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center">
+            <AlertTriangle size={28} />
+          </div>
+          <h2 className="text-xl font-bold text-white">මූල්‍ය දෙපාර්තමේන්තුව විවෘත කිරීමේදී දෝෂයක් මතු විය</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            තිරය කලු වීම හෝ අවහිර වීම වැළැක්වීමට මෙම ආරක්‍ෂිත පද්ධතිය ක්‍රියාත්මක විය. පහත බටනය ක්ලික් කර නැවත උත්සාහ කරන්න.
+          </p>
+          <button
+            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+            className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition cursor-pointer"
+          >
+            නැවත පූරණය කරන්න (Reload Finance)
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function FinanceDepartment(props: FinanceDepartmentProps) {
+  return (
+    <FinanceErrorBoundary>
+      <FinanceDepartmentInner {...props} />
+    </FinanceErrorBoundary>
   );
 }

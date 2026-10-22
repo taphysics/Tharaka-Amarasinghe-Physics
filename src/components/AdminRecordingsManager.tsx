@@ -92,6 +92,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
   const [tuteYear, setTuteYear] = useState(new Date().getFullYear().toString());
   const [tuteMonth, setTuteMonth] = useState(new Date().toLocaleString('default', { month: 'long' }));
   const [tuteDesc, setTuteDesc] = useState('');
+  const [allowDownload, setAllowDownload] = useState(true);
   const [tuteLoading, setTuteLoading] = useState(false);
   const [tuteMessage, setTuteMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [tuteSearch, setTuteSearch] = useState('');
@@ -221,21 +222,17 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
   };
 
   const fetchRecordings = async () => {
-    // 1. Try Supabase
     try {
       const { data, error } = await supabase.from('recordings').select('*').order('created_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        setRecordings(data as Recording[]);
-        localStorage.setItem('physics_hub_recordings', JSON.stringify(data));
-        return;
+      if (error) {
+        console.error('Supabase fetch recordings error:', error);
       }
-    } catch (e) {}
-
-    // 2. Fallback to localStorage
-    try {
-      const local = localStorage.getItem('physics_hub_recordings');
-      if (local) setRecordings(JSON.parse(local));
-    } catch (e) {}
+      if (data) {
+        setRecordings(data as Recording[]);
+      }
+    } catch (e) {
+      console.error('Fetch recordings exception:', e);
+    }
   };
 
   const fetchViews = async () => {
@@ -260,17 +257,15 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
         .in('type', ['tute', 'paper'])
         .order('created_at', { ascending: false });
 
-      if (data && !error && data.length > 0) {
-        setTutesList(data as TuteResource[]);
-        localStorage.setItem('physics_hub_tutes', JSON.stringify(data));
-        return;
+      if (error) {
+        console.error('Supabase fetch tutes error:', error);
       }
-    } catch (e) {}
-
-    try {
-      const local = localStorage.getItem('physics_hub_tutes');
-      if (local) setTutesList(JSON.parse(local));
-    } catch (e) {}
+      if (data) {
+        setTutesList(data as TuteResource[]);
+      }
+    } catch (e) {
+      console.error('Fetch tutes exception:', e);
+    }
   };
 
   // ---------------- RECORDINGS HANDLERS ----------------
@@ -302,7 +297,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
     const nowIso = new Date().toISOString();
 
     const recordsToInsert: Recording[] = selectedClasses.map(classType => ({
-      id: `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: crypto.randomUUID(),
       title: title.trim(), 
       youtube_id: ytId, 
       video_url: standardVideoUrl,
@@ -314,28 +309,23 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
     }));
 
     try {
-      // 1. Try Supabase insert
-      try {
-        await supabase.from('recordings').insert(recordsToInsert);
-      } catch (err) {
-        console.warn('Supabase recordings insert fallback:', err);
+      const { error: insertError } = await supabase.from('recordings').insert(recordsToInsert);
+      if (insertError) {
+        console.error('Supabase recordings insert error:', insertError);
+        throw new Error(insertError.message || 'Supabase වෙත රෙකෝඩින් ඇතුළත් කිරීමට නොහැකි විය.');
       }
 
-      // 2. Always persist to localStorage
-      const existing = recordings;
-      const updated = [...recordsToInsert, ...existing];
-      setRecordings(updated);
-      localStorage.setItem('physics_hub_recordings', JSON.stringify(updated));
+      setRecordings(prev => [...recordsToInsert, ...prev]);
 
-      // 3. Realtime broadcast to student dashboards
+      // Realtime broadcast to student dashboards
       emitRealtimeEvent('recording_added', recordsToInsert);
 
-      setMessage({ type: 'success', text: `රෙකෝඩින් ${recordsToInsert.length} ක් සාර්ථකව පන්ති සඳහා එක් කරන ලදී!` });
+      setMessage({ type: 'success', text: `රෙකෝඩින් ${recordsToInsert.length} ක් සාර්ථකව Supabase ඩේටාබේස් වෙත එක් කරන ලදී!` });
       setTitle('');
       setYoutubeLink('');
       setDetectedYtId(null);
       setSelectedClasses([]);
-      fetchRecordings();
+      await fetchRecordings();
     } catch (err: any) {
       console.error(err);
       setMessage({ type: 'error', text: 'දත්ත ඇතුළත් කිරීමේදී දෝෂයක් සිදුවිය: ' + (err.message || '') });
@@ -353,31 +343,30 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
     }
     try {
       if (deleteTarget.type === 'recording') {
-        try {
-          await supabase.from('recordings').delete().eq('id', deleteTarget.id);
-        } catch (e) {}
+        const { error: delErr } = await supabase.from('recordings').delete().eq('id', deleteTarget.id);
+        if (delErr) {
+          alert('රෙකෝඩින් එක මකා දැමීමට නොහැකි විය: ' + delErr.message);
+          return;
+        }
 
-        const updated = recordings.filter(r => r.id !== deleteTarget.id);
-        setRecordings(updated);
-        localStorage.setItem('physics_hub_recordings', JSON.stringify(updated));
-
+        setRecordings(prev => prev.filter(r => r.id !== deleteTarget.id));
         emitRealtimeEvent('recording_deleted', { id: deleteTarget.id });
-        fetchRecordings();
+        await fetchRecordings();
       } else {
-        try {
-          await supabase.from('class_resources').delete().eq('id', deleteTarget.id);
-        } catch (e) {}
+        const { error: delErr } = await supabase.from('class_resources').delete().eq('id', deleteTarget.id);
+        if (delErr) {
+          alert('ටියුට් / ලේඛනය මකා දැමීමට නොහැකි විය: ' + delErr.message);
+          return;
+        }
 
-        const updated = tutesList.filter(t => t.id !== deleteTarget.id);
-        setTutesList(updated);
-        localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
-
+        setTutesList(prev => prev.filter(t => t.id !== deleteTarget.id));
         emitRealtimeEvent('tute_deleted', { id: deleteTarget.id });
-        fetchTutes();
+        await fetchTutes();
       }
       setDeleteTarget(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert('මකා දැමීමේදී දෝෂයක් සිදුවිය: ' + (err?.message || ''));
     }
   };
 
@@ -410,35 +399,38 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
     const targetMonthStr = `${tuteYear}-${mNum}`;
     const nowIso = new Date().toISOString();
 
+    const descPrefix = allowDownload ? '[ALLOW_DOWNLOAD] ' : '';
+    const rawDesc = tuteDesc.trim();
+    const finalDesc = `${descPrefix}${rawDesc}`.trim() || (allowDownload ? '[ALLOW_DOWNLOAD]' : undefined);
+
     const newResource: TuteResource = {
-      id: `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: crypto.randomUUID(),
       title: tuteTitle.trim(),
       type: tuteType,
       link: tuteLink.trim(),
       target_month: targetMonthStr,
       target_classes: tuteSelectedClasses,
-      description: tuteDesc.trim() || undefined,
+      description: finalDesc,
       date_added: new Date().toISOString().split('T')[0],
       created_at: nowIso
     };
 
     try {
-      try {
-        await supabase.from('class_resources').insert([newResource]);
-      } catch (e) {}
+      const { error: tuteErr } = await supabase.from('class_resources').insert([newResource]);
+      if (tuteErr) {
+        console.error('Supabase class_resources insert error:', tuteErr);
+        throw new Error(tuteErr.message || 'Supabase වෙත ටියුට් / ලේඛනය ඇතුළත් කිරීමට නොහැකි විය.');
+      }
 
-      const updated = [newResource, ...tutesList];
-      setTutesList(updated);
-      localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
-
+      setTutesList(prev => [newResource, ...prev]);
       emitRealtimeEvent('tute_added', newResource);
 
-      setTuteMessage({ type: 'success', text: 'ටියුට් එක සාර්ථකව ඇතුළත් කරන ලදී!' });
+      setTuteMessage({ type: 'success', text: 'ටියුට් එක සාර්ථකව Supabase ඩේටාබේස් වෙත ඇතුළත් කරන ලදී!' });
       setTuteTitle('');
       setTuteLink('');
       setTuteDesc('');
       setTuteSelectedClasses([]);
-      fetchTutes();
+      await fetchTutes();
     } catch (err: any) {
       console.error(err);
       setTuteMessage({ type: 'error', text: 'ටියුට් එක ඇතුළත් කිරීමේදී දෝෂයක් සිදුවිය: ' + (err.message || '') });
@@ -450,18 +442,18 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
   const handleDeleteTute = async (id: string) => {
     if (!window.confirm('මෙම ටියුට් / ලේඛනය ඉවත් කිරීමට අවශ්‍යද?')) return;
     try {
-      try {
-        await supabase.from('class_resources').delete().eq('id', id);
-      } catch (e) {}
+      const { error } = await supabase.from('class_resources').delete().eq('id', id);
+      if (error) {
+        alert('මකා දැමීමේදී දෝෂයක් සිදුවිය: ' + error.message);
+        return;
+      }
 
-      const updated = tutesList.filter(t => t.id !== id);
-      setTutesList(updated);
-      localStorage.setItem('physics_hub_tutes', JSON.stringify(updated));
-
+      setTutesList(prev => prev.filter(t => t.id !== id));
       emitRealtimeEvent('tute_deleted', { id });
-      fetchTutes();
-    } catch (err) {
+      await fetchTutes();
+    } catch (err: any) {
       console.error(err);
+      alert('දෝෂයකි: ' + (err?.message || ''));
     }
   };
 
@@ -774,6 +766,27 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                   onChange={(e) => setTuteDesc(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-white text-xs focus:outline-none focus:border-blue-500 resize-none"
                 />
+              </div>
+
+              {/* Allow Student Download Permission */}
+              <div className="p-3.5 bg-slate-950/90 rounded-2xl border border-slate-800 flex items-center justify-between">
+                <div>
+                  <label className="text-white font-bold text-xs flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={allowDownload}
+                      onChange={(e) => setAllowDownload(e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-500 focus:ring-0 accent-emerald-500 cursor-pointer"
+                    />
+                    <span>සිසුන්ට මෙම PDF එක Download කිරීමට අවසර දෙන්න (Allow Student Download)</span>
+                  </label>
+                  <p className="text-[11px] text-slate-400 mt-0.5 ml-6">
+                    ටික් කර ඇති විට ගෙවීම් කළ සිසුන්ගේ Dashboard එකේ ඍජුවම බාගත හැකි Download Button එක දිස්වේ.
+                  </p>
+                </div>
+                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border shrink-0 ${allowDownload ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                  {allowDownload ? 'DOWNLOAD ALLOWED' : 'VIEW ONLY'}
+                </span>
               </div>
 
               <button
