@@ -2914,7 +2914,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                       <div>
                         <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-amber-500 transition">
-                          Recordings
+                         Your Classes & Recordings
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                           Watch past classes in HD, zero data charges
