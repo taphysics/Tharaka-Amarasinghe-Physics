@@ -1012,7 +1012,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const navMenuItems = [
     { id: null, label: 'Hub Overview', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
     { id: 'exams', label: 'Exams', sinhala: 'ඔන්ලයින් විභාග', icon: PenTool, badge: examsCount > 0 ? `${examsCount}` : null, color: 'blue' },
-    { id: 'recordings', label: 'Recordings', sinhala: 'පන්ති රෙකෝඩින්', icon: Video, badge: recordingsCount > 0 ? `${recordingsCount}` : null, color: 'amber' },
+    { id: 'recordings', label: 'Your Classes', sinhala: 'ඔබගේ පන්ති', icon: Video, badge: recordingsCount > 0 ? `${recordingsCount}` : null, color: 'amber' },
     { id: 'tutes', label: 'Documents', sinhala: 'ටියුට් & Papers', icon: FileText, badge: tutesCount > 0 ? `${tutesCount}` : null, color: 'slate' },
     { id: 'live', label: 'Live Classes', sinhala: 'සජීවී පන්තිය', icon: Radio, badge: 'LIVE', isLive: true, color: 'rose' },
     { id: 'calendar', label: 'Class Timetable', sinhala: 'කාලසටහන', icon: CalendarDays, badge: null, color: 'purple' },
