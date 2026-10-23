@@ -59,6 +59,8 @@ import AdminOverview from './components/AdminOverview';
 import LecturerDashboard from './components/LecturerDashboard';
 import BannerLandingPage from './components/BannerLandingPage';
 import FinanceDepartment from './components/FinanceDepartment';
+import AdminDeviceSecurityManager from './components/AdminDeviceSecurityManager';
+import { registerDeviceLogin } from './deviceSecurityService';
 import { fetchAllPendingPayments } from './pendingPaymentsService';
 import { subscribeRealtimeEvents } from './realtimeSync';
 import { translations, Language } from './translations';
@@ -221,26 +223,34 @@ export default function App() {
     };
   }, []);
   
+  // Fallback high-resolution physics photos (never disappear on page switch or re-render)
+  const DEFAULT_HERO_PHOTOS = [
+    "https://images.unsplash.com/photo-1614064641938-3bbee52942c7?q=80&w=1200&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=1200&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1507668077129-56e32842fceb?q=80&w=1200&auto=format&fit=crop",
+    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop"
+  ];
+
   // Slide index
   const [activeSlide, setActiveSlide] = useState(0);
   const slideImages = [
     {
-      url: siteConfig.heroImage1,
+      url: (siteConfig.heroImage1 && siteConfig.heroImage1.trim() !== '') ? siteConfig.heroImage1 : DEFAULT_HERO_PHOTOS[0],
       title: siteConfig.slide1Title || "Interactive Live Feed",
       desc: siteConfig.slide1Desc || "Weekly real-time streams paired with live quiz features."
     },
     {
-      url: siteConfig.heroImage2,
+      url: (siteConfig.heroImage2 && siteConfig.heroImage2.trim() !== '') ? siteConfig.heroImage2 : DEFAULT_HERO_PHOTOS[1],
       title: siteConfig.slide2Title || "Particle & Quantum Models",
       desc: siteConfig.slide2Desc || "Deconstructing core theories using high-end simulated models."
     },
     {
-      url: siteConfig.heroImage3,
+      url: (siteConfig.heroImage3 && siteConfig.heroImage3.trim() !== '') ? siteConfig.heroImage3 : DEFAULT_HERO_PHOTOS[2],
       title: siteConfig.slide3Title || "Practical Laboratory Sessions",
       desc: siteConfig.slide3Desc || "Comprehensive guides on practical apparatus and physics methodologies."
     },
     {
-      url: siteConfig.heroImage4,
+      url: (siteConfig.heroImage4 && siteConfig.heroImage4.trim() !== '') ? siteConfig.heroImage4 : DEFAULT_HERO_PHOTOS[3],
       title: siteConfig.slide4Title || "Astrophysics & Solar Systems",
       desc: siteConfig.slide4Desc || "Special seminars investigating gravitation, fields, and mechanics."
     }
@@ -316,7 +326,7 @@ useEffect(() => {
   });
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator'>(() => {
+  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator' | 'device_security'>(() => {
     return (getSavedAdminTab() as any) || 'overview';
   });
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
@@ -350,6 +360,12 @@ useEffect(() => {
 
     if (currentStaff.role === 'super_admin') return true;
 
+    // Device security management accessible to Super Admin, Admin, and Manager
+    if (tabId === 'device_security') {
+      if (currentStaff.role === 'admin' || currentStaff.role === 'manager') return true;
+      return !!currentStaff.allowed_sections?.includes('device_security');
+    }
+
     // Staff management is accessible to Super Admin, Admin, and Manager (restricted by rank hierarchy inside component)
     if (tabId === 'staff') {
       if (currentStaff.role === 'admin' || currentStaff.role === 'manager') return true;
@@ -363,7 +379,7 @@ useEffect(() => {
 
     // Default safe tabs based on role if allowed_sections is not defined
     if (currentStaff.role === 'admin' || currentStaff.role === 'manager') {
-      return ['overview', 'registry', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
+      return ['overview', 'registry', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner', 'device_security'].includes(tabId);
     }
     if (currentStaff.role === 'lecturer') {
       return ['overview', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
@@ -378,7 +394,7 @@ useEffect(() => {
         const candidateTabs: Array<typeof activeAdminTab> = [
           'overview', 'registry', 'manual_student', 'staff', 'resets', 'payments', 
           'pending_payments', 'bank_accounts', 'history', 'qr_generator', 
-          'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast'
+          'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast', 'device_security'
         ];
         const firstPermitted = candidateTabs.find(t => isTabAllowed(t));
         if (firstPermitted) {
@@ -508,7 +524,7 @@ useEffect(() => {
   const grpMobileRef = useRef<HTMLDivElement>(null);
   const adminContentRef = useRef<HTMLDivElement>(null);
 
-  const handleAdminTabChange = (tab: "overview" | "registry" | "manual_student" | "staff" | "planner" | "broadcast" | "site_configs" | "payments" | "pending_payments" | "bank_accounts" | "history" | "finance" | "resources" | "tutes" | "live_classes" | "resets" | "qr_generator") => {
+  const handleAdminTabChange = (tab: typeof activeAdminTab) => {
     if (tab === 'site_configs' && !isSiteConfigUnlocked) {
       setShowSiteConfigPasswordModal(true);
       return;
@@ -605,6 +621,14 @@ useEffect(() => {
 
       if (found) {
         setLoginAttempts(0);
+
+        // Single Device Login & Disciplinary Security Verification
+        const loginCheck = await registerDeviceLogin(found);
+        if (loginCheck.isConcurrent) {
+          found.device_violations_count = loginCheck.strikeCount;
+          found.device_block_until = loginCheck.blockedUntil;
+        }
+
         setCurrentStudent(found);
         
         // Ensure student dashboard automatically boots up in Day Mode ('light')
@@ -1435,46 +1459,46 @@ if (isLoading) {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
               
               {/* Left Column: Introductions & Sliding physics backgrounds (Bento Big Card) */}
-              <div className="lg:col-span-8 relative rounded-3xl overflow-hidden border border-slate-800 p-6 md:p-10 flex flex-col justify-between shadow-2xl bg-[#0F172A] min-h-[460px] group">
+              <div className="lg:col-span-8 relative rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 p-6 md:p-10 flex flex-col justify-between shadow-xl bg-white dark:bg-[#0F172A] min-h-[460px] group transition-colors">
                 
                 {/* Embedded automatic slide changer backdrop */}
                 {slideImages.map((slide, sIdx) => (
                   <div 
                     key={sIdx}
                     style={{ backgroundImage: `url(${slide.url})` }}
-                    className={`absolute inset-0 bg-cover bg-center transition-all duration-[1500ms] ${sIdx === activeSlide ? 'opacity-20 scale-100' : 'opacity-0 scale-105'}`}
+                    className={`absolute inset-0 bg-cover bg-center transition-all duration-[1200ms] ${sIdx === activeSlide ? 'opacity-35 dark:opacity-25 scale-100' : 'opacity-0 scale-105 pointer-events-none'}`}
                   />
                 ))}
                 
-                {/* Dark overlay ensuring white fonts contrast beautifully */}
-                <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/90 to-transparent z-10" />
+                {/* Overlay ensuring fonts contrast beautifully in Day and Night */}
+                <div className="absolute inset-0 bg-gradient-to-r from-white/95 via-white/80 to-white/40 dark:from-slate-950/95 dark:via-slate-950/85 dark:to-transparent z-10" />
 
                 {/* Content Elements */}
                 <div className="relative z-20 space-y-6 max-w-2xl my-auto">
                   <div>
-                    <span className="inline-block px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-xs font-bold tracking-wider border border-blue-500/30">
+                    <span className="inline-block px-3.5 py-1.5 bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-400 rounded-full text-xs font-black tracking-wider border border-blue-200 dark:border-blue-500/30 shadow-sm">
                       {siteConfig.homeWelcomeBadge || "Welcome to Tharaka Physics Online Space"}
                     </span>
                   </div>
                   
-                  <h2 className="text-3xl md:text-5xl font-extrabold text-white leading-[1.15] font-display tracking-tight text-shadow-md">
+                  <h2 className="text-3xl md:text-5xl font-black text-slate-900 dark:text-white leading-[1.15] font-display tracking-tight drop-shadow-sm">
                     {siteConfig.heroTitle}
                   </h2>
                   
-                  <p className="text-slate-300 text-sm md:text-base leading-relaxed">
+                  <p className="text-slate-700 dark:text-slate-300 text-sm md:text-base leading-relaxed font-semibold">
                     {siteConfig.heroSubtitle}
                   </p>
 
                   <div className="flex flex-wrap gap-3.5 pt-2">
                     <button 
                       onClick={() => setCurrentView('register')}
-                      className="bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] active:scale-[0.98] text-white font-semibold px-6 py-3 rounded-2xl shadow-lg shadow-blue-900/40 transition-all duration-150"
+                      className="bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] active:scale-[0.98] text-white font-bold px-6 py-3 rounded-2xl shadow-lg shadow-blue-900/30 transition-all duration-150 cursor-pointer"
                     >
                       {lang === 'si' ? 'නව සිසු ලියාපදිංචිය (Register)' : 'New Student Registration'}
                     </button>
                     <button 
                       onClick={() => setCurrentView('login')}
-                      className="bg-slate-800/80 hover:bg-slate-700/85 hover:scale-[1.02] active:scale-[0.98] text-slate-100 hover:text-white font-medium border border-slate-700 px-6 py-3 rounded-2xl transition-all duration-150 backdrop-blur-sm"
+                      className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700/85 hover:scale-[1.02] active:scale-[0.98] text-slate-900 dark:text-slate-100 font-bold border border-slate-300 dark:border-slate-700 px-6 py-3 rounded-2xl transition-all duration-150 shadow-sm cursor-pointer"
                     >
                       {lang === 'si' ? 'සිසු පිවිසුම (Login)' : 'Student Login'}
                     </button>
@@ -1832,7 +1856,7 @@ if (isLoading) {
                     ref={grpFirstRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.first ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.first ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.first ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       First Name (English)
                     </label>
                     <input 
@@ -1843,9 +1867,9 @@ if (isLoading) {
                         setRegFirst(e.target.value);
                         handleInputChange('first', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.first ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 text-slate-900 dark:text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.first ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     />
-                    {invalidGroups.first && <span className="text-[10px] text-red-400 block mt-0.5">පළමු නම අනිවාර්ය වේ</span>}
+                    {invalidGroups.first && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">පළමු නම අනිවාර්ය වේ</span>}
                   </div>
 
                   {/* Last Name */}
@@ -1853,7 +1877,7 @@ if (isLoading) {
                     ref={grpLastRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.last ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.last ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.last ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       Last Name (English)
                     </label>
                     <input 
@@ -1864,9 +1888,9 @@ if (isLoading) {
                         setRegLast(e.target.value);
                         handleInputChange('last', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.last ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 text-slate-900 dark:text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.last ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     />
-                    {invalidGroups.last && <span className="text-[10px] text-red-400 block mt-0.5">වාසගම අනිවාර්ය වේ</span>}
+                    {invalidGroups.last && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">වාසගම අනිවාර්ය වේ</span>}
                   </div>
                 </div>
 
@@ -1876,7 +1900,7 @@ if (isLoading) {
                     ref={grpNIPRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.nic ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.nic ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.nic ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       National ID (NIC) Number
                     </label>
                     <input 
@@ -1887,9 +1911,9 @@ if (isLoading) {
                         setRegNIC(e.target.value);
                         handleInputChange('nic', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.nic ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 text-slate-900 dark:text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.nic ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     />
-                    {invalidGroups.nic && <span className="text-[10px] text-red-400 block mt-0.5">වලංගු ජාතික හැඳුනුම්පත් අංකය ඇතුළත් කරන්න</span>}
+                    {invalidGroups.nic && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">වලංගු ජාතික හැඳුනුම්පත් අංකය ඇතුළත් කරන්න</span>}
                   </div>
 
                   {/* District */}
@@ -1897,7 +1921,7 @@ if (isLoading) {
                     ref={grpDistRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.district ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.district ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.district ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       Select Home District
                     </label>
                     <select 
@@ -1906,14 +1930,14 @@ if (isLoading) {
                         setRegDistrict(e.target.value);
                         handleInputChange('district', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 outline-none border transition-all focus:border-blue-500 text-white ${invalidGroups.district ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 outline-none border transition-all focus:border-blue-500 text-slate-900 dark:text-white ${invalidGroups.district ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     >
-                      <option value="" className="text-black bg-white">-- Select District --</option>
+                      <option value="" className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">-- Select District --</option>
                       {SRI_LANKA_DISTRICTS.map((dist, idx) => (
-                        <option key={idx} value={dist} className="text-black bg-white">{dist}</option>
+                        <option key={idx} value={dist} className="text-slate-900 bg-white dark:bg-slate-900 dark:text-white">{dist}</option>
                       ))}
                     </select>
-                    {invalidGroups.district && <span className="text-[10px] text-red-400 block mt-0.5">කරුණාකර දිස්ත්‍රික්කයක් තෝරන්න</span>}
+                    {invalidGroups.district && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">කරුණාකර දිස්ත්‍රික්කයක් තෝරන්න</span>}
                   </div>
                 </div>
 
@@ -1922,31 +1946,29 @@ if (isLoading) {
                   ref={grpClassRef}
                   className={`space-y-2 form-group transition-all ${invalidGroups.classes ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                 >
-                  <label className={`text-xs font-semibold ${invalidGroups.classes ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                  <label className={`text-xs font-semibold ${invalidGroups.classes ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                     Class Option (Select one or more)
                   </label>
                   
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-950/60 border border-slate-850 rounded-2xl p-4">
-                    {/* අලුතින් වෙනස් කළ කොටස මෙතැන් සිට */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-950/60 border border-slate-300 dark:border-slate-800 rounded-2xl p-4">
                     {dbClasses.length > 0 ? (
                       dbClasses.map((item, idx) => (
-                        <label key={idx} className="flex items-center gap-2.5 text-xs text-slate-350 hover:text-white cursor-pointer select-none font-medium">
+                        <label key={idx} className="flex items-center gap-2.5 text-xs text-slate-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-white cursor-pointer select-none font-semibold">
                           <input 
                             type="checkbox"
                             value={item}
                             checked={regClassTypes.includes(item)}
                             onChange={(e) => handleClassCheckboxChange(item, e.target.checked)}
-                            className="w-4 h-4 rounded text-blue-600 bg-slate-905 border-slate-700 focus:ring-blue-500"
+                            className="w-4 h-4 rounded text-blue-600 bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 focus:ring-blue-500"
                           />
-                          {item}
+                          <span>{item}</span>
                         </label>
                       ))
                     ) : (
-                      <span className="text-slate-400 text-xs col-span-2">පන්ති ලැයිස්තුව පූරණය වෙමින් පවතී...</span>
+                      <span className="text-slate-500 text-xs col-span-2">පන්ති ලැයිස්තුව පූරණය වෙමින් පවතී...</span>
                     )}
-                    {/* මෙතනින් අවසන් */}
                   </div>
-                  {invalidGroups.classes && <span className="text-[10px] text-red-400 block mt-0.5">අවම වශයෙන් එක් පන්ති වර්ගයක් තෝරන්න</span>}
+                  {invalidGroups.classes && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">අවම වශයෙන් එක් පන්ති වර්ගයක් තෝරන්න</span>}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1955,7 +1977,7 @@ if (isLoading) {
                     ref={grpWhatsAppRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.whatsapp ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.whatsapp ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.whatsapp ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       WhatsApp Contact Number
                     </label>
                     <input 
@@ -1967,9 +1989,9 @@ if (isLoading) {
                         setRegWhatsApp(e.target.value.replace(/\D/g, ''));
                         handleInputChange('whatsapp', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.whatsapp ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 text-slate-900 dark:text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.whatsapp ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     />
-                    {invalidGroups.whatsapp && <span className="text-[10px] text-red-400 block mt-0.5">බිංදුවෙන් (0) ආරම්භ වන ඉලක්කම් 10ක වලංගු දුරකථන අංකයක්</span>}
+                    {invalidGroups.whatsapp && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">බිංදුවෙන් (0) ආරම්භ වන ඉලක්කම් 10ක වලංගු දුරකථන අංකයක්</span>}
                   </div>
 
                   {/* Calling phone Number */}
@@ -1977,7 +1999,7 @@ if (isLoading) {
                     ref={grpMobileRef}
                     className={`space-y-1.5 form-group transition-all ${invalidGroups.mobile ? 'border-l-2 border-red-500 pl-3 invalid animate-shake' : ''}`}
                   >
-                    <label className={`text-xs font-semibold ${invalidGroups.mobile ? 'text-red-400 font-bold' : 'text-slate-300'}`}>
+                    <label className={`text-xs font-semibold ${invalidGroups.mobile ? 'text-red-500 font-bold' : 'text-slate-700 dark:text-slate-300'}`}>
                       Mobile Voice (Calling) Code
                     </label>
                     <input 
@@ -1989,17 +2011,17 @@ if (isLoading) {
                         setRegMobile(e.target.value.replace(/\D/g, ''));
                         handleInputChange('mobile', e.target.value);
                       }}
-                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-950/60 text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.mobile ? 'border-red-500/80 focus:border-red-500' : 'border-slate-800'}`}
+                      className={`w-full px-3.5 py-2.5 rounded-xl text-sm bg-white dark:bg-slate-950/60 text-slate-900 dark:text-white outline-none border transition-all focus:border-blue-500 ${invalidGroups.mobile ? 'border-red-500/80 focus:border-red-500' : 'border-slate-300 dark:border-slate-800'}`}
                     />
-                    {invalidGroups.mobile && <span className="text-[10px] text-red-400 block mt-0.5">බිංදුවෙන් (0) ආරම්භ වන ඉලක්කම් 10ක වලංගු දුරකථන අංකයක්</span>}
+                    {invalidGroups.mobile && <span className="text-[10px] text-red-500 dark:text-red-400 block mt-0.5">බිංදුවෙන් (0) ආරම්භ වන ඉලක්කම් 10ක වලංගු දුරකථන අංකයක්</span>}
                   </div>
                 </div>
 
-                <div className="flex gap-4 pt-4 border-t border-slate-800/80">
+                <div className="flex gap-4 pt-4 border-t border-slate-200 dark:border-slate-800/80">
                   <button 
                     type="submit" 
                     disabled={isSubmitButtonDisabled}
-                    className={`flex-1 font-semibold text-sm px-6 py-3 rounded-xl transition-all shadow-lg ${isSubmitButtonDisabled ? 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 hover:shadow-blue-700/50 hover:translate-y-[-1px]'}`}
+                    className={`flex-1 font-semibold text-sm px-6 py-3 rounded-xl transition-all shadow-lg ${isSubmitButtonDisabled ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-300 dark:border-slate-700/50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 hover:shadow-blue-700/50 hover:translate-y-[-1px]'}`}
                   >
                     Confirm Registration &amp; Send Admin [0719152128]
                   </button>
@@ -2016,7 +2038,7 @@ if (isLoading) {
                       setInvalidGroups({});
                       setIsSubmitButtonDisabled(false);
                     }}
-                    className="bg-slate-800 hover:bg-slate-755 text-slate-300 border border-slate-700 px-6 py-3 rounded-xl transition"
+                    className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 px-6 py-3 rounded-xl transition font-semibold text-sm"
                   >
                     Clear
                   </button>
@@ -2275,6 +2297,14 @@ if (isLoading) {
                       Broadcast Notices
                     </button>
                   )}
+                  {isTabAllowed('device_security') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('device_security')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'device_security' ? 'bg-rose-600/20 text-rose-400 border-b-2 border-rose-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      <span>🛡️ ඩිවයිස් පාලනය (Device Security)</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Sub panels split grids */}
@@ -2509,6 +2539,12 @@ if (isLoading) {
                       </div>
                     </div>
                   </div>
+                  )}
+
+                  {activeAdminTab === 'device_security' && isTabAllowed('device_security') && (
+                    <div className="col-span-12 w-full">
+                      <AdminDeviceSecurityManager students={students} />
+                    </div>
                   )}
                 </div>
               </div>

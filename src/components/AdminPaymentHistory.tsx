@@ -670,6 +670,57 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     return `${rangeStartMonth} to ${rangeEndMonth} (${selectedMonthsList.length} Months Consolidated)`;
   }, [dateFilterMode, singleMonth, rangeStartMonth, rangeEndMonth, selectedMonthsList]);
 
+  // Associated Lecturers for co-teaching / 50% split support
+  const associatedLecturers = useMemo<LecturerItem[]>(() => {
+    const list: LecturerItem[] = [];
+    const seen = new Set<string>();
+
+    if (currentLecturerObj && currentLecturerObj.name) {
+      list.push(currentLecturerObj);
+      seen.add(currentLecturerObj.name.toLowerCase().trim());
+    }
+
+    lecturersList.forEach(l => {
+      const lNameLower = l.name.toLowerCase().trim();
+      if (!seen.has(lNameLower)) {
+        const hasOverlap = l.assignedClasses.some(ac => 
+          targetClassList.some(tc => tc.toLowerCase().trim() === ac.toLowerCase().trim())
+        );
+        if (hasOverlap) {
+          list.push(l);
+          seen.add(lNameLower);
+        }
+      }
+    });
+
+    targetClassList.forEach(tc => {
+      const cfg = financeConfigs[tc];
+      if (cfg && cfg.lecturer_name) {
+        const parts = cfg.lecturer_name.split(/[,/&]/).map(p => p.trim()).filter(Boolean);
+        parts.forEach(pName => {
+          const pLower = pName.toLowerCase().trim();
+          if (!seen.has(pLower)) {
+            const matchFromList = lecturersList.find(l => l.name.toLowerCase().trim() === pLower);
+            list.push(matchFromList || {
+              name: pName,
+              whatsapp: cfg.lecturer_whatsapp || '0779630100',
+              assignedClasses: [tc]
+            });
+            seen.add(pLower);
+          }
+        });
+      }
+    });
+
+    return list;
+  }, [currentLecturerObj, lecturersList, targetClassList, financeConfigs]);
+
+  const hasTwoLecturers = associatedLecturers.length >= 2;
+  const lecturer1 = associatedLecturers[0];
+  const lecturer2 = associatedLecturers[1];
+  const splitShareLecturer1 = hasTwoLecturers ? Math.round(financialStats.netLecturerPayable / 2) : financialStats.netLecturerPayable;
+  const splitShareLecturer2 = hasTwoLecturers ? (financialStats.netLecturerPayable - splitShareLecturer1) : 0;
+
   // Clean ASCII lecturer name for PDF font safety
   const cleanLecturerName = useMemo(() => {
     const raw = currentLecturerObj.name || 'Tharaka Amarasinghe';
@@ -716,7 +767,13 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     doc.setTextColor(30, 41, 59);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
-    doc.text(`LECTURER: ${cleanLecturerName} (${lecturerPhone})`, 18, 47);
+    if (hasTwoLecturers) {
+      const clean1 = (lecturer1?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || 'Lecturer 1';
+      const clean2 = (lecturer2?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || 'Lecturer 2';
+      doc.text(`CO-LECTURERS: 1. ${clean1} | 2. ${clean2}`, 18, 47);
+    } else {
+      doc.text(`LECTURER: ${cleanLecturerName} (${lecturerPhone})`, 18, 47);
+    }
     doc.text(`TIME PERIOD: ${periodLabel}`, 18, 54);
     doc.text(`CLASS: ${currentClassTitle.substring(0, 48)}`, 18, 61);
 
@@ -765,6 +822,21 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       'Approved Net Salary',
       `LKR ${financialStats.netLecturerPayable.toLocaleString()}`
     ]);
+
+    if (hasTwoLecturers) {
+      const clean1 = (lecturer1?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || lecturer1?.name;
+      const clean2 = (lecturer2?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || lecturer2?.name;
+      summaryBody.push([
+        `CO-LECTURER 1 (50% EQUAL SHARE): ${clean1}`,
+        '50% Split Share',
+        `LKR ${splitShareLecturer1.toLocaleString()}`
+      ]);
+      summaryBody.push([
+        `CO-LECTURER 2 (50% EQUAL SHARE): ${clean2}`,
+        '50% Split Share',
+        `LKR ${splitShareLecturer2.toLocaleString()}`
+      ]);
+    }
 
     autoTable(doc, {
       head: summaryHead,
@@ -909,18 +981,20 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     }
   };
 
-  // WhatsApp Message & PDF Share to Lecturer
-  const handleSendToLecturerWhatsApp = async () => {
+  // WhatsApp Message & PDF Share to Lecturer (supports individual co-lecturers with 50% split)
+  const handleSendToLecturerWhatsApp = async (targetLecturer?: LecturerItem) => {
     setIsGeneratingPdf(true);
     try {
-      const lecturerPhone = (currentLecturerObj.whatsapp || '0779630100').replace(/[^0-9]/g, '');
-      const cleanPhone = lecturerPhone.startsWith('0') ? '94' + lecturerPhone.substring(1) : lecturerPhone;
+      const lecturerToSend = targetLecturer || currentLecturerObj;
+      const rawPhone = (lecturerToSend.whatsapp || '0779630100').replace(/[^0-9]/g, '');
+      const cleanPhone = rawPhone.startsWith('0') ? '94' + rawPhone.substring(1) : rawPhone;
 
       const currentClassesTitle = selectedClasses.includes('all') 
         ? `All Classes (${targetClassList.join(', ')})` 
         : targetClassList.join(', ');
 
-      const fileName = `Smart_Physics_${cleanLecturerName.replace(/\s+/g, '_')}_${periodLabel.replace(/[^\w-]/g, '_')}_Report.pdf`;
+      const lNameClean = (lecturerToSend.name || 'Lecturer').replace(/[^\x00-\x7F]/g, '').trim().replace(/\s+/g, '_') || 'Lecturer';
+      const fileName = `Smart_Physics_${lNameClean}_${periodLabel.replace(/[^\w-]/g, '_')}_Report.pdf`;
 
       // 1. Build Document
       const doc = buildPdfDocument();
@@ -932,11 +1006,17 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       const pdfBlob = doc.output('blob');
       const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
 
+      // Determine this lecturer's share if 2 lecturers
+      const isLecturer2 = hasTwoLecturers && lecturerToSend.name === lecturer2?.name;
+      const lecturerNetShare = hasTwoLecturers 
+        ? (isLecturer2 ? splitShareLecturer2 : splitShareLecturer1)
+        : financialStats.netLecturerPayable;
+
       // 4. Formulate Detailed Message
       const message = `📊 *Smart Physics - ගුරු ආදායම් සහ සිසු ගෙවීම් නිල වාර්තාව*
 ━━━━━━━━━━━━━━━━━━━━
-👨‍🏫 *දේශකයා:* ${currentLecturerObj.name}
-📅 *කාලසීමාව:* ${periodLabel}
+👨‍🏫 *දේශකයා:* ${lecturerToSend.name}
+${hasTwoLecturers ? `🤝 *විෂය දේශක මණ්ඩලය:* 1. ${lecturer1.name} | 2. ${lecturer2.name}\n` : ''}📅 *කාලසීමාව:* ${periodLabel}
 🏛️ *පන්ති:* ${currentClassesTitle}
 
 👥 *සිසුන් සංඛ්‍යාලේඛන:*
@@ -948,14 +1028,9 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
 💰 *මූල්‍ය බෙදීයාම සහ ආදායම් විස්තරය:*
 • මුළු එකතුව (Gross Revenue): රු. ${financialStats.grossRevenue.toLocaleString()}
 • ආයතනයට ලබා ගන්නා ප්‍රතිශතය (${financialStats.institutePercent}%): -රු. ${financialStats.instituteShare.toLocaleString()}
-${financialStats.loanDeduction > 0 ? `• ගුරු ණය වාරිකය අඩු කිරීම: -රු. ${financialStats.loanDeduction.toLocaleString()}` : ''}
-${financialStats.adDeduction > 0 ? `• ප්‍රචාරණ දැන්වීම් ගාස්තු: -රු. ${financialStats.adDeduction.toLocaleString()}` : ''}
-${financialStats.taxDeduction > 0 ? `• ටැක්ස් / වෙනත් අයකිරීම්: -රු. ${financialStats.taxDeduction.toLocaleString()}` : ''}
-
-━━━━━━━━━━━━━━━━━━━━
-💵 *ගුරුතුමාට ගෙවිය යුතු ශුද්ධ මුදල (Net Payable):*
-👉 *රු. ${financialStats.netLecturerPayable.toLocaleString()}/=*
-━━━━━━━━━━━━━━━━━━━━
+${financialStats.loanDeduction > 0 ? `• ගුරු ණය වාරිකය අඩු කිරීම: -රු. ${financialStats.loanDeduction.toLocaleString()}\n` : ''}${financialStats.adDeduction > 0 ? `• ප්‍රචාරණ දැන්වීම් ගාස්තු: -රු. ${financialStats.adDeduction.toLocaleString()}\n` : ''}${financialStats.taxDeduction > 0 ? `• ටැක්ස් / වෙනත් අයකිරීම්: -රු. ${financialStats.taxDeduction.toLocaleString()}\n` : ''}━━━━━━━━━━━━━━━━━━━━
+💵 *ගුරු මණ්ඩලයට හිමි මුළු මුදල (Net Payout):* රු. ${financialStats.netLecturerPayable.toLocaleString()}
+${hasTwoLecturers ? `👉 *[${lecturerToSend.name}] ගුරුතුමාට හිමි 50% සමාන කොටස:* රු. ${lecturerNetShare.toLocaleString()}/=\n` : `👉 *ගුරුතුමාට ගෙවිය යුතු ශුද්ධ මුදල:* රු. ${financialStats.netLecturerPayable.toLocaleString()}/=\n`}━━━━━━━━━━━━━━━━━━━━
 📌 නිල සහතිකලත් PDF වාර්තාව Super Admin පද්ධතිය මඟින් ස්වයංක්‍රීයව ජනනය කර බාගත කර ඇත.`;
 
       // 5. Check if browser supports Web Share API with files
@@ -1377,9 +1452,70 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
             රු. {financialStats.netLecturerPayable.toLocaleString()}
           </p>
           <p className="text-[10px] text-blue-200 truncate">
-            {currentLecturerObj.name}
+            {hasTwoLecturers ? `1. ${lecturer1.name} | 2. ${lecturer2.name}` : currentLecturerObj.name}
           </p>
         </div>
+
+        {/* Co-Lecturers 50% Equal Split Statement Card */}
+        {hasTwoLecturers && (
+          <div className="sm:col-span-2 lg:col-span-4 p-5 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border-2 border-indigo-500/50 space-y-3 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-500/30 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold text-xs">🤝 CO-LECTURERS 50% REVENUE SPLIT</span>
+                <h4 className="text-sm font-black text-white">මෙම විෂය සඳහා ලියාපදිංචි දේශකවරුන් 2 දෙනා අතර 50% සමාන බෙදීයාම</h4>
+              </div>
+              <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-xl border border-emerald-500/30">
+                මුළු ශුද්ධ මුදල: රු. {financialStats.netLecturerPayable.toLocaleString()}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Lecturer 1 */}
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block">1. ප්‍රධාන දේශක (Lecturer 1):</span>
+                  <p className="text-sm font-black text-white mt-0.5">{lecturer1.name}</p>
+                  <p className="text-[11px] font-mono text-slate-400">📱 {lecturer1.whatsapp}</p>
+                  <div className="mt-2 text-base font-black font-mono text-emerald-400">
+                    50% කොටස: රු. {splitShareLecturer1.toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSendToLecturerWhatsApp(lecturer1)}
+                  disabled={isGeneratingPdf}
+                  className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 shadow-md cursor-pointer shrink-0"
+                  title={`Send PDF to ${lecturer1.name} via WhatsApp`}
+                >
+                  <MessageCircle size={15} />
+                  <span>WhatsApp (50%)</span>
+                </button>
+              </div>
+
+              {/* Lecturer 2 */}
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-[10px] font-bold text-slate-400 block">2. සම-දේශක (Co-Lecturer 2):</span>
+                  <p className="text-sm font-black text-white mt-0.5">{lecturer2.name}</p>
+                  <p className="text-[11px] font-mono text-slate-400">📱 {lecturer2.whatsapp}</p>
+                  <div className="mt-2 text-base font-black font-mono text-purple-400">
+                    50% කොටස: රු. {splitShareLecturer2.toLocaleString()}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSendToLecturerWhatsApp(lecturer2)}
+                  disabled={isGeneratingPdf}
+                  className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 shadow-md cursor-pointer shrink-0"
+                  title={`Send PDF to ${lecturer2.name} via WhatsApp`}
+                >
+                  <MessageCircle size={15} />
+                  <span>WhatsApp (50%)</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
 
@@ -1418,15 +1554,38 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
             <span>{isGeneratingPdf ? 'ජනනය වෙමින්...' : 'PDF වාර්තාව ලබාගන්න (Download PDF)'}</span>
           </button>
 
-          <button
-            onClick={handleSendToLecturerWhatsApp}
-            disabled={isGeneratingPdf}
-            className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl transition shadow-lg shadow-emerald-800/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            title="Send PDF Report & Statement to Lecturer via WhatsApp"
-          >
-            <MessageCircle size={15} />
-            <span>ගුරුතුමාට WhatsApp කරන්න (Send PDF)</span>
-          </button>
+          {hasTwoLecturers ? (
+            <>
+              <button
+                onClick={() => handleSendToLecturerWhatsApp(lecturer1)}
+                disabled={isGeneratingPdf}
+                className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl transition shadow-lg shadow-emerald-800/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title={`Send PDF to ${lecturer1.name} (50%)`}
+              >
+                <MessageCircle size={15} />
+                <span>WhatsApp [{lecturer1.name.split(' ')[0]}] (50%)</span>
+              </button>
+              <button
+                onClick={() => handleSendToLecturerWhatsApp(lecturer2)}
+                disabled={isGeneratingPdf}
+                className="px-3.5 py-2.5 bg-purple-700 hover:bg-purple-600 text-white font-extrabold text-xs rounded-xl transition shadow-lg shadow-purple-800/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                title={`Send PDF to ${lecturer2.name} (50%)`}
+              >
+                <MessageCircle size={15} />
+                <span>WhatsApp [{lecturer2.name.split(' ')[0]}] (50%)</span>
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => handleSendToLecturerWhatsApp(currentLecturerObj)}
+              disabled={isGeneratingPdf}
+              className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold text-xs rounded-xl transition shadow-lg shadow-emerald-800/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Send PDF Report & Statement to Lecturer via WhatsApp"
+            >
+              <MessageCircle size={15} />
+              <span>ගුරුතුමාට WhatsApp කරන්න (Send PDF)</span>
+            </button>
+          )}
 
           <button
             onClick={handleCopySummary}

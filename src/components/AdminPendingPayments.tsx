@@ -478,6 +478,54 @@ export default function AdminPendingPayments() {
                       )}
                     </div>
 
+                    {/* Class-by-Class Fee Breakdown & Grand Total Display for Admin */}
+                    {(() => {
+                      const classList = (req.class_type || '').split(',').map(s => s.trim()).filter(Boolean);
+                      const totalCount = Math.max(1, classList.length);
+                      const feePerClass = Math.round((req.amount || 3500) / totalCount);
+
+                      return (
+                        <div className="p-3 bg-slate-950/90 border-2 border-indigo-500/40 rounded-2xl space-y-2 shadow-inner">
+                          <div className="flex items-center justify-between text-[11px] font-extrabold text-indigo-300 border-b border-slate-800 pb-1.5">
+                            <span className="flex items-center gap-1.5">
+                              <CreditCard size={13} className="text-purple-400" />
+                              <span>ගෙවූ පන්ති සහ ගාස්තු විස්තරය (Class Payment Breakdown)</span>
+                            </span>
+                            <span className="font-mono text-[10px] bg-purple-500/20 text-purple-200 px-2 py-0.5 rounded-md border border-purple-500/30">
+                              පන්ති {totalCount}යි
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {classList.map((cName, cIdx) => (
+                              <div 
+                                key={cIdx} 
+                                className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/90 border border-slate-800"
+                              >
+                                <span className="text-xs font-bold text-slate-200 truncate flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+                                  <span className="truncate">{cName}</span>
+                                </span>
+                                <span className="font-mono font-bold text-emerald-300 text-xs shrink-0 bg-emerald-950/60 px-2 py-0.5 rounded-lg border border-emerald-500/30">
+                                  රු. {feePerClass.toLocaleString()}/=
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Grand Total Row */}
+                          <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/80 text-xs font-bold">
+                            <span className="text-slate-300">
+                              මුළු ගෙවූ මුදල (Total Paid Amount):
+                            </span>
+                            <span className="text-sm font-black font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-xl shadow-sm">
+                              රු. {req.amount ? req.amount.toLocaleString() : '3,500'}/=
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* Transaction & Payment Method Details */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 pt-1 text-xs">
                       <div className="p-2.5 bg-slate-950/70 border border-slate-800 rounded-xl">

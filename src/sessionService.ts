@@ -153,6 +153,14 @@ export function normalizeStudent(student: any): any {
     freeMonths: student.free_months || student.freeMonths || [],
     whatsapp: student.whatsapp || student.WhatsApp || student.mobile || '',
     WhatsApp: student.whatsapp || student.WhatsApp || student.mobile || '',
+    device_block_until: student.device_block_until ?? student.deviceBlockUntil ?? null,
+    deviceBlockUntil: student.device_block_until ?? student.deviceBlockUntil ?? null,
+    device_violations_count: Number(student.device_violations_count ?? student.deviceViolationsCount ?? 0),
+    deviceViolationsCount: Number(student.device_violations_count ?? student.deviceViolationsCount ?? 0),
+    current_device_id: student.current_device_id ?? student.currentDeviceId ?? null,
+    currentDeviceId: student.current_device_id ?? student.currentDeviceId ?? null,
+    device_info: student.device_info ?? student.deviceInfo ?? null,
+    deviceInfo: student.device_info ?? student.deviceInfo ?? null,
   };
 }
 

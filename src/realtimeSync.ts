@@ -21,7 +21,9 @@ export type SyncEventType =
   | 'exam_submitted'
   | 'exam_created'
   | 'assignment_marks_updated'
-  | 'staff_updated';
+  | 'staff_updated'
+  | 'device_force_logout'
+  | 'device_violation_updated';
 
 interface RealtimeMessage {
   type: SyncEventType;
@@ -59,11 +61,13 @@ export function emitRealtimeEvent(type: SyncEventType, payload?: any) {
     }
   }
 
-  // 2. Dispatch CustomEvent on current window
+  // 2. Dispatch CustomEvent on current window asynchronously to never interrupt React rendering cycles
   if (typeof window !== 'undefined') {
-    try {
-      window.dispatchEvent(new CustomEvent('smart_physics_sync', { detail: msg }));
-    } catch (e) {}
+    setTimeout(() => {
+      try {
+        window.dispatchEvent(new CustomEvent('smart_physics_sync', { detail: msg }));
+      } catch (e) {}
+    }, 0);
     
     // 3. Update localStorage heartbeat to wake up other tabs listening on storage events
     try {

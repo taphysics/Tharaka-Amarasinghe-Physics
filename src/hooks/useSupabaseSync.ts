@@ -100,10 +100,14 @@ export function useSupabaseSync<T>(tableName: string, initialData: T[]) {
       try {
         const cacheKey = tableName === 'students' ? 'physics_hub_students' : `cached_${tableName}`;
         localStorage.setItem(cacheKey, JSON.stringify(newData));
-        emitRealtimeEvent('student_updated');
       } catch (e) {}
       return newData;
     });
+
+    // Schedule realtime notification outside React state updater
+    setTimeout(() => {
+      emitRealtimeEvent('student_updated');
+    }, 0);
   };
 
   return [data, updateData] as const;

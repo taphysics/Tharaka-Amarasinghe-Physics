@@ -22,6 +22,13 @@ import StudentRecordings from './StudentRecordings';
 import TutsPapersManager from './TutsPapersManager';
 import OnlineExamsHistory from './OnlineExamsHistory';
 import { getClassMetadataMap, parseClassLinkAndMeta } from './ClassTypesFeesManager';
+import StudentDeviceLockScreen, { ConcurrentLogoutModal } from './StudentDeviceLockScreen';
+import { 
+  isStudentBlocked, 
+  getUnblockWarningNotification, 
+  dismissUnblockNotification,
+  getOrCreateDeviceId 
+} from '../deviceSecurityService';
 
 type TabType = "live" | "recordings" | "tutes" | "exams" | "calendar" | "history" | null;
 
@@ -138,6 +145,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const [liveStudentData, setLiveStudentData] = useState<any>(() => normalizeStudent(currentStudent));
   const lastStudentJsonRef = useRef<string>(JSON.stringify(normalizeStudent(currentStudent)));
+  
+  // Device Security & Multi-Device Logout States
+  const [forcedLogoutCountdown, setForcedLogoutCountdown] = useState<number | null>(null);
+  const [forcedLogoutMsg, setForcedLogoutMsg] = useState<string>('');
+  const [unblockWarning, setUnblockWarning] = useState<any>(() => getUnblockWarningNotification(currentStudent));
+
+  useEffect(() => {
+    setUnblockWarning(getUnblockWarningNotification(liveStudentData || currentStudent));
+  }, [liveStudentData, currentStudent]);
+
   const [classPaymentStatuses, setClassPaymentStatuses] = useState<{name: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent'}[]>([]);
   const [paymentHistory, setPaymentHistory] = useState<Record<string, { monthKey: string, monthName: string, status: 'Paid' | 'Free' | 'Unpaid' | 'Absent' }[]>>({});
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
@@ -416,6 +433,26 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           }
         }
       }
+
+      // Single device concurrent login listener: Old device auto-logout
+      if (type === 'device_force_logout' && p) {
+        const sUsername = (liveStudentData?.username || currentStudent?.username || '').toLowerCase().trim();
+        const myDeviceId = getOrCreateDeviceId();
+        if (p.username?.toLowerCase()?.trim() === sUsername && p.targetDeviceId === myDeviceId) {
+          setForcedLogoutMsg(p.message || 'වෙනත් පුද්ගලයෙකු ඔබගේ ගිණුමට ලොග් වී ඇති හෙයින් ඔබගේ ගිණුමෙන් ලොග් අවුට්වනු ඇත.');
+          setForcedLogoutCountdown(5);
+
+          let counter = 5;
+          const countInterval = setInterval(() => {
+            counter -= 1;
+            setForcedLogoutCountdown(counter);
+            if (counter <= 0) {
+              clearInterval(countInterval);
+              handleStudentLogout();
+            }
+          }, 1000);
+        }
+      }
     });
 
     if (supabase) {
@@ -477,11 +514,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (supabase) {
       try {
         // 1. Fetch live student record
-        const { data: freshStudentData } = await supabase
-          .from('students')
-          .select('*')
-          .eq('id', currentStudent.id)
-          .single();
+        let freshStudentData = null;
+        if (currentStudent?.id) {
+          const { data } = await supabase
+            .from('students')
+            .select('*')
+            .eq('id', currentStudent.id)
+            .maybeSingle();
+          freshStudentData = data;
+        }
+        if (!freshStudentData && currentStudent?.username) {
+          const { data } = await supabase
+            .from('students')
+            .select('*')
+            .ilike('username', currentStudent.username.trim())
+            .maybeSingle();
+          freshStudentData = data;
+        }
 
         const rawStudent = freshStudentData || currentStudent;
         const normalized = normalizeStudent(rawStudent);
@@ -1798,9 +1847,40 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     );
   };
 
+  // Check if student is blocked due to single device restriction or disciplinary actions
+  const blockCheck = isStudentBlocked(liveStudentData || currentStudent);
+  if (blockCheck.isBlocked) {
+    return (
+      <div className={`min-h-screen ${isCurrentDark ? 'dark bg-[#0B0F19]' : 'bg-slate-50'}`}>
+        <StudentDeviceLockScreen
+          currentStudent={liveStudentData || currentStudent}
+          remainingMs={blockCheck.remainingMs}
+          strikeCount={blockCheck.strike}
+          blockedUntil={blockCheck.blockedUntil}
+          onLogout={handleStudentLogout}
+          onAutoUnlock={() => {
+            setLiveStudentData((prev: any) => prev ? {
+              ...prev,
+              device_block_until: null,
+              deviceBlockUntil: null
+            } : prev);
+            fetchDashboardData();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-sans transition-colors pb-12">
       
+      {/* 0. Concurrent Multi-Device 5-Second Logout Modal */}
+      <ConcurrentLogoutModal 
+        isOpen={forcedLogoutCountdown !== null} 
+        countdown={forcedLogoutCountdown || 5} 
+        message={forcedLogoutMsg} 
+      />
+
       {/* 1. Student Profile Modal */}
       {isProfileOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -2587,6 +2667,33 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* 24-Hour Mandatory Security Warning Banner after Account Unblock (No close button; auto-expires in 24 hours) */}
+            {unblockWarning && unblockWarning.show && (
+              <div className="p-4 md:p-5 rounded-3xl bg-amber-500/15 border-2 border-amber-500/40 text-amber-900 dark:text-amber-200 shadow-xl flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-300">
+                <div className="flex items-start gap-3">
+                  <div className="p-2.5 rounded-2xl bg-amber-500 text-slate-950 shrink-0 mt-0.5">
+                    <AlertTriangle size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                      ⚠️ දැඩි ආරක්ෂක අවවාදයයි (Disciplinary Security Warning)
+                    </h4>
+                    <p className="text-xs sm:text-sm font-bold leading-relaxed mt-1">
+                      {unblockWarning.message}
+                    </p>
+                    <span className="text-[10px] text-amber-700 dark:text-amber-400 font-mono mt-1.5 block font-semibold">
+                      මෙම ආරක්ෂක දැනුම්දීම පැය 24ක් සම්පූර්ණ වූ පසු ඩේටාබේස් එකෙන් ස්වයංක්‍රීයවම ඉවත් වනු ඇත.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-amber-500/25 text-amber-800 dark:text-amber-300 font-mono text-xs font-black border border-amber-500/40 shadow-sm">
+                  <Clock size={13} className="text-amber-600 dark:text-amber-400" />
+                  <span>තව පැය {unblockWarning.remainingHours}යි</span>
+                </div>
+              </div>
+            )}
 
             {/* Real-time Approval/Rejection Notifications Stream (Dismissible & Disappears on Leave) */}
             {liveAlerts.length > 0 && (

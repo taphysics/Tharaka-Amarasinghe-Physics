@@ -17,7 +17,7 @@ import {
 import { supabase } from '../supabaseClient';
 import { emitRealtimeEvent } from '../realtimeSync';
 import { renderRealSocialLogo, WhatsAppLogo } from './SocialLogos';
-import { getActiveStudentSession } from '../sessionService';
+import { getActiveStudentSession, getActiveStaffSession } from '../sessionService';
 
 export interface SocialLinkItem {
   id: string;
@@ -295,9 +295,26 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
     }
   };
 
-  const handleGoHome = () => {
+  const handleLogoClick = () => {
+    try {
+      const student = getActiveStudentSession();
+      if (student) {
+        window.location.href = `${window.location.origin}/?view=dashboard`;
+        return;
+      }
+      const staff = getActiveStaffSession();
+      if (staff) {
+        window.location.href = `${window.location.origin}/?view=admin`;
+        return;
+      }
+    } catch (e) {}
+
     if (onNavigateHome) onNavigateHome();
     else window.location.href = window.location.origin;
+  };
+
+  const handleGoHome = () => {
+    handleLogoClick();
   };
 
   const handleRegisterForClass = (clsName: string) => {
@@ -364,9 +381,14 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
           ? 'bg-slate-900/90 border-slate-800 text-white' 
           : 'bg-white/95 border-slate-200 text-slate-900 shadow-sm'
       }`}>
-        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handleLogoClick}
+          className="flex items-center gap-3 text-left group cursor-pointer hover:opacity-90 transition-transform active:scale-98"
+          title="මුල් පිටුවට / ඩෑෂ්බෝඩ් එකට යන්න (Go to Home / Dashboard)"
+        >
           {/* Official Website Logo */}
-          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl overflow-hidden bg-slate-950 p-1 flex items-center justify-center border border-blue-500/30 shadow-md shrink-0">
+          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl overflow-hidden bg-slate-950 p-1 flex items-center justify-center border border-blue-500/30 group-hover:border-blue-500 group-hover:shadow-blue-500/20 shadow-md shrink-0 transition">
             <img 
               src="/logo.png" 
               alt="Smart Physics Logo" 
@@ -380,7 +402,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
 
           <div>
             <div className="flex items-center gap-1.5">
-              <h1 className="text-base sm:text-lg font-black tracking-tight leading-tight">
+              <h1 className="text-base sm:text-lg font-black tracking-tight leading-tight group-hover:text-blue-500 transition">
                 Smart Physics
               </h1>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-500 border border-blue-500/30 uppercase">
@@ -391,7 +413,7 @@ export default function BannerLandingPage({ slug, onNavigateHome, previewData, f
               {pageData.teacher_name || 'තාරක අමරසිංහ'}
             </p>
           </div>
-        </div>
+        </button>
 
         {/* Header Right Actions */}
         <div className="flex items-center gap-2">
