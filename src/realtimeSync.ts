@@ -23,7 +23,8 @@ export type SyncEventType =
   | 'assignment_marks_updated'
   | 'staff_updated'
   | 'device_force_logout'
-  | 'device_violation_updated';
+  | 'device_violation_updated'
+  | 'lecturer_shares_updated';
 
 interface RealtimeMessage {
   type: SyncEventType;

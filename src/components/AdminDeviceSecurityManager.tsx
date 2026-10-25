@@ -20,7 +20,8 @@ import {
   ChevronDown,
   Copy,
   Check,
-  AlertCircle
+  AlertCircle,
+  Monitor
 } from 'lucide-react';
 import { 
   DeviceViolationRecord, 
@@ -29,10 +30,88 @@ import {
   adminInstantUnblockStudent, 
   adminClearViolationHistory,
   formatDeviceInfo,
+  parseDeviceBadge,
   isStudentBlocked,
   VIOLATION_LADDER
 } from '../deviceSecurityService';
-import { subscribeRealtimeEvents } from '../realtimeSync';
+import { supabase } from '../supabaseClient';
+import { subscribeRealtimeEvents, emitRealtimeEvent } from '../realtimeSync';
+
+export interface StudentLoginDevice {
+  deviceNum: number;
+  deviceType: 'Mobile' | 'Tablet' | 'Desktop';
+  os: string;
+  browser: string;
+  loginDate: string;
+  loginTime: string;
+  isCurrent?: boolean;
+}
+
+export const extractStudentDevices = (item: any, studentViolations: DeviceViolationRecord[]): StudentLoginDevice[] => {
+  const devices: StudentLoginDevice[] = [];
+  const seenKeys = new Set<string>();
+
+  const addDevice = (rawInfo: any, dateStr?: string, isCurrent = false) => {
+    if (!rawInfo) return;
+    const badge = parseDeviceBadge(rawInfo);
+    const key = `${badge.deviceType}_${badge.os}_${badge.browser}`.toLowerCase();
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+
+    let parsedDate = 'නොදනී';
+    let parsedTime = '';
+    const ts = dateStr || badge.timestamp;
+    if (ts) {
+      try {
+        const d = new Date(ts);
+        if (!isNaN(d.getTime())) {
+          parsedDate = d.toISOString().split('T')[0];
+          parsedTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      } catch {}
+    }
+
+    devices.push({
+      deviceNum: devices.length + 1,
+      deviceType: badge.deviceType,
+      os: badge.os,
+      browser: badge.browser,
+      loginDate: parsedDate,
+      loginTime: parsedTime,
+      isCurrent
+    });
+  };
+
+  // 1. Current active device from student record
+  if (item.student?.device_info || item.student?.deviceInfo) {
+    addDevice(item.student.device_info || item.student.deviceInfo, undefined, true);
+  }
+
+  // 2. Devices from violation records (attempted logins)
+  studentViolations.forEach(v => {
+    if (v.device_info_new) {
+      addDevice(v.device_info_new, v.blocked_at);
+    }
+    if (v.device_info_previous) {
+      addDevice(v.device_info_previous, v.blocked_at);
+    }
+  });
+
+  // Fallback if none parsed
+  if (devices.length === 0) {
+    devices.push({
+      deviceNum: 1,
+      deviceType: 'Desktop',
+      os: 'Standard OS',
+      browser: 'Web Browser',
+      loginDate: new Date().toISOString().split('T')[0],
+      loginTime: '',
+      isCurrent: true
+    });
+  }
+
+  return devices;
+};
 
 interface AdminDeviceSecurityManagerProps {
   students: any[];
@@ -135,7 +214,8 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       blockedUntil,
       remainingMs: blockCheck.remainingMs,
       latestViolation,
-      deviceInfo: st.device_info || st.deviceInfo ? formatDeviceInfo(st.device_info || st.deviceInfo) : '1 Device (Active)'
+      deviceInfo: st.device_info || st.deviceInfo ? formatDeviceInfo(st.device_info || st.deviceInfo) : '1 Device (Active)',
+      dualDeviceAllowed: Boolean(st.dual_device_allowed ?? st.dualDeviceAllowed ?? false)
     };
   });
 
@@ -157,10 +237,74 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
   const totalBlockedCount = combinedList.filter(i => i.isBlocked).length;
   const totalViolatorsCount = combinedList.filter(i => i.strikeCount > 0).length;
 
+  // Toggle Dual Device Permission (2 Devices allowed per student)
+  const handleToggleDualDevice = async (item: any) => {
+    const username = item.username;
+    const newStatus = !item.dualDeviceAllowed;
+    setProcessingUser(username);
+
+    // Update parent state optimistically
+    if (onUpdateStudents) {
+      onUpdateStudents((prev: any[]) => prev.map(s => {
+        if ((s.username || '').toLowerCase().trim() === username.toLowerCase().trim() || (item.student?.id && s.id === item.student.id)) {
+          return {
+            ...s,
+            dual_device_allowed: newStatus,
+            dualDeviceAllowed: newStatus
+          };
+        }
+        return s;
+      }));
+    }
+
+    // Update localStorage cache
+    try {
+      const raw = localStorage.getItem('physics_hub_students');
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          const updated = list.map((st: any) => {
+            if ((st.username || '').toLowerCase().trim() === username.toLowerCase().trim() || (item.student?.id && st.id === item.student.id)) {
+              return { ...st, dual_device_allowed: newStatus, dualDeviceAllowed: newStatus };
+            }
+            return st;
+          });
+          localStorage.setItem('physics_hub_students', JSON.stringify(updated));
+        }
+      }
+    } catch {}
+
+    // Update Supabase
+    try {
+      if (item.student?.id) {
+        await supabase.from('students').update({ dual_device_allowed: newStatus }).eq('id', item.student.id);
+      }
+      await supabase.from('students').update({ dual_device_allowed: newStatus }).ilike('username', username);
+
+      emitRealtimeEvent('student_updated', { username, dual_device_allowed: newStatus });
+      showToast('success', newStatus 
+        ? `@${username} සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර ලබා දෙන ලදී.` 
+        : `@${username} සිසුවාගේ ඩිවයිස් 2 අවසරය ඉවත් කර තනි ඩිවයිස් නීතිය ක්‍රියාත්මක කරන ලදී.`);
+    } catch (e: any) {
+      showToast('error', `අවසරය යාවත්කාලීන කිරීමේදී දෝෂයක්: ${e?.message || e}`);
+    } finally {
+      setProcessingUser(null);
+    }
+  };
+
   // Handlers
   const handleUnblock = async (item: any) => {
     const username = item.username;
     setProcessingUser(username);
+
+    // 0ms instant local optimistic update
+    setViolations(prev => prev.map(v => {
+      if ((v.student_username || '').toLowerCase().trim() === username.toLowerCase().trim()) {
+        return { ...v, is_active: false, blocked_until: new Date(0).toISOString() };
+      }
+      return v;
+    }));
+
     try {
       const res = await adminInstantUnblockStudent(username, item.student?.id);
       
@@ -183,7 +327,7 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       await loadData();
 
       if (res.error) {
-        showToast('error', `අන්බ්ලොක් කිරීමේදී Database Error එකක් මතු විය: ${res.error}. (කරුණාකර Supabase RLS Fix Script එක ක්‍රියාත්මක කරන්න)`);
+        showToast('error', `අන්බ්ලොක් කිරීමේදී Database Error එකක් මතු විය: ${res.error}`);
       } else {
         showToast('success', `සාර්ථකයි! @${username} සිසුවාගේ ගිණුම සාර්ථකව අන්බ්ලොක් කරන ලදී.`);
       }
@@ -200,6 +344,10 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       return;
     }
     setProcessingUser(username);
+
+    // 0ms instant local optimistic update to remove all violations for this student
+    setViolations(prev => prev.filter(v => (v.student_username || '').toLowerCase().trim() !== username.toLowerCase().trim()));
+
     try {
       const res = await adminClearViolationHistory(username, item.student?.id);
 
@@ -272,7 +420,7 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       setSelectedBlockStudent(null);
 
       if (res.error) {
-        showToast('error', `බ්ලොක් කිරීමේදී Database Error එකක් මතු විය: ${res.error}. (කරුණාකර Supabase RLS Fix Script එක ක්‍රියාත්මක කරන්න)`);
+        showToast('error', `බ්ලොක් කිරීමේදී Database Error එකක් මතු විය: ${res.error}`);
       } else {
         showToast('success', `සාර්ථකයි! @${target.username} සිසුවාගේ ගිණුම සාර්ථකව බ්ලොක් කරන ලදී.`);
       }
@@ -281,61 +429,6 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
     } finally {
       setProcessingUser(null);
     }
-  };
-
-  const copySupabaseSql = () => {
-    const sql = `-- ==============================================================================
--- Smart Physics LMS: Single Device & Bans Full Permissions SQL Fix
--- ==============================================================================
-ALTER TABLE IF EXISTS public.students 
-ADD COLUMN IF NOT EXISTS current_device_id TEXT,
-ADD COLUMN IF NOT EXISTS device_info TEXT,
-ADD COLUMN IF NOT EXISTS device_block_until TEXT,
-ADD COLUMN IF NOT EXISTS device_violations_count INTEGER DEFAULT 0,
-ADD COLUMN IF NOT EXISTS warning_notification JSONB;
-
-CREATE TABLE IF NOT EXISTS public.student_device_violations (
-  id TEXT PRIMARY KEY,
-  student_username TEXT NOT NULL,
-  student_name TEXT,
-  strike_count INTEGER DEFAULT 1,
-  blocked_until TEXT,
-  blocked_at TIMESTAMPTZ DEFAULT NOW(),
-  reason TEXT,
-  device_info_previous TEXT,
-  device_info_new TEXT,
-  is_active BOOLEAN DEFAULT TRUE,
-  warning_notification_shown BOOLEAN DEFAULT FALSE,
-  warning_notification_expires_at TIMESTAMPTZ
-);
-
-CREATE TABLE IF NOT EXISTS public.student_active_sessions (
-  student_username TEXT PRIMARY KEY,
-  device_id TEXT NOT NULL,
-  device_info JSONB,
-  last_seen TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Grant full public/anon permissions so updates never fail
-ALTER TABLE IF EXISTS public.students ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow public all for students" ON public.students;
-CREATE POLICY "Allow public all for students" ON public.students FOR ALL USING (true) WITH CHECK (true);
-
-ALTER TABLE IF EXISTS public.student_device_violations ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow public all for student_device_violations" ON public.student_device_violations;
-CREATE POLICY "Allow public all for student_device_violations" ON public.student_device_violations FOR ALL USING (true) WITH CHECK (true);
-
-ALTER TABLE IF EXISTS public.student_active_sessions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Allow public all for student_active_sessions" ON public.student_active_sessions;
-CREATE POLICY "Allow public all for student_active_sessions" ON public.student_active_sessions FOR ALL USING (true) WITH CHECK (true);
-
-GRANT ALL ON public.students TO anon, authenticated, service_role;
-GRANT ALL ON public.student_device_violations TO anon, authenticated, service_role;
-GRANT ALL ON public.student_active_sessions TO anon, authenticated, service_role;
-`;
-    navigator.clipboard.writeText(sql);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 3000);
   };
 
   return (
@@ -374,15 +467,6 @@ GRANT ALL ON public.student_active_sessions TO anon, authenticated, service_role
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={copySupabaseSql}
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-blue-400 border border-blue-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-              title="Copy Supabase RLS Fix Script to clipboard"
-            >
-              {copiedSql ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-              <span>{copiedSql ? 'SQL පිටපත් විය!' : 'Supabase SQL Fix Script'}</span>
-            </button>
-
             <button
               onClick={loadData}
               disabled={loading}
@@ -484,13 +568,14 @@ GRANT ALL ON public.student_active_sessions TO anon, authenticated, service_role
                 <th className="py-4 px-4">උල්ලංඝනය කළ වාර (Strikes)</th>
                 <th className="py-4 px-4">වත්මන් තත්ත්වය (Status)</th>
                 <th className="py-4 px-4">හඳුනාගත් ඩිවයිස් (Device Details)</th>
+                <th className="py-4 px-4 text-center">ඩිවයිස් 2 අවසරය (Dual Device)</th>
                 <th className="py-4 px-5 text-right">ක්‍රියාමාර්ග (Admin Actions)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
               {filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-slate-500 font-semibold">
+                  <td colSpan={6} className="py-12 text-center text-slate-500 font-semibold">
                     කිසිදු ශිෂ්‍ය වාර්තාවක් හමු නොවීය.
                   </td>
                 </tr>
@@ -498,6 +583,9 @@ GRANT ALL ON public.student_active_sessions TO anon, authenticated, service_role
                 filteredList.map((item) => {
                   const isBusy = processingUser === item.username;
                   const remainingText = formatRemaining(item.blockedUntil);
+                  const uNorm = (item.username || '').toLowerCase().trim();
+                  const studentViolations = violations.filter(v => (v.student_username || '').toLowerCase().trim() === uNorm);
+                  const studentDevices = extractStudentDevices(item, studentViolations);
 
                   return (
                     <tr 
@@ -578,19 +666,81 @@ GRANT ALL ON public.student_active_sessions TO anon, authenticated, service_role
                         )}
                       </td>
 
-                      {/* Device info */}
-                      <td className="py-4 px-4 max-w-xs">
-                        <div className="space-y-1">
-                          <div className="text-[11px] text-slate-300 font-semibold truncate flex items-center gap-1.5" title={item.deviceInfo}>
-                            <Smartphone size={13} className="text-blue-400 shrink-0" />
-                            <span className="truncate">{item.deviceInfo}</span>
-                          </div>
-                          {item.latestViolation && (
-                            <span className="text-[10px] text-slate-400 block truncate" title={item.latestViolation.reason}>
-                              {item.latestViolation.reason}
-                            </span>
-                          )}
+                      {/* Device info: Sequential Devices (ඩිවයිස් 1, 2, 3...) */}
+                      <td className="py-4 px-4 min-w-[260px] max-w-sm">
+                        <div className="space-y-1.5">
+                          {studentDevices.map((dev) => (
+                            <div 
+                              key={dev.deviceNum} 
+                              className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-xs space-y-0.5 shadow-sm"
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="text-blue-400 font-extrabold flex items-center gap-1.5 text-[11px]">
+                                  {dev.deviceType === 'Mobile' ? (
+                                    <Smartphone size={12} className="text-emerald-400 shrink-0" />
+                                  ) : (
+                                    <Monitor size={12} className="text-sky-400 shrink-0" />
+                                  )}
+                                  ඩිවයිස් {dev.deviceNum} ({dev.deviceType})
+                                </span>
+                                {dev.isCurrent ? (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold font-mono">
+                                    වත්මන් (Active)
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                                    ලොග් වීමට දැරූ
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-200 flex items-center gap-1 font-semibold truncate">
+                                <span className="text-white truncate">{dev.os}</span>
+                                <span className="text-slate-500">•</span>
+                                <span className="text-slate-300 font-mono text-[10px] bg-slate-800/80 px-1 py-0.5 rounded border border-slate-700/60">
+                                  {dev.browser}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                                <Clock size={10} className="text-slate-500 shrink-0" />
+                                <span>ලොගින්: {dev.loginDate} {dev.loginTime}</span>
+                              </div>
+                            </div>
+                          ))}
                         </div>
+                      </td>
+
+                      {/* Dual Device Permission Toggle */}
+                      <td className="py-4 px-4 text-center">
+                        <button
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => handleToggleDualDevice(item)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 mx-auto cursor-pointer border ${
+                            item.dualDeviceAllowed
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
+                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-750'
+                          }`}
+                          title={item.dualDeviceAllowed 
+                            ? 'ක්ලික් කර තනි ඩිවයිස් නීතියට මාරු කරන්න' 
+                            : 'ක්ලික් කර මෙම සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර දෙන්න'}
+                        >
+                          {item.dualDeviceAllowed ? (
+                            <>
+                              <CheckCircle2 size={13} className="text-emerald-400" />
+                              <span>ඩිවයිස් 2 අවසරය ඇත</span>
+                            </>
+                          ) : (
+                            <>
+                              <Smartphone size={13} className="text-slate-500" />
+                              <span>තනි ඩිවයිස් (Strict)</span>
+                            </>
+                          )}
+                        </button>
+                        <span className="block text-[9px] text-slate-500 mt-1">
+                          {item.dualDeviceAllowed 
+                            ? 'අනෙක් ඩිවයිස් එකෙන් ලොග් වූ විට පෙර ඩිවයිස් එක තත්. 5න් Logout වේ' 
+                            : 'ඩිවයිස් 2කින් ලොග් වුවහොත් Strike එකක් වැටේ'}
+                        </span>
                       </td>
 
                       {/* Actions */}

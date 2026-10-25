@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { subscribeRealtimeEvents } from '../realtimeSync';
 import { fetchAllPendingPayments } from '../pendingPaymentsService';
 import { 
   FileText, Calendar, EyeOff, Search, Filter, ShieldCheck, 
-  X, Maximize2, ShieldAlert, Sparkles, BookOpen, ChevronRight,
+  X, Maximize2, Minimize2, ShieldAlert, Sparkles, BookOpen, ChevronRight,
   Clock, Lock, Download
 } from 'lucide-react';
 
@@ -27,6 +27,32 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
   
   // Protected In-App PDF Viewer Modal State
   const [activeViewerDoc, setActiveViewerDoc] = useState<any | null>(null);
+  const [isPdfFullscreen, setIsPdfFullscreen] = useState(false);
+  const modalContainerRef = useRef<HTMLDivElement>(null);
+
+  const togglePdfFullscreen = () => {
+    if (!isPdfFullscreen) {
+      if (modalContainerRef.current) {
+        if (modalContainerRef.current.requestFullscreen) {
+          modalContainerRef.current.requestFullscreen().catch(() => {});
+        }
+      }
+      setIsPdfFullscreen(true);
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsPdfFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsPdfFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
 
   const months = [
     { num: '01', name: 'January (ජනවාරි)' },
@@ -526,11 +552,16 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
           onContextMenu={(e) => { e.preventDefault(); return false; }}
         >
           <div 
-            className="w-full max-w-5xl h-[92vh] bg-slate-900 border border-slate-700 rounded-3xl flex flex-col shadow-2xl overflow-hidden relative"
+            ref={modalContainerRef}
+            className={`w-full flex flex-col shadow-2xl overflow-hidden relative transition-all duration-200 ${
+              isPdfFullscreen
+                ? 'fixed inset-0 z-[999999] w-screen h-screen m-0 p-0 rounded-none bg-slate-950 border-0'
+                : 'max-w-5xl h-[92vh] bg-slate-900 border border-slate-700 rounded-3xl'
+            }`}
             onContextMenu={(e) => { e.preventDefault(); return false; }}
           >
             {/* Modal Header */}
-            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+            <div className="p-3 sm:p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-3 min-w-0">
                 <div className="p-2 bg-blue-500/20 text-blue-400 rounded-xl shrink-0">
                   <ShieldCheck size={20} />
@@ -558,12 +589,28 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition shadow"
                     title="PDF එක Download කරන්න"
                   >
-                    <Download size={14} /> Download PDF
+                    <Download size={14} /> <span className="hidden sm:inline">Download</span>
                   </a>
                 )}
+                {/* Fullscreen Button */}
                 <button
-                  onClick={() => setActiveViewerDoc(null)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition cursor-pointer"
+                  type="button"
+                  onClick={togglePdfFullscreen}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition cursor-pointer flex items-center gap-1 text-xs font-bold"
+                  title={isPdfFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                >
+                  {isPdfFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  <span className="hidden sm:inline">{isPdfFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    if (document.fullscreenElement && document.exitFullscreen) {
+                      document.exitFullscreen().catch(() => {});
+                    }
+                    setIsPdfFullscreen(false);
+                    setActiveViewerDoc(null);
+                  }}
+                  className="p-2 bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 rounded-xl transition cursor-pointer"
                   title="වසන්න (Close)"
                 >
                   <X size={18} />

@@ -1272,7 +1272,14 @@ if (isLoading) {
         {/* Brand: Logo & Title */}
         <div 
           className="flex items-center gap-2.5 cursor-pointer group"
-          onClick={() => setCurrentView(currentStudent ? 'dashboard' : 'home')}
+          onClick={() => {
+            if (currentStudent) {
+              setCurrentView('dashboard');
+              window.dispatchEvent(new CustomEvent('sp_navigate_dashboard_overview'));
+            } else {
+              setCurrentView('home');
+            }
+          }}
         >
           {siteConfig.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
             <img src={siteConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm group-hover:scale-105 transition-transform" />
@@ -1507,11 +1514,17 @@ if (isLoading) {
               </div>
 
               {/* Right Column: Professional Teacher Branding (Bento Accent Card) */}
-              <div className="lg:col-span-4 rounded-3xl bg-gradient-to-br from-blue-700 to-indigo-900 border border-blue-400/20 p-8 flex flex-col justify-between text-center relative shadow-2xl overflow-hidden group">
+              <div 
+                style={{
+                  backgroundColor: '#1d4ed8',
+                  backgroundImage: 'linear-gradient(135deg, #1d4ed8 0%, #1e40af 50%, #312e81 100%)'
+                }}
+                className="lg:col-span-4 rounded-3xl bg-blue-700 border-2 border-blue-400/40 p-8 flex flex-col justify-between text-center relative shadow-2xl overflow-hidden group text-white"
+              >
                 {/* Abstract Shape Background */}
                 <div className="absolute -top-10 -right-10 w-64 h-64 bg-white/10 rounded-full blur-3xl group-hover:bg-white/15 transition-all" />
                 
-                <div className="absolute top-4 right-4 text-[10px] tracking-widest font-mono uppercase bg-white/10 text-blue-200 border border-white/20 px-2 py-0.5 rounded">
+                <div className="absolute top-4 right-4 text-[10px] tracking-widest font-mono uppercase bg-blue-950/80 text-blue-100 border border-blue-300/40 px-2.5 py-1 rounded font-bold shadow-sm">
                   {lang === 'si' ? 'ප්‍රධාන දේශක' : 'Director Core'}
                 </div>
 
@@ -1531,26 +1544,26 @@ if (isLoading) {
                   </div>
                 </div>
 
-                <div className="space-y-1 z-10">
-                  <h3 className="text-2xl font-bold text-white tracking-tight">
+                <div className="space-y-1.5 z-10">
+                  <h3 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
                     {siteConfig.directorName || (lang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe')}
                   </h3>
-                  <p className="text-xs text-blue-200 font-mono tracking-widest uppercase font-semibold opacity-90">
+                  <p className="text-xs text-blue-100 font-mono tracking-widest uppercase font-bold drop-shadow-sm">
                     {siteConfig.directorTitle || (lang === 'si' ? "B.Sc (Hon's) පේරාදෙණිය විශ්වවිද්‍යාලය | භෞතික විද්‍යා දේශක" : "B.Sc (Hon's) University of Peradeniya | Physics Teacher")}
                   </p>
                 </div>
 
-                <div className="bg-slate-950/40 border border-blue-400/20 rounded-2xl p-4 mt-6 text-left relative z-10">
-                  <span className="absolute -top-3 left-4 bg-[#142340] border border-blue-400/20 p-0.5 px-2 font-mono text-[9px] text-blue-300 font-semibold uppercase tracking-wider rounded">
+                <div className="bg-slate-950/70 border border-blue-300/30 rounded-2xl p-4 mt-6 text-left relative z-10 shadow-lg">
+                  <span className="absolute -top-3 left-4 bg-blue-900 border border-blue-300/50 p-0.5 px-2.5 font-mono text-[9px] text-white font-extrabold uppercase tracking-wider rounded-md shadow-sm">
                     {lang === 'si' ? 'ගුරු උපදෙස්' : 'Advice & Quote'}
                   </span>
-                  <p className="text-blue-100 text-sm italic font-sans leading-relaxed py-1">
+                  <p className="text-white text-sm italic font-sans leading-relaxed py-1 drop-shadow-sm font-medium">
                     "{siteConfig.directorQuote || (lang === 'si' ? 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.' : 'Physics is not mere memorization; it is a fascinating journey of understanding how the universe works.')}"
                   </p>
                 </div>
 
-                <div className="pt-6 border-t border-blue-400/20 text-[11px] text-blue-200 justify-center flex items-center gap-1 z-10 opacity-75">
-                  <Award size={12} className="text-white" /> {lang === 'si' ? 'වෘත්තීය භෞතික විද්‍යා අධ්‍යයන ඒකක' : 'Professional physics learning modules'}
+                <div className="pt-6 border-t border-blue-400/30 text-xs text-blue-100 justify-center flex items-center gap-1.5 z-10 font-bold drop-shadow-sm">
+                  <Award size={14} className="text-amber-300 shrink-0" /> {lang === 'si' ? 'වෘත්තීය භෞතික විද්‍යා අධ්‍යයන ඒකක' : 'Professional physics learning modules'}
                 </div>
               </div>
             </div>

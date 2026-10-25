@@ -25,6 +25,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../supabaseClient';
 import { subscribeRealtimeEvents } from '../realtimeSync';
+import { ClassLecturerShare, fetchClassLecturerShares, getLecturerShareForClass } from '../lecturerSharesService';
 
 export interface ClassFinanceConfig {
   id?: string;
@@ -52,6 +53,8 @@ export interface StudentLedgerItem {
   status: 'paid' | 'unpaid' | 'free';
   paidAmount: number;
   classType: string;
+  paymentDate?: string;
+  sharePercentage?: number;
   paidMonthsCount?: number;
   totalMonthsCount?: number;
   paymentRecordId?: string;
@@ -100,6 +103,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
   const [dbStudents, setDbStudents] = useState<any[]>(propStudents);
   const [classTypes, setClassTypes] = useState<any[]>([]);
   const [financeConfigs, setFinanceConfigs] = useState<Record<string, ClassFinanceConfig>>({});
+  const [lecturerShares, setLecturerShares] = useState<ClassLecturerShare[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -266,70 +270,62 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
         console.warn('Finance settings load note:', fErr);
       }
 
-      // 5. Fetch Lecturers List (STRICTLY role === 'lecturer', excluding super_admin, admin, manager)
+      // 5. Fetch Lecturers & Multi-Lecturer Shares (Strictly from database staff_members)
       try {
+        const shares = await fetchClassLecturerShares();
+        setLecturerShares(shares);
+
         const { data: stfData } = await supabase.from('staff_members').select('*');
-        const lecturersMap: Map<string, LecturerItem> = new Map();
+        const list: LecturerItem[] = [];
 
-        // Primary default teacher
-        lecturersMap.set('තාරක අමරසිංහ (Tharaka Amarasinghe)', {
-          name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
-          whatsapp: '0779630100',
-          assignedClasses: resolvedClasses.map(c => c.name)
-        });
+        if (stfData && stfData.length > 0) {
+          // Strictly real staff members with role === 'lecturer'
+          const dbLecturers = stfData.filter((s: any) => s.role === 'lecturer');
+          const targetStaff = dbLecturers.length > 0 
+            ? dbLecturers 
+            : stfData.filter((s: any) => s.role === 'super_admin');
 
-        if (stfData) {
-          stfData.forEach((s: any) => {
-            // ONLY role === 'lecturer'! Super admin, admin, manager are administrators only.
-            if (s.role === 'lecturer') {
-              const fullName = `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.username;
-              const assigned = Array.isArray(s.assigned_classes)
-                ? s.assigned_classes
-                : typeof s.assigned_classes === 'string'
-                ? JSON.parse(s.assigned_classes || '[]')
-                : [];
+          targetStaff.forEach((s: any) => {
+            const fullName = `${s.first_name || ''} ${s.last_name || ''}`.trim() || s.username;
+            const assigned: string[] = Array.isArray(s.assigned_classes)
+              ? [...s.assigned_classes]
+              : typeof s.assigned_classes === 'string'
+              ? JSON.parse(s.assigned_classes || '[]')
+              : [];
 
-              lecturersMap.set(fullName, {
-                id: s.id,
-                name: fullName,
-                whatsapp: s.whatsapp || s.mobile || '0779630100',
-                assignedClasses: assigned
-              });
-            }
+            // Merge any classes explicitly configured in class_lecturer_shares for this lecturer
+            shares.forEach(sh => {
+              if (sh.class_type && sh.lecturer_name) {
+                const sLower = fullName.toLowerCase().trim();
+                const shLower = sh.lecturer_name.toLowerCase().trim();
+                if ((sLower === shLower || sLower.includes(shLower) || shLower.includes(sLower)) && !assigned.includes(sh.class_type)) {
+                  assigned.push(sh.class_type);
+                }
+              }
+            });
+
+            list.push({
+              id: s.id,
+              name: fullName,
+              whatsapp: s.whatsapp || s.mobile || '0779630100',
+              assignedClasses: assigned
+            });
           });
         }
 
-        // Map classes from finance configs to lecturers
-        Object.values(map).forEach(cfg => {
-          if (cfg.lecturer_name && cfg.lecturer_name.trim()) {
-            const lName = cfg.lecturer_name.trim();
-            if (lecturersMap.has(lName)) {
-              const existing = lecturersMap.get(lName)!;
-              if (cfg.class_type && !existing.assignedClasses.includes(cfg.class_type)) {
-                existing.assignedClasses.push(cfg.class_type);
-              }
-            } else {
-              // Confirm this person is not super admin, admin or manager
-              const isSysAdmin = stfData?.some((s: any) => 
-                (s.role === 'super_admin' || s.role === 'admin' || s.role === 'manager') &&
-                `${s.first_name || ''} ${s.last_name || ''}`.trim().toLowerCase() === lName.toLowerCase()
-              );
-              if (!isSysAdmin) {
-                lecturersMap.set(lName, {
-                  name: lName,
-                  whatsapp: cfg.lecturer_whatsapp || '0779630100',
-                  assignedClasses: cfg.class_type ? [cfg.class_type] : []
-                });
-              }
-            }
-          }
-        });
+        // Only fallback if staff_members table has 0 records
+        if (list.length === 0) {
+          list.push({
+            name: 'තාරක අමරසිංහ (Tharaka Amarasinghe)',
+            whatsapp: '0779630100',
+            assignedClasses: []
+          });
+        }
 
-        const list = Array.from(lecturersMap.values());
         setLecturersList(list);
 
         // Ensure selectedLecturer is valid
-        if (!lecturersMap.has(selectedLecturer) && list.length > 0) {
+        if (list.length > 0 && !list.some(l => l.name.toLowerCase().trim() === selectedLecturer.toLowerCase().trim())) {
           setSelectedLecturer(list[0].name);
         }
 
@@ -393,15 +389,15 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     return lecturersList.find(l => l.name === selectedLecturer) || {
       name: selectedLecturer,
       whatsapp: '0779630100',
-      assignedClasses: classTypes.map(c => c.name)
+      assignedClasses: []
     };
-  }, [lecturersList, selectedLecturer, classTypes]);
+  }, [lecturersList, selectedLecturer]);
 
   // Compute ONLY classes belonging to the selected lecturer ("ලෙක්චර සම්බන්ධව නොමැති අනෙකුත් පන්ති පෙන්වන්න එපා")
   const lecturerAvailableClasses = useMemo(() => {
     const assigned = currentLecturerObj.assignedClasses || [];
     
-    // 1. Direct assigned classes
+    // 1. Direct assigned classes from staff_members or loaded items
     if (assigned.length > 0) {
       const filtered = classTypes.filter(cls => 
         assigned.some(ac => ac.toLowerCase().trim() === cls.name.toLowerCase().trim())
@@ -419,13 +415,17 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     });
     if (financeMatches.length > 0) return financeMatches;
 
-    // 3. If Tharaka Amarasinghe (primary physics teacher), all classes belong to him
-    if (selectedLecturer.includes('තාරක') || selectedLecturer.includes('Tharaka') || selectedLecturer.includes('Taraka')) {
-      return classTypes;
-    }
+    // 3. Classes where this lecturer has a share configured in lecturerShares
+    const shareMatches = classTypes.filter(cls => {
+      return lecturerShares.some(sh => 
+        sh.class_type.toLowerCase().trim() === cls.name.toLowerCase().trim() &&
+        sh.lecturer_name.toLowerCase().trim() === selectedLecturer.toLowerCase().trim()
+      );
+    });
+    if (shareMatches.length > 0) return shareMatches;
 
     return [];
-  }, [currentLecturerObj, classTypes, financeConfigs, selectedLecturer]);
+  }, [currentLecturerObj, classTypes, financeConfigs, lecturerShares, selectedLecturer]);
 
   // Reset or adjust selectedClasses when lecturer changes
   const handleLecturerChange = (newLecturer: string) => {
@@ -522,39 +522,45 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
           ? JSON.parse(student.active_months || '[]') 
           : [];
 
-        // Check payments across all selected months
+        // Check payments across all selected months strictly from Supabase payments table
         let paidMonthsCount = 0;
         let totalPaidAmount = 0;
         let lastPaymentRecord: any = null;
+        let isFreeStudentForClass = isFreePlan;
 
         selectedMonthsList.forEach(mStr => {
           const pRecord = payments.find(p => {
-            const matchStudent = (p.student_id && p.student_id === student.id) || 
-                                 (p.username && p.username === student.username);
-            const matchMonth = (p.month === mStr) || (p.target_month === mStr);
+            const matchStudent = (p.student_id && String(p.student_id) === String(student.id)) || 
+                                 (p.username && p.username.toLowerCase().trim() === (student.username || '').toLowerCase().trim());
+            const matchMonth = (p.month === mStr) || (p.target_month === mStr) || (p.month_key === mStr) || (p.record_id && p.record_id.includes(mStr));
             const pClass = String(p.class_type || p.class_name || '').toLowerCase().trim();
             const matchClass = pClass === cLower || pClass.includes(cLower) || cLower.includes(pClass);
-            return matchStudent && matchMonth && matchClass && p.status === 'paid';
+            return matchStudent && matchMonth && matchClass;
           });
 
-          const hasActiveMonth = studentActiveMonths.includes(mStr) && student.is_paid && !isFreePlan;
-
           if (pRecord) {
-            paidMonthsCount++;
-            totalPaidAmount += Number(pRecord.amount || standardFee);
             lastPaymentRecord = pRecord;
-          } else if (hasActiveMonth) {
-            paidMonthsCount++;
-            totalPaidAmount += standardFee;
+            if (pRecord.status === 'free') {
+              isFreeStudentForClass = true;
+            } else if (pRecord.status === 'paid') {
+              paidMonthsCount++;
+              totalPaidAmount += Number(pRecord.amount || standardFee);
+            }
+          } else {
+            const hasActiveMonth = studentActiveMonths.includes(mStr) && student.is_paid && !isFreePlan;
+            if (hasActiveMonth) {
+              paidMonthsCount++;
+              totalPaidAmount += standardFee;
+            }
           }
         });
 
         let status: 'paid' | 'unpaid' | 'free' = 'unpaid';
         let paidAmount = 0;
 
-        if (isFreePlan) {
+        if (isFreeStudentForClass) {
           status = 'free';
-          paidAmount = 0; // Strictly 0 fee for free card students per user instructions!
+          paidAmount = 0; // Strictly 0 fee for free card students
         } else if (paidMonthsCount > 0) {
           status = 'paid';
           paidAmount = totalPaidAmount;
@@ -562,6 +568,20 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
           status = 'unpaid';
           paidAmount = 0; // Strictly 0 for unpaid students
         }
+
+        // Extract payment date YYYY-MM-DD directly from Supabase payments record
+        let paymentDate = '-';
+        if (lastPaymentRecord) {
+          const rawDate = lastPaymentRecord.payment_date || 
+                          lastPaymentRecord.reviewed_at || 
+                          lastPaymentRecord.created_at || 
+                          lastPaymentRecord.date;
+          if (rawDate && typeof rawDate === 'string' && rawDate.trim() !== '-') {
+            paymentDate = rawDate.split('T')[0];
+          }
+        }
+
+        const sharePercentage = getLecturerShareForClass(cName, selectedLecturer, lecturerShares);
 
         items.push({
           id: `${student.id}_${cName}`,
@@ -575,13 +595,15 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
           totalMonthsCount: selectedMonthsList.length,
           paymentRecordId: lastPaymentRecord?.id,
           transactionId: lastPaymentRecord?.transaction_id,
-          paymentMethod: lastPaymentRecord?.payment_method
+          paymentMethod: lastPaymentRecord?.payment_method,
+          paymentDate,
+          sharePercentage
         });
       });
     });
 
     return items;
-  }, [dbStudents, payments, selectedMonthsList, targetClassList, classTypes]);
+  }, [dbStudents, payments, selectedMonthsList, targetClassList, classTypes, selectedLecturer, lecturerShares]);
 
   // Filtered view by tab & search query
   const filteredLedger = useMemo(() => {
@@ -596,15 +618,14 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
   }, [studentLedger, activeTab, searchQuery]);
 
   // Financial Statistics and Calculations across all target classes & months
+  // Supports multi-lecturer revenue sharing (e.g. 60%/40% split summing to 100%, or 100% if single)
   const financialStats = useMemo(() => {
     const totalEnrolled = studentLedger.length;
     const paidList = studentLedger.filter(s => s.status === 'paid');
     const unpaidList = studentLedger.filter(s => s.status === 'unpaid');
     const freeList = studentLedger.filter(s => s.status === 'free');
 
-    // Gross Revenue = SUM of paid students' amounts only!
-    const grossRevenue = paidList.reduce((acc, curr) => acc + curr.paidAmount, 0);
-
+    let totalLecturerGross = 0;
     let totalInstituteShare = 0;
     let totalLoanDeduction = 0;
     let totalAdDeduction = 0;
@@ -615,9 +636,13 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     targetClassList.forEach(cName => {
       const classPaid = paidList.filter(s => s.classType === cName);
       const classGross = classPaid.reduce((acc, curr) => acc + curr.paidAmount, 0);
+      const sharePct = getLecturerShareForClass(cName, selectedLecturer, lecturerShares);
+      const lecturerGrossForClass = Math.round(classGross * (sharePct / 100));
+      totalLecturerGross += lecturerGrossForClass;
+
       const cfg = getClassFinanceConfig(cName);
       const instPct = Number(cfg.institute_percentage ?? 20);
-      totalInstituteShare += Math.round(classGross * (instPct / 100));
+      totalInstituteShare += Math.round(lecturerGrossForClass * (instPct / 100));
 
       if (cfg.is_loan_active) {
         totalLoanDeduction += Number(cfg.loan_deduction_amount || 0) * numMonths;
@@ -639,6 +664,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       }
     });
 
+    const grossRevenue = totalLecturerGross;
     const institutePercent = targetClassList.length === 1 
       ? Number(getClassFinanceConfig(targetClassList[0]).institute_percentage ?? 20)
       : grossRevenue > 0 ? Math.round((totalInstituteShare / grossRevenue) * 100) : 20;
@@ -660,7 +686,7 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       totalDeductions,
       netLecturerPayable
     };
-  }, [studentLedger, targetClassList, selectedMonthsList, financeConfigs]);
+  }, [studentLedger, targetClassList, selectedMonthsList, financeConfigs, selectedLecturer, lecturerShares]);
 
   // Period label for display & reports
   const periodLabel = useMemo(() => {
@@ -670,55 +696,40 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     return `${rangeStartMonth} to ${rangeEndMonth} (${selectedMonthsList.length} Months Consolidated)`;
   }, [dateFilterMode, singleMonth, rangeStartMonth, rangeEndMonth, selectedMonthsList]);
 
-  // Associated Lecturers for co-teaching / 50% split support
+  // Associated Lecturers strictly from real database staff_members table
   const associatedLecturers = useMemo<LecturerItem[]>(() => {
-    const list: LecturerItem[] = [];
-    const seen = new Set<string>();
+    if (!currentLecturerObj || !currentLecturerObj.name) return [];
+    const list: LecturerItem[] = [currentLecturerObj];
+    const currentNameLower = currentLecturerObj.name.toLowerCase().trim();
 
-    if (currentLecturerObj && currentLecturerObj.name) {
-      list.push(currentLecturerObj);
-      seen.add(currentLecturerObj.name.toLowerCase().trim());
-    }
-
+    // Only include other real lecturers from lecturersList (staff_members)
+    // who are explicitly assigned to target classes AND configured in class_lecturer_shares with > 0%
     lecturersList.forEach(l => {
-      const lNameLower = l.name.toLowerCase().trim();
-      if (!seen.has(lNameLower)) {
-        const hasOverlap = l.assignedClasses.some(ac => 
+      const lLower = l.name.toLowerCase().trim();
+      if (lLower !== currentNameLower) {
+        const hasAssigned = l.assignedClasses.some(ac => 
           targetClassList.some(tc => tc.toLowerCase().trim() === ac.toLowerCase().trim())
         );
-        if (hasOverlap) {
+        const hasShareConfig = targetClassList.some(tc => {
+          const shares = lecturerShares.filter(s => s.class_type.toLowerCase().trim() === tc.toLowerCase().trim());
+          return shares.length > 1 && shares.some(cs => cs.lecturer_name.toLowerCase().trim() === lLower && cs.share_percentage > 0);
+        });
+
+        if (hasAssigned && hasShareConfig) {
           list.push(l);
-          seen.add(lNameLower);
         }
       }
     });
 
-    targetClassList.forEach(tc => {
-      const cfg = financeConfigs[tc];
-      if (cfg && cfg.lecturer_name) {
-        const parts = cfg.lecturer_name.split(/[,/&]/).map(p => p.trim()).filter(Boolean);
-        parts.forEach(pName => {
-          const pLower = pName.toLowerCase().trim();
-          if (!seen.has(pLower)) {
-            const matchFromList = lecturersList.find(l => l.name.toLowerCase().trim() === pLower);
-            list.push(matchFromList || {
-              name: pName,
-              whatsapp: cfg.lecturer_whatsapp || '0779630100',
-              assignedClasses: [tc]
-            });
-            seen.add(pLower);
-          }
-        });
-      }
-    });
-
     return list;
-  }, [currentLecturerObj, lecturersList, targetClassList, financeConfigs]);
+  }, [currentLecturerObj, lecturersList, targetClassList, lecturerShares]);
 
   const hasTwoLecturers = associatedLecturers.length >= 2;
   const lecturer1 = associatedLecturers[0];
   const lecturer2 = associatedLecturers[1];
-  const splitShareLecturer1 = hasTwoLecturers ? Math.round(financialStats.netLecturerPayable / 2) : financialStats.netLecturerPayable;
+  const l1Pct = lecturer1 ? getLecturerShareForClass(targetClassList[0] || '', lecturer1.name, lecturerShares) : 100;
+  const l2Pct = lecturer2 ? getLecturerShareForClass(targetClassList[0] || '', lecturer2.name, lecturerShares) : 0;
+  const splitShareLecturer1 = hasTwoLecturers ? Math.round(financialStats.netLecturerPayable * (l1Pct / 100)) : financialStats.netLecturerPayable;
   const splitShareLecturer2 = hasTwoLecturers ? (financialStats.netLecturerPayable - splitShareLecturer1) : 0;
 
   // Clean ASCII lecturer name for PDF font safety
@@ -823,21 +834,6 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       `LKR ${financialStats.netLecturerPayable.toLocaleString()}`
     ]);
 
-    if (hasTwoLecturers) {
-      const clean1 = (lecturer1?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || lecturer1?.name;
-      const clean2 = (lecturer2?.name || '').replace(/[^\x00-\x7F]/g, '').trim() || lecturer2?.name;
-      summaryBody.push([
-        `CO-LECTURER 1 (50% EQUAL SHARE): ${clean1}`,
-        '50% Split Share',
-        `LKR ${splitShareLecturer1.toLocaleString()}`
-      ]);
-      summaryBody.push([
-        `CO-LECTURER 2 (50% EQUAL SHARE): ${clean2}`,
-        '50% Split Share',
-        `LKR ${splitShareLecturer2.toLocaleString()}`
-      ]);
-    }
-
     autoTable(doc, {
       head: summaryHead,
       body: summaryBody,
@@ -876,21 +872,20 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     doc.setFontSize(10);
     doc.text('INDIVIDUAL STUDENT PAYMENT & ATTENDANCE LEDGER', 14, finalY + 8);
 
-    const tableHead = [['#', 'STUDENT NAME', 'USERNAME', 'CLASS', 'PAYMENT STATUS', 'AMOUNT (LKR)']];
+    const tableHead = [['#', 'STUDENT NAME', 'USERNAME', 'CLASS', 'PAYMENT DATE', 'STATUS', 'AMOUNT (LKR)']];
     const tableBody = studentLedger.map((s, idx) => {
-      let displayStatus = s.totalMonthsCount && s.totalMonthsCount > 1 
-        ? `PAID (${s.paidMonthsCount}/${s.totalMonthsCount})` 
-        : 'PAID (ACTIVE)';
+      let displayStatus = 'Paid';
       let displayAmount = `+ LKR ${s.paidAmount.toLocaleString()}`;
+      let dateDisplay = s.paymentDate && s.paymentDate !== '-' ? s.paymentDate : '-';
 
       if (s.status === 'unpaid') {
-        displayStatus = s.totalMonthsCount && s.totalMonthsCount > 1 
-          ? `UNPAID (0/${s.totalMonthsCount})` 
-          : 'UNPAID';
-        displayAmount = 'LKR 0';
+        displayStatus = '-';
+        displayAmount = '-';
+        dateDisplay = '-';
       } else if (s.status === 'free') {
-        displayStatus = 'FREE (SCHOLARSHIP)';
-        displayAmount = 'LKR 0';
+        displayStatus = 'Free';
+        displayAmount = 'Free';
+        dateDisplay = '-';
       }
 
       const cleanStudentName = s.name.replace(/[^\x00-\x7F]/g, '').trim() || s.name;
@@ -898,9 +893,10 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
 
       return [
         idx + 1,
-        cleanStudentName.substring(0, 32),
-        `@${cleanUsername.substring(0, 24)}`,
-        s.classType.substring(0, 22),
+        cleanStudentName.substring(0, 30),
+        `@${cleanUsername.substring(0, 20)}`,
+        s.classType.substring(0, 20),
+        dateDisplay,
         displayStatus,
         displayAmount
       ];
@@ -922,24 +918,32 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
         cellPadding: 1.8
       },
       columnStyles: {
-        0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 46, fontStyle: 'bold' },
-        2: { cellWidth: 34 },
-        3: { cellWidth: 30 },
-        4: { cellWidth: 32, halign: 'center', fontStyle: 'bold' },
-        5: { cellWidth: 30, halign: 'right', fontStyle: 'bold' }
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 44, fontStyle: 'bold' },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 28 },
+        4: { cellWidth: 24, halign: 'center' },
+        5: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+        6: { cellWidth: 28, halign: 'right', fontStyle: 'bold' }
       },
       didParseCell: (data) => {
         if (data.section === 'body') {
           const rawItem = studentLedger[data.row.index];
           if (rawItem?.status === 'paid') {
-            if (data.column.index === 4 || data.column.index === 5) {
-              data.cell.styles.textColor = [22, 101, 52]; // Green
+            if (data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [22, 101, 52]; // Green for Paid & Amount
+              data.cell.styles.fontStyle = 'bold';
             }
           } else if (rawItem?.status === 'unpaid') {
-            data.cell.styles.textColor = [185, 28, 28]; // Red
+            if (data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [220, 38, 38]; // Red for '-'
+              data.cell.styles.fontStyle = 'bold';
+            }
           } else if (rawItem?.status === 'free') {
-            data.cell.styles.textColor = [2, 132, 199]; // Light Blue
+            if (data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [2, 132, 199]; // Blue for 'Free'
+              data.cell.styles.fontStyle = 'bold';
+            }
           }
         }
       }
@@ -1030,7 +1034,7 @@ ${hasTwoLecturers ? `🤝 *විෂය දේශක මණ්ඩලය:* 1. ${l
 • ආයතනයට ලබා ගන්නා ප්‍රතිශතය (${financialStats.institutePercent}%): -රු. ${financialStats.instituteShare.toLocaleString()}
 ${financialStats.loanDeduction > 0 ? `• ගුරු ණය වාරිකය අඩු කිරීම: -රු. ${financialStats.loanDeduction.toLocaleString()}\n` : ''}${financialStats.adDeduction > 0 ? `• ප්‍රචාරණ දැන්වීම් ගාස්තු: -රු. ${financialStats.adDeduction.toLocaleString()}\n` : ''}${financialStats.taxDeduction > 0 ? `• ටැක්ස් / වෙනත් අයකිරීම්: -රු. ${financialStats.taxDeduction.toLocaleString()}\n` : ''}━━━━━━━━━━━━━━━━━━━━
 💵 *ගුරු මණ්ඩලයට හිමි මුළු මුදල (Net Payout):* රු. ${financialStats.netLecturerPayable.toLocaleString()}
-${hasTwoLecturers ? `👉 *[${lecturerToSend.name}] ගුරුතුමාට හිමි 50% සමාන කොටස:* රු. ${lecturerNetShare.toLocaleString()}/=\n` : `👉 *ගුරුතුමාට ගෙවිය යුතු ශුද්ධ මුදල:* රු. ${financialStats.netLecturerPayable.toLocaleString()}/=\n`}━━━━━━━━━━━━━━━━━━━━
+${hasTwoLecturers ? `👉 *[${lecturerToSend.name}] ගුරුතුමාට හිමි (${isLecturer2 ? l2Pct : l1Pct}%) කොටස:* රු. ${lecturerNetShare.toLocaleString()}/=\n` : `👉 *ගුරුතුමාට ගෙවිය යුතු ශුද්ධ මුදල:* රු. ${financialStats.netLecturerPayable.toLocaleString()}/=\n`}━━━━━━━━━━━━━━━━━━━━
 📌 නිල සහතිකලත් PDF වාර්තාව Super Admin පද්ධතිය මඟින් ස්වයංක්‍රීයව ජනනය කර බාගත කර ඇත.`;
 
       // 5. Check if browser supports Web Share API with files
@@ -1683,7 +1687,8 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                   <th className="py-3 px-4">පරිශීලක නාමය (Username)</th>
                   <th className="py-3 px-4">පන්තිය (Class)</th>
                   <th className="py-3 px-4">WhatsApp අංකය</th>
-                  <th className="py-3 px-4">තත්වය (Payment Status)</th>
+                  <th className="py-3 px-4 text-center">ගෙවූ දිනය (Date)</th>
+                  <th className="py-3 px-4 text-center">තත්වය (Status)</th>
                   <th className="py-3 px-4 text-right">අයවූ මුදල (Amount)</th>
                 </tr>
               </thead>
@@ -1737,40 +1742,57 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                       ) : 'N/A'}
                     </td>
 
-                    {/* Status Badge */}
-                    <td className="py-3 px-4">
+                    {/* Payment Date YYYY-MM-DD */}
+                    <td className="py-3 px-4 text-center font-mono text-[11px]">
+                      {s.paymentDate && s.paymentDate !== '-' ? (
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-emerald-300 font-bold border border-slate-700">
+                          {s.paymentDate}
+                        </span>
+                      ) : (
+                        <span className="text-slate-500 font-mono">-</span>
+                      )}
+                    </td>
+
+                    {/* Status Badge:
+                        Paid: Green
+                        Free: Blue
+                        Unpaid: Red '-'
+                    */}
+                    <td className="py-3 px-4 text-center">
                       {s.status === 'paid' && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 uppercase">
-                          <CheckCircle2 size={11} /> 
-                          {s.totalMonthsCount && s.totalMonthsCount > 1 
-                            ? `PAID (${s.paidMonthsCount}/${s.totalMonthsCount})` 
-                            : 'PAID'}
+                          <CheckCircle2 size={11} /> Paid
                         </span>
                       )}
                       {s.status === 'unpaid' && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40 uppercase">
-                          <XCircle size={11} /> නොගෙවූ (UNPAID)
+                        <span className="inline-flex items-center justify-center font-black px-3 py-1 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 text-xs">
+                          -
                         </span>
                       )}
                       {s.status === 'free' && (
                         <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-xl bg-sky-500/20 text-sky-300 border border-sky-500/40 uppercase">
-                          <Award size={11} /> FREE (නොමිලේ)
+                          <Award size={11} /> Free
                         </span>
                       )}
                     </td>
 
                     {/* Fee Amount:
                         Paid: Green with + sign
-                        Unpaid & Free: Strictly 0 per user instructions
+                        Free: Blue text 'Free'
+                        Unpaid: Red text '-'
                     */}
                     <td className="py-3 px-4 text-right font-mono font-black">
                       {s.status === 'paid' ? (
                         <span className="text-emerald-400 text-sm">
                           + රු. {s.paidAmount.toLocaleString()}
                         </span>
+                      ) : s.status === 'free' ? (
+                        <span className="text-sky-400 text-xs font-extrabold uppercase">
+                          Free
+                        </span>
                       ) : (
-                        <span className="text-slate-500 text-xs">
-                          රු. 0
+                        <span className="text-rose-400 text-base font-bold">
+                          -
                         </span>
                       )}
                     </td>

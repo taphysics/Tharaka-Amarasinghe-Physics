@@ -218,31 +218,33 @@ export default function StudentDeviceLockScreen({
 
         {/* Emergency Admin Contact Section */}
         <div className="space-y-3 pt-2">
-          <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-            හදිසි අවශ්‍යතාවයකදී හෝ ගිණුම යළි සක්‍රිය කරගැනීම සඳහා පහත දුරකථන අංකය ඔස්සේ ප්‍රධාන ඇඩ්මින්වරයා අමතන්න:
+          <p className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 leading-relaxed">
+            හදිසි අවශ්‍යතාවයකදී හෝ ගිණුම යළි සක්‍රිය කරගැනීම සඳහා පහත කොළ පැහැති බොත්තම ඔබා ප්‍රධාන ඇඩ්මින්වරයා අමතන්න:
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            {/* Direct Phone Call Button */}
+            {/* Direct Phone Call Button (Vibrant Green) */}
             <a
               href="tel:0779630100"
-              className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-2.5 transition transform hover:scale-102 active:scale-98 cursor-pointer"
+              style={{ backgroundColor: '#059669' }}
+              className="w-full sm:w-auto px-6 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-sm sm:text-base rounded-2xl shadow-xl border-2 border-emerald-400 flex items-center justify-center gap-3 transition transform hover:scale-102 active:scale-98 cursor-pointer ring-2 ring-emerald-500/40"
             >
-              <Phone size={18} className="animate-bounce" />
-              <span>ඇඩ්මින් අමතන්න (0779630100)</span>
+              <Phone size={20} className="text-white animate-bounce shrink-0" />
+              <span className="text-white font-extrabold drop-shadow">ඇඩ්මින් අමතන්න (0779630100)</span>
             </a>
 
-            {/* WhatsApp Support Button */}
+            {/* WhatsApp Support Button (Vibrant Green Outline/Fill) */}
             <a
               href={`https://wa.me/94779630100?text=${encodeURIComponent(
                 `ගරු ඇඩ්මින්තුමනි, මගේ ගිණුම (${currentStudent?.username}) ඩිවයිස් සීමා නීතිය නිසා බ්ලොක් වී ඇත. කරුණාකර එය පරීක්ෂා කර සහාය වන්න.`
               )}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full sm:w-auto px-5 py-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-sm rounded-2xl border border-slate-300 dark:border-slate-700 flex items-center justify-center gap-2 transition cursor-pointer"
+              style={{ backgroundColor: '#047857' }}
+              className="w-full sm:w-auto px-6 py-4 bg-emerald-700 hover:bg-emerald-600 text-white font-extrabold text-sm sm:text-base rounded-2xl border-2 border-emerald-400/60 shadow-lg flex items-center justify-center gap-3 transition cursor-pointer"
             >
-              <MessageCircle size={18} className="text-emerald-500" />
-              <span>WhatsApp පණිවිඩයක් එවන්න</span>
+              <MessageCircle size={20} className="text-emerald-200 shrink-0" />
+              <span className="text-white font-bold drop-shadow">WhatsApp පණිවිඩයක් එවන්න</span>
             </a>
           </div>
         </div>

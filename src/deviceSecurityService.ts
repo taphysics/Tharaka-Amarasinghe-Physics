@@ -463,88 +463,142 @@ export async function registerDeviceLogin(student: any): Promise<{
   let newStrikeCount = currentStrikes;
   let newBlockedUntil = student.device_block_until || student.deviceBlockUntil;
 
-  if (isConcurrent) {
-    // VIOLATION DETECTED: Sequential strike increment (+1)
-    newStrikeCount = currentStrikes + 1;
-    const ladderStep = getDurationForStrike(newStrikeCount);
-    newBlockedUntil = new Date(Date.now() + ladderStep.durationMs).toISOString();
+  // Check if student has admin permission for 2 devices
+  const isDualDeviceAllowed = Boolean(
+    student.dual_device_allowed ?? 
+    student.dualDeviceAllowed ?? 
+    student.is_dual_device_allowed ?? 
+    false
+  );
 
+  if (isConcurrent) {
+    const newDeviceFormatted = formatDeviceInfo(currentDevice);
     const prevDeviceFormatted = previousSession 
       ? formatDeviceInfo(previousSession) 
       : 'පෙර ලොග් වූ ඩිවයිස් (Previous Session)';
-    const newDeviceFormatted = formatDeviceInfo(currentDevice);
 
-    const violationRecord: DeviceViolationRecord = {
-      id: `viol_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      student_username: username,
-      student_name: student.name || `${student.firstName || ''} ${student.lastName || ''}`.trim() || username,
-      strike_count: newStrikeCount,
-      blocked_until: newBlockedUntil,
-      blocked_at: new Date().toISOString(),
-      reason: `සිසුවා එකවර ඩිවයිස් 2කින් ලොග් විය. (Strike ${newStrikeCount}: ${ladderStep.label} තහනමක් ක්‍රියාත්මක විය)`,
-      device_info_previous: JSON.stringify(previousSession || { os: 'Previous Device', browser: 'Browser', deviceType: 'Desktop' }),
-      device_info_new: JSON.stringify(currentDevice),
-      is_active: true,
-      warning_notification_shown: false,
-      warning_notification_expires_at: new Date(Date.now() + ladderStep.durationMs + 24 * 60 * 60 * 1000).toISOString()
-    };
-
-    // Save violation locally
-    const currentViolations = getLocalViolations();
-    saveLocalViolations([violationRecord, ...currentViolations]);
-
-    // Update local cache
-    updateLocalStudentsCache(username, {
-      device_violations_count: newStrikeCount,
-      deviceViolationsCount: newStrikeCount,
-      device_block_until: newBlockedUntil,
-      deviceBlockUntil: newBlockedUntil,
-      current_device_id: currentDeviceId,
-      currentDeviceId: currentDeviceId
-    }, student.id);
-
-    // Upsert into Supabase student_device_violations
-    try {
-      await supabase.from('student_device_violations').insert([violationRecord]);
-    } catch (e) {
-      console.warn('Supabase insert violation failed, using local:', e);
-    }
-
-    // Update student in Supabase
-    try {
-      const updateData = {
-        device_violations_count: newStrikeCount,
-        device_block_until: newBlockedUntil,
-        current_device_id: currentDeviceId,
-        device_info: JSON.stringify(currentDevice)
+    if (isDualDeviceAllowed) {
+      // DUAL DEVICE PERMITTED:
+      // The student has approved permission to use 2 devices.
+      // Switching devices is allowed without strikes or account ban!
+      // Immediately force-logout the previous device with 5-second countdown.
+      const logoutPayload = {
+        username,
+        targetDeviceId: previousDeviceId,
+        countdownSeconds: 5,
+        newDevice: newDeviceFormatted,
+        isDualDeviceSwitch: true,
+        message: `මෙම මොහොතේ ඔබගේ (${newDeviceFormatted}) ලොග්වී ඇති බැවින් ඔබව මෙම Device එකෙන් Logout කරේ`
       };
 
-      if (student.id) {
-        await supabase.from('students').update(updateData).eq('id', student.id);
+      emitRealtimeEvent('device_force_logout' as any, logoutPayload);
+
+      try {
+        const channel = supabase.channel('student_device_security');
+        channel.send({
+          type: 'broadcast',
+          event: 'force_logout',
+          payload: logoutPayload
+        });
+      } catch {}
+
+      // Update student active device without penalty
+      updateLocalStudentsCache(username, {
+        current_device_id: currentDeviceId,
+        currentDeviceId: currentDeviceId
+      }, student.id);
+
+      try {
+        const updateData = {
+          current_device_id: currentDeviceId,
+          device_info: JSON.stringify(currentDevice)
+        };
+        if (student.id) {
+          await supabase.from('students').update(updateData).eq('id', student.id);
+        }
+        await supabase.from('students').update(updateData).ilike('username', username);
+      } catch (e) {}
+
+    } else {
+      // VIOLATION DETECTED: Sequential strike increment (+1)
+      newStrikeCount = currentStrikes + 1;
+      const ladderStep = getDurationForStrike(newStrikeCount);
+      newBlockedUntil = new Date(Date.now() + ladderStep.durationMs).toISOString();
+
+      const violationRecord: DeviceViolationRecord = {
+        id: `viol_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        student_username: username,
+        student_name: student.name || `${student.firstName || ''} ${student.lastName || ''}`.trim() || username,
+        strike_count: newStrikeCount,
+        blocked_until: newBlockedUntil,
+        blocked_at: new Date().toISOString(),
+        reason: `සිසුවා එකවර ඩිවයිස් 2කින් ලොග් විය. (Strike ${newStrikeCount}: ${ladderStep.label} තහනමක් ක්‍රියාත්මක විය)`,
+        device_info_previous: JSON.stringify(previousSession || { os: 'Previous Device', browser: 'Browser', deviceType: 'Desktop' }),
+        device_info_new: JSON.stringify(currentDevice),
+        is_active: true,
+        warning_notification_shown: false,
+        warning_notification_expires_at: new Date(Date.now() + ladderStep.durationMs + 24 * 60 * 60 * 1000).toISOString()
+      };
+
+      // Save violation locally
+      const currentViolations = getLocalViolations();
+      saveLocalViolations([violationRecord, ...currentViolations]);
+
+      // Update local cache
+      updateLocalStudentsCache(username, {
+        device_violations_count: newStrikeCount,
+        deviceViolationsCount: newStrikeCount,
+        device_block_until: newBlockedUntil,
+        deviceBlockUntil: newBlockedUntil,
+        current_device_id: currentDeviceId,
+        currentDeviceId: currentDeviceId
+      }, student.id);
+
+      // Upsert into Supabase student_device_violations
+      try {
+        await supabase.from('student_device_violations').insert([violationRecord]);
+      } catch (e) {
+        console.warn('Supabase insert violation failed, using local:', e);
       }
-      await supabase.from('students').update(updateData).ilike('username', username);
-    } catch (e) {}
 
-    // Broadcast force-logout with 5-second countdown to the old device
-    const logoutPayload = {
-      username,
-      targetDeviceId: previousDeviceId,
-      countdownSeconds: 5,
-      strikeCount: newStrikeCount,
-      blockedUntil: newBlockedUntil,
-      message: 'වෙනත් ඩිවයිස් එකකින් ඔබගේ ගිණුමට ලොග් වී ඇති බැවින් තත්පර 5කින් මෙම ඩිවයිස් එකෙන් ලොග් අවුට් වේ.'
-    };
+      // Update student in Supabase
+      try {
+        const updateData = {
+          device_violations_count: newStrikeCount,
+          device_block_until: newBlockedUntil,
+          current_device_id: currentDeviceId,
+          device_info: JSON.stringify(currentDevice)
+        };
 
-    emitRealtimeEvent('device_force_logout' as any, logoutPayload);
+        if (student.id) {
+          await supabase.from('students').update(updateData).eq('id', student.id);
+        }
+        await supabase.from('students').update(updateData).ilike('username', username);
+      } catch (e) {}
 
-    try {
-      const channel = supabase.channel('student_device_security');
-      channel.send({
-        type: 'broadcast',
-        event: 'force_logout',
-        payload: logoutPayload
-      });
-    } catch {}
+      // Broadcast force-logout with 5-second countdown to the old device
+      const logoutPayload = {
+        username,
+        targetDeviceId: previousDeviceId,
+        countdownSeconds: 5,
+        strikeCount: newStrikeCount,
+        blockedUntil: newBlockedUntil,
+        newDevice: newDeviceFormatted,
+        isDualDeviceSwitch: false,
+        message: `මෙම මොහොතේ ඔබගේ (${newDeviceFormatted}) ලොග්වී ඇති බැවින් ඔබව මෙම Device එකෙන් Logout කරේ`
+      };
+
+      emitRealtimeEvent('device_force_logout' as any, logoutPayload);
+
+      try {
+        const channel = supabase.channel('student_device_security');
+        channel.send({
+          type: 'broadcast',
+          event: 'force_logout',
+          payload: logoutPayload
+        });
+      } catch {}
+    }
   }
 
   // Update current active session in Supabase & LocalStorage

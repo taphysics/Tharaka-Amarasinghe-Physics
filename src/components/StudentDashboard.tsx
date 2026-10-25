@@ -216,6 +216,17 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
 
+  // Listen for top header logo click to return to Hub Overview
+  useEffect(() => {
+    const handleNavOverview = () => {
+      if (setDashboardTab) {
+        setDashboardTab(null);
+      }
+    };
+    window.addEventListener('sp_navigate_dashboard_overview', handleNavOverview);
+    return () => window.removeEventListener('sp_navigate_dashboard_overview', handleNavOverview);
+  }, [setDashboardTab]);
+
   const handleDismissAlert = async (id: string) => {
     setLiveAlerts(prev => prev.filter(a => a.id !== id));
     dismissNotification(id);
@@ -224,11 +235,18 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     let reqId = '';
     if (id.startsWith('app_')) reqId = id.replace('app_', '');
     else if (id.startsWith('rej_')) reqId = id.replace('rej_', '');
+    else if (id.includes('payreq_')) {
+      const match = id.match(/(payreq_[a-zA-Z0-9_]+)/);
+      if (match) reqId = match[1];
+    }
 
     if (reqId) {
       // 1. Permanently delete from Supabase pending_payments table and local store
       try {
         await deletePendingPaymentRequest(reqId);
+        if (supabase) {
+          await supabase.from('pending_payments').delete().eq('id', reqId);
+        }
       } catch (err) {
         console.warn('Error deleting pending payment on alert dismiss:', err);
       }
@@ -238,7 +256,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
     // 2. Permanently delete from announcements table in Supabase so it NEVER reappears
     if (supabase) {
       try {
-        await supabase.from('announcements').delete().or(`id.eq.${id},id.eq.${reqId},content.like.%${reqId}%`);
+        if (reqId) {
+          await supabase.from('announcements').delete().or(`id.eq.${id},id.eq.${reqId},id.ilike.%${reqId}%,content.ilike.%${reqId}%`);
+        } else {
+          await supabase.from('announcements').delete().eq('id', id);
+        }
       } catch (err) {
         console.warn('Error deleting announcement from db on alert dismiss:', err);
       }
@@ -1143,19 +1165,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-2 mb-4 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800/80 text-[11px]">
           <span className="text-slate-600 dark:text-slate-400 font-semibold mr-1">පන්ති වර්ග:</span>
-          <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+          <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-500/40 font-bold">
             📘 2026 Theory
           </span>
-          <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+          <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/40 font-bold">
             ⚡ 2026 Revision
           </span>
-          <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold">
+          <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-800 dark:text-purple-300 border border-purple-500/40 font-bold">
             🔭 2027 Theory
           </span>
-          <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+          <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-800 dark:text-cyan-300 border border-cyan-500/40 font-bold">
             🚀 2027 Revision
           </span>
-          <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+          <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-800 dark:text-rose-300 border border-rose-500/40 font-bold">
             📝 Paper Class
           </span>
         </div>
@@ -1784,9 +1806,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     ) : (
                       <button
                         onClick={() => handleOpenJoinModal(cls)}
-                        className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer"
+                        style={{ backgroundColor: '#059669', color: '#ffffff' }}
+                        className="w-full py-3 !bg-emerald-600 hover:!bg-emerald-500 !text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer border border-emerald-500/40"
                       >
-                        <Sparkles size={14} /> {activeLang === 'si' ? 'සම්බන්ධ වන්න (Join Class) →' : 'Join Class →'}
+                        <Sparkles size={14} className="text-amber-300" /> <span className="!text-white font-bold">{activeLang === 'si' ? 'සම්බන්ධ වන්න (Join Class) →' : 'Join Class →'}</span>
                       </button>
                     )}
                   </div>
@@ -2124,10 +2147,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {isJoinModalOpen && selectedClassToJoin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 overflow-y-auto">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-5 my-8 animate-in fade-in zoom-in duration-200 text-slate-900 dark:text-white">
-            {/* Close Button */}
+            {/* Red Top Close Button */}
             <button
               onClick={() => setIsJoinModalOpen(false)}
-              className="absolute top-5 right-5 p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer border border-slate-200 dark:border-slate-700"
+              className="absolute top-4 right-4 p-2 bg-rose-600 hover:bg-rose-500 rounded-full text-white transition cursor-pointer shadow-md z-10"
+              title="Close (වසන්න)"
             >
               <X size={16} />
             </button>
@@ -2321,7 +2345,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsJoinModalOpen(false)}
-                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
                 >
                   {activeLang === 'si' ? 'අවලංගු කරන්න (Cancel)' : 'Cancel'}
                 </button>
@@ -2914,7 +2938,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </div>
                       <div>
                         <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-amber-500 transition">
-                         Your Classes & Recordings
+                          Your Classes & Recordings
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
                           Watch past classes in HD, zero data charges
@@ -3117,6 +3141,49 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </main>
         </div>
       </div>
+
+      {/* 5-SECOND COUNTDOWN FORCE LOGOUT MODAL */}
+      {forcedLogoutCountdown !== null && (
+        <div className="fixed inset-0 z-[99999] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-gradient-to-b from-slate-900 via-rose-950/40 to-slate-950 border-2 border-rose-500/50 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5 animate-scale-up">
+            <div className="w-20 h-20 rounded-full bg-rose-500/20 border-2 border-rose-500/40 flex items-center justify-center mx-auto text-rose-400 shadow-lg shadow-rose-900/30 animate-pulse">
+              <ShieldAlert size={40} />
+            </div>
+
+            <div className="space-y-2">
+              <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/30 uppercase tracking-wider">
+                ඩිවයිස් මාරුවීම හඳුනාගැනිණි (Device Switch)
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                ගිණුමෙන් ඉවත් කෙරේ
+              </h2>
+              <p className="text-sm text-slate-300 font-medium leading-relaxed">
+                {forcedLogoutMsg || 'මෙම මොහොතේ ඔබගේ වෙනත් Device එකක් ලොග්වී ඇති බැවින් ඔබව මෙම Device එකෙන් Logout කරේ.'}
+              </p>
+            </div>
+
+            {/* Big Countdown Timer */}
+            <div className="py-3 px-6 rounded-2xl bg-slate-950 border border-rose-500/30 inline-flex flex-col items-center justify-center gap-1 shadow-inner">
+              <span className="text-4xl sm:text-5xl font-black font-mono text-rose-400 animate-pulse">
+                0{Math.max(0, forcedLogoutCountdown)}
+              </span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                තත්පර වලින් ස්වයංක්‍රීයව Logout වේ
+              </span>
+            </div>
+
+            <div>
+              <button
+                type="button"
+                onClick={handleStudentLogout}
+                className="w-full py-3.5 px-6 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-sm shadow-xl shadow-rose-600/30 transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <span>දැන්ම Logout වන්න (Logout Now)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

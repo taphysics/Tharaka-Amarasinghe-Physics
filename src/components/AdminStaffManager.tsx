@@ -37,7 +37,9 @@ import {
   ExternalLink,
   Edit,
   Sparkles,
-  PhoneCall
+  PhoneCall,
+  X,
+  Plus
 } from 'lucide-react';
 
 const ROLE_CONFIG: Record<StaffRole, { label: string; badgeClass: string; icon: any }> = {
@@ -68,6 +70,7 @@ const AVAILABLE_SECTIONS = [
   { id: 'registry', label: 'ශිෂ්‍ය ලේඛනය (Student Registry)' },
   { id: 'manual_student', label: 'ශිෂ්‍ය ලියාපදිංචිය (Manual Registration)' },
   { id: 'staff', label: 'කාර්යමණ්ඩලය (Staff Management)' },
+  { id: 'device_security', label: '🛡️ ඩිවයිස් පාලනය (Device Security & Bans)' },
   { id: 'resets', label: 'පන්ති ගාස්තු සහ වර්ග (Class Fees & Types)' },
   { id: 'payments', label: 'ගෙවීම් කළමනාකරණය (Manage Payments)' },
   { id: 'pending_payments', label: 'පොරොත්තු ගෙවීම් (Pending Approvals)' },
@@ -266,7 +269,8 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
     if (initialRole === 'admin' || initialRole === 'manager') {
       setAssignedClasses(availableClasses);
     } else {
-      setAssignedClasses(availableClasses.length > 0 ? [availableClasses[0]] : []);
+      // Newly created lecturers start with no classes auto-assigned
+      setAssignedClasses([]);
     }
     setAllowedSections(initialRole === 'lecturer' ? [] : ['registry', 'manual_student', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner']);
     setDeletePin('');
@@ -289,12 +293,50 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
     if (staff.role === 'admin' || staff.role === 'manager' || staff.role === 'super_admin') {
       setAssignedClasses(availableClasses.length > 0 ? availableClasses : (staff.assigned_classes || []));
     } else {
-      setAssignedClasses(staff.assigned_classes || []);
+      // Filter strictly by available classes in database
+      const filtered = (staff.assigned_classes || []).filter(c => availableClasses.includes(c));
+      setAssignedClasses(filtered);
     }
     setAllowedSections(staff.allowed_sections || []);
     setDeletePin(staff.delete_pin || '');
     setFormError('');
     setIsAddModalOpen(true);
+  };
+
+  // Quick Class Assignment Modal State
+  const [assignClassTarget, setAssignClassTarget] = useState<StaffMember | null>(null);
+  const [selectedClassesToAdd, setSelectedClassesToAdd] = useState<string[]>([]);
+  const [assigningClasses, setAssigningClasses] = useState(false);
+
+  const handleQuickAddClasses = async () => {
+    if (!assignClassTarget || selectedClassesToAdd.length === 0) return;
+    setAssigningClasses(true);
+    try {
+      const currentAssigned = Array.isArray(assignClassTarget.assigned_classes) ? assignClassTarget.assigned_classes : [];
+      const updated = Array.from(new Set([...currentAssigned, ...selectedClassesToAdd]));
+      
+      await updateStaffMember(assignClassTarget.id, { assigned_classes: updated });
+      setStaffList(prev => prev.map(s => s.id === assignClassTarget.id ? { ...s, assigned_classes: updated } : s));
+      setAssignClassTarget(null);
+      setSelectedClassesToAdd([]);
+    } catch (err: any) {
+      alert('පන්ති ඇඩ් කිරීමේදී දෝෂයක්: ' + (err.message || ''));
+    } finally {
+      setAssigningClasses(false);
+    }
+  };
+
+  const handleQuickRemoveClass = async (staff: StaffMember, classToRemove: string) => {
+    if (!confirm(`[${classToRemove}] පන්තිය මෙම සාමාජිකයාගෙන් ඉවත් කිරීමට ඔබට සහතිකද?`)) return;
+    try {
+      const currentAssigned = Array.isArray(staff.assigned_classes) ? staff.assigned_classes : [];
+      const updated = currentAssigned.filter(c => c !== classToRemove);
+      
+      await updateStaffMember(staff.id, { assigned_classes: updated });
+      setStaffList(prev => prev.map(s => s.id === staff.id ? { ...s, assigned_classes: updated } : s));
+    } catch (err: any) {
+      alert('පන්තිය ඉවත් කිරීමේදී දෝෂයක්: ' + (err.message || ''));
+    }
   };
 
   const handleSubmitStaff = async (e: React.FormEvent) => {
@@ -639,15 +681,56 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
 
                       {/* Assigned Classes */}
                       <td className="py-3.5 px-3">
-                        <div className="max-w-[200px] flex flex-wrap gap-1">
-                          {staff.assigned_classes && staff.assigned_classes.length > 0 ? (
-                            staff.assigned_classes.map(c => (
-                              <span key={c} className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300">
-                                {c}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-[10px] text-slate-500">සියලුම පන්ති (All)</span>
+                        <div className="flex flex-col gap-1.5 min-w-[200px]">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {(() => {
+                              const validAssigned = (staff.assigned_classes || []).filter(c => 
+                                availableClasses.includes(c)
+                              );
+
+                              if (validAssigned.length === 0) {
+                                return (
+                                  <span className="text-[10px] text-slate-500 italic">
+                                    {staff.role === 'lecturer' ? 'පන්ති පවරා නොමැත (No classes)' : 'සියලුම පන්ති (All Classes)'}
+                                  </span>
+                                );
+                              }
+
+                              return validAssigned.map(c => (
+                                <span 
+                                  key={c} 
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-950/70 border border-indigo-500/30 text-[10px] text-indigo-200 font-bold"
+                                >
+                                  <span>{c}</span>
+                                  {canModifyStaff(staff) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickRemoveClass(staff, c)}
+                                      className="text-indigo-400 hover:text-rose-400 transition cursor-pointer ml-0.5 font-bold"
+                                      title="පන්තිය ඉවත් කරන්න"
+                                    >
+                                      ×
+                                    </button>
+                                  )}
+                                </span>
+                              ));
+                            })()}
+                          </div>
+
+                          {/* + Add Class Button */}
+                          {canModifyStaff(staff) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssignClassTarget(staff);
+                                setSelectedClassesToAdd([]);
+                              }}
+                              className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/30 text-[10px] font-bold transition cursor-pointer"
+                              title="අලුතින් පන්ති පවරන්න"
+                            >
+                              <Plus size={10} />
+                              <span>පන්ති එක් කරන්න (Add)</span>
+                            </button>
                           )}
                         </div>
                       </td>
@@ -1216,6 +1299,100 @@ export default function AdminStaffManager({ currentStaff }: AdminStaffManagerPro
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Classes Modal for Staff/Lecturer */}
+      {assignClassTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                  <span>පන්ති පැවරීම (Assign Classes)</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  {assignClassTarget.first_name} {assignClassTarget.last_name} ({assignClassTarget.role})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssignClassTarget(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-slate-300 block">
+                ඩේටාබේස් එකේ ඇති පන්ති වලින් එක් කිරීමට පන්ති තෝරන්න:
+              </label>
+
+              {(() => {
+                const currentAssigned = assignClassTarget.assigned_classes || [];
+                const unassignedAvailable = availableClasses.filter(c => !currentAssigned.includes(c));
+
+                if (unassignedAvailable.length === 0) {
+                  return (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 text-xs text-center">
+                      ඩේටාබේස් එකේ ඇති සියලුම පන්ති දැනටමත් මෙම සාමාජිකයාට පවරා ඇත.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto p-2 bg-slate-950 rounded-2xl border border-slate-800">
+                    {unassignedAvailable.map(cName => {
+                      const isSelected = selectedClassesToAdd.includes(cName);
+                      return (
+                        <button
+                          type="button"
+                          key={cName}
+                          onClick={() => {
+                            setSelectedClassesToAdd(prev => 
+                              isSelected ? prev.filter(c => c !== cName) : [...prev, cName]
+                            );
+                          }}
+                          className={`p-3 rounded-xl border text-xs font-bold text-left transition flex items-center justify-between cursor-pointer ${
+                            isSelected
+                              ? 'bg-blue-600/20 text-blue-200 border-blue-500 shadow-sm'
+                              : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <span>{cName}</span>
+                          <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
+                            isSelected ? 'bg-blue-500 text-white' : 'border border-slate-700'
+                          }`}>
+                            {isSelected ? '✓' : ''}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setAssignClassTarget(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                අවලංගු කරන්න (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={handleQuickAddClasses}
+                disabled={assigningClasses || selectedClassesToAdd.length === 0}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+              >
+                {assigningClasses ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Add ({selectedClassesToAdd.length})</span>
+              </button>
             </div>
           </div>
         </div>

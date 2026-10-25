@@ -131,19 +131,25 @@ const extractZoomMeetingInfo = (joinUrl: string, classObj?: any) => {
     else if (classObj.password) pwd = String(classObj.password).trim();
   }
   if (!joinUrl && !meetingId) return { meetingId, pwd };
+
+  const safeUrl = joinUrl.startsWith('http://') || joinUrl.startsWith('https://') 
+    ? joinUrl 
+    : `https://${joinUrl}`;
+
   try {
-    const url = new URL(joinUrl);
+    const url = new URL(safeUrl);
     const m = url.pathname.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || url.pathname.match(/\/(\d{9,11})/);
     if (m && m[1]) meetingId = m[1];
-    if (!pwd) {
-      pwd = url.searchParams.get('pwd') || url.searchParams.get('password') || url.searchParams.get('passcode') || '';
+    const urlPwd = url.searchParams.get('pwd') || url.searchParams.get('password') || url.searchParams.get('passcode');
+    if (urlPwd) {
+      pwd = urlPwd;
     }
   } catch {
     const m = joinUrl.match(/\/(?:j|wc|s|meeting)\/(\d+)/) || joinUrl.match(/(\d{9,11})/);
     if (m && m[1]) meetingId = m[1];
     if (!pwd) {
-      const p = joinUrl.match(/[?&](?:pwd|password|passcode)=([a-zA-Z0-9_\.-]+)/i);
-      if (p && p[1]) pwd = p[1];
+      const p = joinUrl.match(/[?&](?:pwd|password|passcode)=([^&#]+)/i);
+      if (p && p[1]) pwd = decodeURIComponent(p[1]);
     }
   }
   return { meetingId, pwd };
@@ -2209,6 +2215,44 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             </div>
           </div>
 
+          {/* Mobile & Desktop Passcode Helper & Quick Join Bar */}
+          {zoomMeetingInfo.pwd && !isExamOpen && (
+            <div className="bg-amber-500/15 border-b border-amber-500/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs z-10">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                <span className="text-amber-800 dark:text-amber-200 font-semibold text-[11px] sm:text-xs">
+                  Meeting Passcode: <span className="font-mono font-black text-amber-900 dark:text-amber-100 bg-amber-400/25 px-2 py-0.5 rounded text-xs select-all">{zoomMeetingInfo.pwd}</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(zoomMeetingInfo.pwd);
+                    }
+                    setPasscodeCopied(true);
+                    setTimeout(() => setPasscodeCopied(false), 2000);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
+                  title="Copy Passcode"
+                >
+                  {passcodeCopied ? <Check size={12} className="text-white" /> : <Copy size={12} />}
+                  {passcodeCopied ? 'Copied!' : 'Copy Passcode'}
+                </button>
+                {mobileZoomAppUrl && (
+                  <a
+                    href={mobileZoomAppUrl}
+                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1 shadow transition"
+                    title="Zoom App එකෙන් Auto Join වන්න"
+                  >
+                    <Smartphone size={12} /> Open in Zoom App
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Invisible Top Edge Hover / Touch Area to trigger controls in Fullscreen */}
           {isFullscreen && !showFullscreenControls && (
             <div
@@ -2225,7 +2269,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                resetFullscreenControlsTimer();
+              resetFullscreenControlsTimer();
               }}
               className="absolute top-3 right-3 z-30 p-2 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 backdrop-blur-md shadow-lg transition cursor-pointer"
               title="පාලක පුවරුව පෙන්වන්න (Show Controls)"
@@ -2246,12 +2290,12 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
           {/* Embedded Zoom Web Client Iframe or Exam Floating Camera Preview */}
           {!isFloatingCollapsed && (
-            <div className={`w-full bg-slate-900 relative ${
+            <div className={`w-full max-w-full bg-slate-900 relative overflow-hidden ${
               isExamOpen && isZoomMinimized 
                 ? 'h-36 sm:h-40' 
                 : isFullscreen 
                 ? 'flex-1 h-full w-full' 
-                : 'h-[75vh] min-h-[500px]'
+                : 'h-[65vh] sm:h-[75vh] min-h-[420px]'
             }`}>
               {/* If exam is ongoing and camera is active, render active proctor camera monitor */}
               {isExamOpen && isZoomMinimized && isCameraActive && (
@@ -2274,7 +2318,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write; clipboard-read"
                 allowFullScreen={true}
                 sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads allow-presentation"
-                className={`absolute inset-0 w-full h-full border-0 ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                className={`absolute inset-0 w-full h-full border-0 max-w-full ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                style={{ touchAction: 'pan-x pan-y' }}
                 title="Zoom Live Class Web Client"
               />
             </div>

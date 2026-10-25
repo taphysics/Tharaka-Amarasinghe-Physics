@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { StaffMember } from '../types';
+import { ClassLecturerShare, fetchClassLecturerShares, saveClassLecturerShares } from '../lecturerSharesService';
 
 export type AdFrequency = 'monthly' | 'quarterly' | 'biannually' | 'annually';
 export type OtherDeductionType = 'fixed' | 'percentage';
@@ -122,6 +123,32 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN
   NULL;
 END $$;
+
+-- Multi-Lecturer Revenue Sharing Table
+CREATE TABLE IF NOT EXISTS public.class_lecturer_shares (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  class_type TEXT NOT NULL,
+  lecturer_name TEXT NOT NULL,
+  lecturer_whatsapp TEXT DEFAULT '',
+  share_percentage NUMERIC DEFAULT 100,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE public.class_lecturer_shares ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  CREATE POLICY "Allow all on class_lecturer_shares" 
+  ON public.class_lecturer_shares 
+  FOR ALL 
+  USING (true);
+EXCEPTION WHEN duplicate_object THEN
+  NULL;
+END $$;
+
+-- Student Dual Device Permission Support
+ALTER TABLE public.students 
+  ADD COLUMN IF NOT EXISTS dual_device_allowed BOOLEAN DEFAULT false;
 `;
 
 function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDepartmentProps) {
@@ -136,6 +163,13 @@ function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDe
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
   const [lecturersList, setLecturersList] = useState<StaffMember[]>([]);
+
+  // Multi-Lecturer Shares state per class
+  const [allLecturerShares, setAllLecturerShares] = useState<ClassLecturerShare[]>([]);
+  const [classSharesMap, setClassSharesMap] = useState<Record<string, { lecturer_name: string; lecturer_whatsapp: string; share_percentage: number }[]>>({});
+  const [savingClassShares, setSavingClassShares] = useState<Record<string, boolean>>({});
+  const [classShareNotices, setClassShareNotices] = useState<Record<string, string>>({});
+  const [classSelectedLecturerToAdd, setClassSelectedLecturerToAdd] = useState<Record<string, string>>({});
 
   // Loan Completion Prompt Modal state
   const [loanEndPrompt, setLoanEndPrompt] = useState<{
@@ -206,6 +240,10 @@ function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDe
       }
 
       setFinanceConfigs(map);
+
+      // 4. Fetch Multi-Lecturer Shares
+      const shares = await fetchClassLecturerShares();
+      setAllLecturerShares(shares);
 
       // Check if any active loan has reached or surpassed its end month
       checkActiveLoansForCompletion(map, currentMonthStr);
@@ -353,6 +391,237 @@ function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDe
     }
 
     setFormConfig(updated);
+  };
+
+  // Synchronize Multi-Lecturer Shares per class from Database & Staff Members
+  useEffect(() => {
+    if (classTypes.length === 0) return;
+    const newMap: Record<string, { lecturer_name: string; lecturer_whatsapp: string; share_percentage: number }[]> = {};
+
+    classTypes.forEach(c => {
+      const cName = c.name;
+      // 1. Saved shares in class_lecturer_shares
+      const saved = allLecturerShares.filter(s => s.class_type.toLowerCase().trim() === cName.toLowerCase().trim());
+      if (saved.length > 0) {
+        newMap[cName] = saved.map(s => ({
+          lecturer_name: s.lecturer_name,
+          lecturer_whatsapp: s.lecturer_whatsapp || '',
+          share_percentage: Number(s.share_percentage || 0)
+        }));
+      } else {
+        // 2. Matching staff from staff_members who teach this class
+        const matched = lecturersList.filter(l => {
+          const assigned: string[] = Array.isArray(l.assigned_classes)
+            ? l.assigned_classes
+            : typeof l.assigned_classes === 'string'
+            ? JSON.parse(l.assigned_classes || '[]')
+            : [];
+          return assigned.some(ac => ac.toLowerCase().trim() === cName.toLowerCase().trim());
+        });
+
+        if (matched.length > 0) {
+          const n = matched.length;
+          newMap[cName] = matched.map((st, idx) => {
+            const stName = `${st.first_name || ''} ${st.last_name || ''}`.trim() || st.username;
+            let share = Math.floor(100 / n);
+            if (idx === 0) share = 100 - (n - 1) * Math.floor(100 / n);
+            return {
+              lecturer_name: stName,
+              lecturer_whatsapp: st.whatsapp || st.mobile || '',
+              share_percentage: share
+            };
+          });
+        } else {
+          // 3. Fallback to class finance config or first lecturer in staff_members
+          const cfg = financeConfigs[cName];
+          const fallbackName = cfg?.lecturer_name || (lecturersList[0] ? `${lecturersList[0].first_name || ''} ${lecturersList[0].last_name || ''}`.trim() || lecturersList[0].username : 'තාරක අමරසිංහ (Tharaka Amarasinghe)');
+          const fallbackWa = cfg?.lecturer_whatsapp || (lecturersList[0]?.whatsapp || '0779630100');
+          newMap[cName] = [{
+            lecturer_name: fallbackName,
+            lecturer_whatsapp: fallbackWa,
+            share_percentage: 100
+          }];
+        }
+      }
+    });
+
+    setClassSharesMap(newMap);
+  }, [classTypes, allLecturerShares, lecturersList, financeConfigs]);
+
+  // Adjust linked lecturer percentage for a class (e.g. 2 lecturers: 60% auto sets 40%; 3 lecturers: 40% auto splits remainder 30%/30%)
+  const handleAdjustClassLecturerShare = (className: string, changedIdx: number, newPct: number) => {
+    const list = classSharesMap[className] || [];
+    if (list.length <= 1) return;
+
+    const clamped = Math.max(0, Math.min(100, Math.round(newPct)));
+
+    if (list.length === 2) {
+      const otherIdx = changedIdx === 0 ? 1 : 0;
+      const updated = [...list];
+      updated[changedIdx] = { ...updated[changedIdx], share_percentage: clamped };
+      updated[otherIdx] = { ...updated[otherIdx], share_percentage: 100 - clamped };
+      setClassSharesMap(prev => ({ ...prev, [className]: updated }));
+      return;
+    }
+
+    // 3 or more lecturers:
+    const remainder = 100 - clamped;
+    const otherIndices = list.map((_, i) => i).filter(i => i !== changedIdx);
+    const currentOtherSum = otherIndices.reduce((acc, i) => acc + (list[i].share_percentage || 0), 0);
+
+    const updated = [...list];
+    updated[changedIdx] = { ...updated[changedIdx], share_percentage: clamped };
+
+    let allocated = 0;
+    otherIndices.forEach((oi, idx) => {
+      let share = 0;
+      if (currentOtherSum > 0) {
+        share = Math.round((list[oi].share_percentage / currentOtherSum) * remainder);
+      } else {
+        share = Math.floor(remainder / otherIndices.length);
+      }
+      if (idx === otherIndices.length - 1) {
+        share = remainder - allocated;
+      } else {
+        allocated += share;
+      }
+      updated[oi] = { ...updated[oi], share_percentage: Math.max(0, share) };
+    });
+
+    setClassSharesMap(prev => ({ ...prev, [className]: updated }));
+  };
+
+  // Equal Split button for a class
+  const handleEqualSplit = (className: string) => {
+    const list = classSharesMap[className] || [];
+    if (list.length <= 1) return;
+    const n = list.length;
+    const base = Math.floor(100 / n);
+    const updated = list.map((item, idx) => ({
+      ...item,
+      share_percentage: idx === 0 ? (100 - (n - 1) * base) : base
+    }));
+    setClassSharesMap(prev => ({ ...prev, [className]: updated }));
+  };
+
+  // Add a registered lecturer from staff_members to a class card
+  const handleAddLecturerToClass = (className: string, staff: StaffMember) => {
+    const list = classSharesMap[className] || [];
+    const fullName = `${staff.first_name || ''} ${staff.last_name || ''}`.trim() || staff.username;
+    if (list.some(item => item.lecturer_name.toLowerCase().trim() === fullName.toLowerCase().trim())) {
+      alert('මෙම දේශකවරයා දැනටමත් මෙම පන්තියට එක් කර ඇත!');
+      return;
+    }
+
+    const nextCount = list.length + 1;
+    const equalShare = Math.floor(100 / nextCount);
+    const remainder = 100 - (equalShare * nextCount);
+
+    const updated = list.map((item, idx) => ({
+      ...item,
+      share_percentage: equalShare + (idx === 0 ? remainder : 0)
+    }));
+
+    updated.push({
+      lecturer_name: fullName,
+      lecturer_whatsapp: staff.whatsapp || staff.mobile || '',
+      share_percentage: equalShare
+    });
+
+    setClassSharesMap(prev => ({ ...prev, [className]: updated }));
+  };
+
+  // Remove a lecturer from a class card
+  const handleRemoveLecturerFromClass = (className: string, removeIdx: number) => {
+    const list = classSharesMap[className] || [];
+    if (list.length <= 1) {
+      alert('අවම වශයෙන් එක් දේශකයෙකු හෝ පන්තියට සිටිය යුතුය!');
+      return;
+    }
+
+    const updated = list.filter((_, i) => i !== removeIdx);
+    if (updated.length === 1) {
+      updated[0].share_percentage = 100;
+    } else {
+      const n = updated.length;
+      const base = Math.floor(100 / n);
+      updated.forEach((item, idx) => {
+        item.share_percentage = idx === 0 ? (100 - (n - 1) * base) : base;
+      });
+    }
+
+    setClassSharesMap(prev => ({ ...prev, [className]: updated }));
+  };
+
+  // Update lecturer detail inside a class card
+  const handleUpdateClassLecturerField = (className: string, idx: number, field: string, val: any) => {
+    setClassSharesMap(prev => {
+      const list = [...(prev[className] || [])];
+      list[idx] = { ...list[idx], [field]: val };
+      return { ...prev, [className]: list };
+    });
+  };
+
+  // Save shares for a specific class card to Supabase
+  const handleSaveClassSharesForClass = async (className: string) => {
+    const rows = classSharesMap[className] || [];
+    if (rows.length === 0) {
+      alert('අවම වශයෙන් එක් දේශකයෙකු හෝ සිටිය යුතුය!');
+      return;
+    }
+
+    const sum = rows.reduce((acc, curr) => acc + Number(curr.share_percentage || 0), 0);
+    if (sum !== 100) {
+      alert(`ප්‍රතිශත එකතුව ${sum}% කි. එය හරියටම 100% ක් විය යුතුය!`);
+      return;
+    }
+
+    setSavingClassShares(prev => ({ ...prev, [className]: true }));
+    try {
+      const otherClassShares = allLecturerShares.filter(s => s.class_type.toLowerCase().trim() !== className.toLowerCase().trim());
+      const classRowsToSave: ClassLecturerShare[] = rows.map(r => ({
+        class_type: className,
+        lecturer_name: r.lecturer_name.trim(),
+        lecturer_whatsapp: r.lecturer_whatsapp.trim(),
+        share_percentage: Number(r.share_percentage || 0)
+      }));
+
+      const newAllShares = [...otherClassShares, ...classRowsToSave];
+      await saveClassLecturerShares(newAllShares);
+      setAllLecturerShares(newAllShares);
+
+      // Sync staff_members.assigned_classes
+      for (const row of rows) {
+        const staff = lecturersList.find(l => {
+          const lFullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || l.username;
+          return lFullName.toLowerCase().trim() === row.lecturer_name.toLowerCase().trim();
+        });
+        if (staff) {
+          const assigned: string[] = Array.isArray(staff.assigned_classes)
+            ? [...staff.assigned_classes]
+            : typeof staff.assigned_classes === 'string'
+            ? JSON.parse(staff.assigned_classes || '[]')
+            : [];
+          if (!assigned.includes(className)) {
+            assigned.push(className);
+            await supabase.from('staff_members').update({ assigned_classes: assigned }).eq('id', staff.id);
+          }
+        }
+      }
+
+      setClassShareNotices(prev => ({ ...prev, [className]: `✓ [${className}] සඳහා දේශක ප්‍රතිශත සාර්ථකව සුරැකිණි!` }));
+      setTimeout(() => {
+        setClassShareNotices(prev => {
+          const copy = { ...prev };
+          delete copy[className];
+          return copy;
+        });
+      }, 4000);
+    } catch (err: any) {
+      alert('සුරැකීමේදී දෝෂයක්: ' + (err.message || ''));
+    } finally {
+      setSavingClassShares(prev => ({ ...prev, [className]: false }));
+    }
   };
 
   // Helper toggle and selection functions
@@ -776,6 +1045,253 @@ function FinanceDepartmentInner({ currentStaff, onNavigateToHistory }: FinanceDe
                 ගුරුවරයාට ලැබෙන කොටස: <span className="text-emerald-400 font-bold">{100 - currentConfig.institute_percentage}%</span>
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* SECTION A.1: MULTI-LECTURER REVENUE SHARING (බහුවිධ දේශක ආදායම් ප්‍රතිශත බෙදීම - පන්ති කාඩ්පත්) */}
+        <div className="bg-slate-900/90 border border-indigo-500/30 rounded-3xl p-6 md:p-8 shadow-xl space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                <Users size={18} />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                  <span>1.1 බහුවිධ දේශක ආදායම් ප්‍රතිශත බෙදීම (Multi-Lecturer Revenue Sharing per Class)</span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  පන්ති වර්ග වෙන වෙනම පෙන්වමින් එක් එක් පන්තියට සිටින දේශකවරුන් (ඩේටාබේස් එක අනුව) සහ ඔවුන්ගේ ආදායම් ප්‍රතිශත එකිනෙකට සම්බන්ධ වන පරිදි (Linked Percentages - උදා: දේශකයන් 2ක් නම් 60% කල විට අනෙකා 40% වන පරිදි) මෙතැනින් පාලනය කරන්න.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-indigo-300 bg-indigo-500/10 px-3 py-1.5 rounded-xl border border-indigo-500/30">
+                පන්ති {classTypes.length}ක් සඳහා වෙන වෙනම කාඩ්පත්
+              </span>
+            </div>
+          </div>
+
+          {/* Grid of Class Cards */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {classTypes.map((cls) => {
+              const cName = cls.name;
+              const rows = classSharesMap[cName] || [
+                {
+                  lecturer_name: financeConfigs[cName]?.lecturer_name || (lecturersList[0] ? `${lecturersList[0].first_name || ''} ${lecturersList[0].last_name || ''}`.trim() || lecturersList[0].username : 'තාරක අමරසිංහ (Tharaka Amarasinghe)'),
+                  lecturer_whatsapp: financeConfigs[cName]?.lecturer_whatsapp || '0779630100',
+                  share_percentage: 100
+                }
+              ];
+              const totalSum = rows.reduce((acc, curr) => acc + Number(curr.share_percentage || 0), 0);
+              const isSaving = Boolean(savingClassShares[cName]);
+              const notice = classShareNotices[cName];
+              const instPct = Number(financeConfigs[cName]?.institute_percentage ?? 20);
+              const teacherNetPct = 100 - instPct;
+
+              // Available lecturers not yet in this class
+              const unassignedLecturers = lecturersList.filter(l => {
+                const fullName = `${l.first_name || ''} ${l.last_name || ''}`.trim() || l.username;
+                return !rows.some(r => r.lecturer_name.toLowerCase().trim() === fullName.toLowerCase().trim());
+              });
+
+              return (
+                <div 
+                  key={cName}
+                  className="bg-slate-950/90 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4 hover:border-indigo-500/40 transition"
+                >
+                  {/* Card Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-white">{cName}</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 border border-blue-500/30 font-bold">
+                          ගාස්තුව: රු. {cls.fee || 3500}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        ආයතන කොටස: <strong className="text-purple-400 font-mono">{instPct}%</strong> • ගුරු මණ්ඩල කොටස: <strong className="text-emerald-400 font-mono">{teacherNetPct}%</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg border ${
+                        totalSum === 100
+                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                          : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                      }`}>
+                        එකතුව: {totalSum}% {totalSum === 100 ? '✓' : '(100% විය යුතුය)'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Notice Alert */}
+                  {notice && (
+                    <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs font-bold flex items-center gap-2 animate-fade-in">
+                      <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+                      <span>{notice}</span>
+                    </div>
+                  )}
+
+                  {/* Lecturers List */}
+                  <div className="space-y-3">
+                    {rows.map((row, idx) => {
+                      const sharePct = Number(row.share_percentage || 0);
+
+                      return (
+                        <div 
+                          key={idx}
+                          className="p-3.5 rounded-xl bg-slate-900 border border-slate-800/90 space-y-2.5 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-black flex items-center justify-center">
+                                {idx + 1}
+                              </span>
+                              <input
+                                type="text"
+                                value={row.lecturer_name}
+                                onChange={(e) => handleUpdateClassLecturerField(cName, idx, 'lecturer_name', e.target.value)}
+                                placeholder="දේශකයාගේ නම"
+                                className="px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-white font-bold text-xs focus:border-indigo-500 focus:outline-none w-48 sm:w-56"
+                              />
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {/* If only 1 lecturer */}
+                              {rows.length === 1 ? (
+                                <span className="text-[11px] font-mono font-black px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  100% (තනි දේශකයා)
+                                </span>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={sharePct}
+                                    onChange={(e) => handleAdjustClassLecturerShare(cName, idx, Number(e.target.value))}
+                                    className="w-16 px-2 py-1 rounded-lg bg-slate-950 border border-slate-800 text-emerald-300 font-mono font-black text-xs text-center focus:border-indigo-500 focus:outline-none"
+                                  />
+                                  <span className="text-xs font-mono font-bold text-slate-400">%</span>
+                                </div>
+                              )}
+
+                              {rows.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveLecturerFromClass(cName, idx)}
+                                  className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition cursor-pointer"
+                                  title="මෙම දේශකයා පන්තියෙන් ඉවත් කරන්න"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* WhatsApp & Slider if multiple lecturers */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-slate-800/50">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400">WhatsApp:</span>
+                              <input
+                                type="text"
+                                value={row.lecturer_whatsapp}
+                                onChange={(e) => handleUpdateClassLecturerField(cName, idx, 'lecturer_whatsapp', e.target.value)}
+                                placeholder="0779630100"
+                                className="px-2 py-0.5 rounded-md bg-slate-950 border border-slate-800 text-slate-300 font-mono text-[11px] focus:border-indigo-500 focus:outline-none w-28"
+                              />
+                            </div>
+
+                            {rows.length > 1 && (
+                              <div className="flex items-center gap-2 flex-1 max-w-[200px] ml-auto">
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="100"
+                                  step="1"
+                                  value={sharePct}
+                                  onChange={(e) => handleAdjustClassLecturerShare(cName, idx, Number(e.target.value))}
+                                  className="w-full accent-indigo-500 cursor-pointer"
+                                  title="ස්ලයිඩරය එහා මෙහා කර ප්‍රතිශතය වෙනස් කරන්න"
+                                />
+                                <span className="text-[11px] font-mono font-bold text-indigo-300 w-8 text-right">
+                                  {sharePct}%
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Card Controls & Actions */}
+                  <div className="pt-2 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Equal Split Button */}
+                      {rows.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleEqualSplit(cName)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold transition cursor-pointer"
+                          title="දේශකවරුන් අතර ප්‍රතිශත සමානව බෙදන්න"
+                        >
+                          සමානව බෙදන්න (Equal Split)
+                        </button>
+                      )}
+
+                      {/* Add Co-Lecturer Dropdown */}
+                      {unassignedLecturers.length > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            value={classSelectedLecturerToAdd[cName] || ''}
+                            onChange={(e) => setClassSelectedLecturerToAdd(prev => ({ ...prev, [cName]: e.target.value }))}
+                            className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-[11px] focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value="">+ දේශකයෙකු තෝරන්න...</option>
+                            {unassignedLecturers.map(st => {
+                              const sName = `${st.first_name || ''} ${st.last_name || ''}`.trim() || st.username;
+                              return (
+                                <option key={st.id || st.username} value={st.id || st.username}>
+                                  {sName}
+                                </option>
+                              );
+                            })}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={!classSelectedLecturerToAdd[cName]}
+                            onClick={() => {
+                              const selId = classSelectedLecturerToAdd[cName];
+                              const found = unassignedLecturers.find(l => (l.id === selId || l.username === selId));
+                              if (found) {
+                                handleAddLecturerToClass(cName, found);
+                                setClassSelectedLecturerToAdd(prev => ({ ...prev, [cName]: '' }));
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-bold text-[10px] transition cursor-pointer"
+                          >
+                            + එක් කරන්න
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Save Button for this Class */}
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => handleSaveClassSharesForClass(cName)}
+                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-900/20"
+                    >
+                      {isSaving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
+                      <span>{isSaving ? 'සුරැකෙමින්...' : 'ප්‍රතිශත සුරකින්න (Save)'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 

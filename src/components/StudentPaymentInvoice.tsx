@@ -340,8 +340,18 @@ export default function StudentPaymentInvoice() {
   // ගෙවා නොමැතිනම් පමණක් බිල්පත පෙන්වයි
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 py-10 px-4 flex items-center justify-center">
-      <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 md:p-8 space-y-6">
+      <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 md:p-8 space-y-6 relative">
         
+        {/* Red Top Close Button for Mobile & Desktop */}
+        <button
+          type="button"
+          onClick={handleNavigation}
+          className="absolute top-4 right-4 p-2 bg-rose-600 hover:bg-rose-500 text-white rounded-full transition shadow-md cursor-pointer z-10"
+          title="Close Invoice (බිල්පත වසන්න)"
+        >
+          <X size={18} />
+        </button>
+
         {/* Header */}
         <div className="text-center space-y-1 border-b border-slate-800 pb-4">
           <h2 className="text-lg font-bold text-blue-400">පන්ති ගාස්තු නිල බිල්පත</h2>
@@ -580,6 +590,15 @@ export default function StudentPaymentInvoice() {
             </button>
           </form>
         </div>
+
+        {/* Cancel Button in prominent red */}
+        <button
+          type="button"
+          onClick={handleNavigation}
+          className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
+        >
+          <X size={14} /> {isLoggedIn ? 'අවලංගු කර ආපසු ඩෑෂ්බෝඩ් එකට (Cancel & Return to Dashboard)' : 'අවලංගු කර ආපසු මුල් පිටුවට (Cancel & Return to Home)'}
+        </button>
 
         {/* Security Footer */}
         <div className="flex items-center justify-center gap-1.5 text-[10px] text-slate-500 bg-slate-950/40 py-2 rounded-xl border border-slate-800/40">
