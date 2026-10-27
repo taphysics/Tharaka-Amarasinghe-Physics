@@ -68,6 +68,7 @@ const ROLE_CONFIG: Record<StaffRole, { label: string; badgeClass: string; icon: 
 const AVAILABLE_SECTIONS = [
   { id: 'overview', label: 'දළ විශ්ලේෂණය (Overview Dashboard)' },
   { id: 'registry', label: 'ශිෂ්‍ය ලේඛනය (Student Registry)' },
+  { id: 'class_directory', label: '🏛️ පන්ති හා ශිෂ්‍ය නාමාවලිය (Class & Student Directory)' },
   { id: 'manual_student', label: 'ශිෂ්‍ය ලියාපදිංචිය (Manual Registration)' },
   { id: 'staff', label: 'කාර්යමණ්ඩලය (Staff Management)' },
   { id: 'device_security', label: '🛡️ ඩිවයිස් පාලනය (Device Security & Bans)' },

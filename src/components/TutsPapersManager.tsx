@@ -256,6 +256,17 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
       return;
     }
     setActiveViewerDoc(doc);
+
+    // Record access in Live Supabase Database table `resource_views`
+    if (currentStudent?.username && doc.id) {
+      supabase.from('resource_views').upsert({
+        username: currentStudent.username,
+        resource_id: String(doc.id),
+        viewed_at: new Date().toISOString()
+      }, { onConflict: 'username,resource_id' }).then(() => {
+        emitRealtimeEvent('resource_viewed' as any, { username: currentStudent.username, resource_id: doc.id });
+      }).catch(console.error);
+    }
   };
 
   return (

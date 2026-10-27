@@ -384,8 +384,11 @@ export async function autoUnlockExpiredStudent(username: string, studentId?: str
  * Handle new student login, detect concurrent multi-device logins,
  * log violations, apply progressive sequential bans, and broadcast 5s countdown force-logout to the old device.
  */
-export async function registerDeviceLogin(student: any): Promise<{
+export async function registerDeviceLogin(student: any, options?: { forceSwitch?: boolean }): Promise<{
   isConcurrent: boolean;
+  needsDualDevicePrompt?: boolean;
+  previousDeviceName?: string;
+  previousDeviceId?: string;
   oldDeviceId?: string;
   strikeCount: number;
   isBlocked: boolean;
@@ -464,12 +467,31 @@ export async function registerDeviceLogin(student: any): Promise<{
   let newBlockedUntil = student.device_block_until || student.deviceBlockUntil;
 
   // Check if student has admin permission for 2 devices
-  const isDualDeviceAllowed = Boolean(
+  let isDualDeviceAllowed = Boolean(
     student.dual_device_allowed ?? 
     student.dualDeviceAllowed ?? 
     student.is_dual_device_allowed ?? 
+    (Array.isArray(student.approved_devices) && student.approved_devices.length > 0) ??
     false
   );
+
+  if (!isDualDeviceAllowed) {
+    try {
+      const { data: dbSt } = await supabase
+        .from('students')
+        .select('dual_device_allowed, approved_devices')
+        .or(`username.ilike.${username},username.ilike.@${username}`)
+        .maybeSingle();
+
+      if (dbSt) {
+        if (dbSt.dual_device_allowed === true) {
+          isDualDeviceAllowed = true;
+        } else if (Array.isArray(dbSt.approved_devices) && dbSt.approved_devices.length > 0) {
+          isDualDeviceAllowed = true;
+        }
+      }
+    } catch (e) {}
+  }
 
   if (isConcurrent) {
     const newDeviceFormatted = formatDeviceInfo(currentDevice);
@@ -479,9 +501,19 @@ export async function registerDeviceLogin(student: any): Promise<{
 
     if (isDualDeviceAllowed) {
       // DUAL DEVICE PERMITTED:
-      // The student has approved permission to use 2 devices.
-      // Switching devices is allowed without strikes or account ban!
-      // Immediately force-logout the previous device with 5-second countdown.
+      // If student hasn't explicitly confirmed the switch yet, return prompt trigger
+      if (!options?.forceSwitch) {
+        return {
+          isConcurrent: true,
+          needsDualDevicePrompt: true,
+          previousDeviceName: prevDeviceFormatted,
+          previousDeviceId: previousDeviceId || 'unknown',
+          strikeCount: currentStrikes,
+          isBlocked: false
+        };
+      }
+
+      // Explicitly confirmed switch: force-logout old device and register this device
       const logoutPayload = {
         username,
         targetDeviceId: previousDeviceId,
@@ -637,6 +669,14 @@ export async function registerDeviceLogin(student: any): Promise<{
     isBlocked: Boolean(newBlockedUntil && (newBlockedUntil === 'permanent' || new Date(newBlockedUntil).getTime() > Date.now())),
     blockedUntil: newBlockedUntil
   };
+}
+
+/**
+ * Confirms device switch on Device 2:
+ * Force logs out previous device with immediate real-time event and registers current device.
+ */
+export async function confirmDualDeviceSwitch(student: any, previousDeviceId?: string): Promise<void> {
+  await registerDeviceLogin(student, { forceSwitch: true });
 }
 
 /**

@@ -102,6 +102,10 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [ledgerClassFilter, setLedgerClassFilter] = useState('all');
 
+  // My Students UI & Class Grouping States
+  const [studentClassFilter, setStudentClassFilter] = useState<string>('all');
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
+
   // 1-Hour Grace Window Helper for Exams & Live
   const canLecturerEdit = (createdAt?: string): boolean => {
     if (!createdAt) return false;
@@ -1741,91 +1745,224 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
         )}
 
         {/* =======================================================================
-            TAB 7: ENROLLED STUDENTS (Database Filtered + Strict Privacy: Name and Username ONLY)
+            TAB 7: ENROLLED STUDENTS (Grouped by Registered Class Types)
             ======================================================================= */}
         {activeTab === 'students' && (
           <div className="space-y-6">
             
-            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div>
+            {/* Header with Total Students & Search */}
+            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
+              <div className="space-y-1">
                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Users className="text-indigo-400" size={24} /> මගේ පන්තිවල ලියාපදිංචි සිසුන්
+                  <Users className="text-indigo-400" size={24} /> මගේ පන්තිවල ලියාපදිංචි සිසුන් (My Students by Class)
                 </h2>
-                <p className="text-slate-400 text-xs mt-1">
-                  ඔබට පවරා ඇති පන්ති ({assignedClasses.join(', ') || 'සියල්ල'}) සඳහා ලියාපදිංචිව සිටින සිසුන් පමණක් මෙහි පෙන්වයි.
+                <p className="text-slate-400 text-xs">
+                  ඔබට පවරා ඇති පන්ති කාණ්ඩ ({assignedClasses.join(', ') || 'සියල්ල'}) අනුව සිසුන් වෙන් වෙන් වශයෙන් මෙහි පෙන්වයි.
                 </p>
                 <div className="mt-2 text-[11px] bg-slate-950 border border-slate-800 text-slate-400 px-3 py-1.5 rounded-xl inline-block">
                   🔒 රහස්‍යතා ප්‍රතිපත්තිය: මෙම ලැයිස්තුවේ ශිෂ්‍යයාගේ නම සහ Username පමණක් ප්‍රදර්ශනය කෙරේ.
                 </div>
               </div>
 
-              <div className="text-right">
-                <span className="text-2xl font-black text-indigo-400">{enrolledStudents.length}</span>
-                <span className="text-xs text-slate-400 block">සම්පූර්ණ සිසුන් ගණන</span>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+                {/* Search Bar */}
+                <div className="relative w-full sm:w-64">
+                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="ශිෂ්‍යයාගේ නම / @username සොයන්න..."
+                    value={studentSearchQuery}
+                    onChange={(e) => setStudentSearchQuery(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  {studentSearchQuery && (
+                    <button
+                      onClick={() => setStudentSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="text-right sm:text-right shrink-0 bg-slate-950 px-4 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xl font-black text-indigo-400">{enrolledStudents.length}</span>
+                  <span className="text-[10px] text-slate-400 block font-bold">මුළු සිසුන් ගණන</span>
+                </div>
               </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
-                    <tr>
-                      <th className="p-3.5 w-12 text-center">#</th>
-                      <th className="p-3.5">ශිෂ්‍යයාගේ සම්පූර්ණ නම (Student Full Name)</th>
-                      <th className="p-3.5">පද්ධති නාමය (Username)</th>
-                      <th className="p-3.5">ලියාපදිංචි පන්ති කාණ්ඩ</th>
-                      <th className="p-3.5 text-center">එසයිමන්ට් ලකුණු ලබාදීම</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {enrolledStudents.map((std, idx) => (
-                      <tr key={std.id} className="hover:bg-slate-850/50 transition">
-                        <td className="p-3.5 text-center font-mono text-slate-500">
-                          {idx + 1}
-                        </td>
-                        <td className="p-3.5 font-bold text-white text-sm">
-                          {std.name}
-                        </td>
-                        <td className="p-3.5 font-mono text-indigo-400 font-semibold">
-                          @{std.username}
-                        </td>
-                        <td className="p-3.5">
-                          <div className="flex flex-wrap gap-1">
-                            {(() => {
-                              const norm = (s: string) => (s || '').trim().toLowerCase();
-                              const visibleClasses = (std.class_types || []).filter((c: string) => {
-                                if (assignedClasses.length === 0) return true;
-                                return assignedClasses.some(ac => norm(ac) === norm(c));
-                              });
-                              return visibleClasses.map((c: string) => (
-                                <span key={c} className="bg-slate-950 text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-800 font-medium">
-                                  {c}
-                                </span>
-                              ));
-                            })()}
-                          </div>
-                        </td>
-                        <td className="p-3.5 text-center">
-                          <button
-                            onClick={() => {
-                              const norm = (s: string) => (s || '').trim().toLowerCase();
-                              const matchedClass = (std.class_types || []).find((c: string) =>
-                                assignedClasses.length === 0 || assignedClasses.some(ac => norm(ac) === norm(c))
-                              ) || assignedClasses[0] || std.class_types?.[0];
-                              handleOpenBatchAssignModal(matchedClass);
-                              setActiveTab('grades');
-                            }}
-                            className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer"
-                          >
-                            <Plus size={12} /> Add Marks
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* Class Filter Tabs */}
+            {assignedClasses.length > 1 && (
+              <div className="flex items-center gap-2 overflow-x-auto pb-2">
+                <button
+                  type="button"
+                  onClick={() => setStudentClassFilter('all')}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                    studentClassFilter === 'all'
+                      ? 'bg-indigo-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  <BookOpen size={14} />
+                  <span>සියලුම පන්ති ({enrolledStudents.length})</span>
+                </button>
+                {assignedClasses.map((cls) => {
+                  const norm = (s: string) => (s || '').trim().toLowerCase();
+                  const countInClass = enrolledStudents.filter((std) =>
+                    (std.class_types || []).some((c: string) => norm(c) === norm(cls))
+                  ).length;
+
+                  return (
+                    <button
+                      key={cls}
+                      type="button"
+                      onClick={() => setStudentClassFilter(cls)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                        studentClassFilter === cls
+                          ? 'bg-indigo-600 text-white shadow-md'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      <span>🏛️ {cls}</span>
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-800 text-indigo-300 font-mono">
+                        {countInClass}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
+            )}
+
+            {/* Render Grouped Class Sections */}
+            {(() => {
+              const norm = (s: string) => (s || '').trim().toLowerCase();
+              const displayedClasses = (assignedClasses.length > 0 ? assignedClasses : ['All Students'])
+                .filter(cls => studentClassFilter === 'all' || cls === studentClassFilter);
+
+              return (
+                <div className="space-y-6">
+                  {displayedClasses.map((clsName) => {
+                    const isAll = clsName === 'All Students';
+                    const classStudents = enrolledStudents.filter((std) => {
+                      const matchesClass = isAll || (std.class_types || []).some((c: string) => norm(c) === norm(clsName));
+                      if (!matchesClass) return false;
+                      if (!studentSearchQuery.trim()) return true;
+                      const q = studentSearchQuery.toLowerCase().trim();
+                      const stdName = (std.name || '').toLowerCase();
+                      const stdUser = (std.username || '').toLowerCase();
+                      return stdName.includes(q) || stdUser.includes(q);
+                    });
+
+                    return (
+                      <div key={clsName} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                        
+                        {/* Class Header Bar */}
+                        <div className="p-4 bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950/30 border-b border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                              <BookOpen size={18} />
+                            </div>
+                            <div>
+                              <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                                <span>{isAll ? 'සියලුම පන්තිවල සිසුන්' : clsName}</span>
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                  {classStudents.length} Students
+                                </span>
+                              </h3>
+                              <p className="text-[11px] text-slate-400">
+                                {isAll ? 'ලියාපදිංචි සියලුම සිසුන්ගේ නාමාවලිය' : `මෙම පන්තිය සඳහා පමණක් ලියාපදිංචි වී ඇති සිසුන්`}
+                              </p>
+                            </div>
+                          </div>
+
+                          {!isAll && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleOpenBatchAssignModal(clsName);
+                                setActiveTab('grades');
+                              }}
+                              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                            >
+                              <Plus size={13} />
+                              <span>පැවරුම් ලකුණු ලබාදීම (Batch Assign)</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Students Table for this Class */}
+                        <div className="overflow-x-auto">
+                          {classStudents.length === 0 ? (
+                            <div className="p-8 text-center text-slate-500 text-xs">
+                              {studentSearchQuery ? 'සෙවුමට ගැළපෙන සිසුන් හමු නොවීය.' : 'මෙම පන්තිය සඳහා මෙතෙක් කිසිදු ශිෂ්‍යයෙකු ලියාපදිංචි වී නොමැත.'}
+                            </div>
+                          ) : (
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+                                <tr>
+                                  <th className="p-3.5 w-12 text-center">#</th>
+                                  <th className="p-3.5">ශිෂ්‍යයාගේ සම්පූර්ණ නම (Student Full Name)</th>
+                                  <th className="p-3.5">පද්ධති නාමය (Username)</th>
+                                  <th className="p-3.5">ලියාපදිංචි පන්ති කාණ්ඩ</th>
+                                  <th className="p-3.5 text-center">එසයිමන්ට් ලකුණු</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800">
+                                {classStudents.map((std, idx) => (
+                                  <tr key={`${clsName}_${std.id || std.username}_${idx}`} className="hover:bg-slate-850/50 transition">
+                                    <td className="p-3.5 text-center font-mono text-slate-500">
+                                      {idx + 1}
+                                    </td>
+                                    <td className="p-3.5 font-bold text-white text-sm">
+                                      {std.name}
+                                    </td>
+                                    <td className="p-3.5 font-mono text-indigo-400 font-semibold">
+                                      @{std.username}
+                                    </td>
+                                    <td className="p-3.5">
+                                      <div className="flex flex-wrap gap-1">
+                                        {(std.class_types || []).map((c: string) => {
+                                          const isCurrentClass = norm(c) === norm(clsName);
+                                          return (
+                                            <span
+                                              key={c}
+                                              className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
+                                                isCurrentClass
+                                                  ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/40 font-bold'
+                                                  : 'bg-slate-950 text-slate-400 border-slate-800'
+                                              }`}
+                                            >
+                                              {c}
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    </td>
+                                    <td className="p-3.5 text-center">
+                                      <button
+                                        onClick={() => {
+                                          handleOpenBatchAssignModal(clsName !== 'All Students' ? clsName : (std.class_types?.[0] || ''));
+                                          setActiveTab('grades');
+                                        }}
+                                        className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                                      >
+                                        <Plus size={12} /> Add Marks
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
           </div>
         )}

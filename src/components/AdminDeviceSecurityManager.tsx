@@ -119,6 +119,12 @@ interface AdminDeviceSecurityManagerProps {
 }
 
 export default function AdminDeviceSecurityManager({ students, onUpdateStudents }: AdminDeviceSecurityManagerProps) {
+  const [localStudents, setLocalStudents] = useState<any[]>(students || []);
+
+  useEffect(() => {
+    setLocalStudents(students || []);
+  }, [students]);
+
   const [violations, setViolations] = useState<DeviceViolationRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -189,7 +195,7 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
   };
 
   // Combine registered students with violations data
-  const combinedList = students.map(st => {
+  const combinedList = localStudents.map(st => {
     const uNorm = (st.username || '').toLowerCase().trim();
     const studentViolations = violations.filter(v => (v.student_username || '').toLowerCase().trim() === uNorm);
     const latestViolation = studentViolations[0];
@@ -204,6 +210,19 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
     const isBlocked = blockCheck.isBlocked || (latestViolation?.is_active && new Date(latestViolation.blocked_until).getTime() > Date.now());
     const blockedUntil = blockCheck.blockedUntil || latestViolation?.blocked_until;
 
+    const approvedDevices: string[] = Array.isArray(st.approved_devices)
+      ? st.approved_devices
+      : typeof st.approved_devices === 'string'
+      ? JSON.parse(st.approved_devices || '[]')
+      : [];
+
+    const dualDeviceAllowed = Boolean(
+      st.dual_device_allowed ?? 
+      st.dualDeviceAllowed ?? 
+      (approvedDevices.length > 0) ?? 
+      false
+    );
+
     return {
       student: st,
       username: st.username,
@@ -215,7 +234,8 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       remainingMs: blockCheck.remainingMs,
       latestViolation,
       deviceInfo: st.device_info || st.deviceInfo ? formatDeviceInfo(st.device_info || st.deviceInfo) : '1 Device (Active)',
-      dualDeviceAllowed: Boolean(st.dual_device_allowed ?? st.dualDeviceAllowed ?? false)
+      dualDeviceAllowed,
+      approvedDevices
     };
   });
 
@@ -237,16 +257,37 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
   const totalBlockedCount = combinedList.filter(i => i.isBlocked).length;
   const totalViolatorsCount = combinedList.filter(i => i.strikeCount > 0).length;
 
-  // Toggle Dual Device Permission (2 Devices allowed per student)
+  // Toggle Dual Device Permission (2 Devices allowed per student - 100% Live Database)
   const handleToggleDualDevice = async (item: any) => {
     const username = item.username;
     const newStatus = !item.dualDeviceAllowed;
     setProcessingUser(username);
 
-    // Update parent state optimistically
+    // 1. Instant 0ms local state update
+    item.dualDeviceAllowed = newStatus;
+    if (item.student) {
+      item.student.dual_device_allowed = newStatus;
+      item.student.dualDeviceAllowed = newStatus;
+    }
+
+    setLocalStudents(prev => prev.map(s => {
+      const match = (s.username || '').toLowerCase().trim() === (username || '').toLowerCase().trim() || 
+                    (item.student?.id && s.id === item.student.id);
+      if (match) {
+        return {
+          ...s,
+          dual_device_allowed: newStatus,
+          dualDeviceAllowed: newStatus
+        };
+      }
+      return s;
+    }));
+
+    // 2. Update parent state if available
     if (onUpdateStudents) {
       onUpdateStudents((prev: any[]) => prev.map(s => {
-        if ((s.username || '').toLowerCase().trim() === username.toLowerCase().trim() || (item.student?.id && s.id === item.student.id)) {
+        if ((s.username || '').toLowerCase().trim() === (username || '').toLowerCase().trim() || 
+            (item.student?.id && s.id === item.student.id)) {
           return {
             ...s,
             dual_device_allowed: newStatus,
@@ -257,38 +298,120 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
       }));
     }
 
-    // Update localStorage cache
+    // 3. Update Live Database (Supabase)
     try {
-      const raw = localStorage.getItem('physics_hub_students');
-      if (raw) {
-        const list = JSON.parse(raw);
-        if (Array.isArray(list)) {
-          const updated = list.map((st: any) => {
-            if ((st.username || '').toLowerCase().trim() === username.toLowerCase().trim() || (item.student?.id && st.id === item.student.id)) {
-              return { ...st, dual_device_allowed: newStatus, dualDeviceAllowed: newStatus };
-            }
-            return st;
-          });
-          localStorage.setItem('physics_hub_students', JSON.stringify(updated));
-        }
-      }
-    } catch {}
+      const studentId = item.student?.id;
+      const updatePayload: any = { 
+        dual_device_allowed: newStatus 
+      };
 
-    // Update Supabase
-    try {
-      if (item.student?.id) {
-        await supabase.from('students').update({ dual_device_allowed: newStatus }).eq('id', item.student.id);
+      if (studentId) {
+        await supabase.from('students').update(updatePayload).eq('id', studentId);
       }
-      await supabase.from('students').update({ dual_device_allowed: newStatus }).ilike('username', username);
+      await supabase.from('students').update(updatePayload).ilike('username', username);
+
+      // Also ensure approved_devices column aligns
+      try {
+        const approvedPayload: any = {
+          approved_devices: newStatus ? ['device_1', 'device_2'] : []
+        };
+        if (studentId) {
+          await supabase.from('students').update(approvedPayload).eq('id', studentId);
+        }
+        await supabase.from('students').update(approvedPayload).ilike('username', username);
+      } catch (err) {}
 
       emitRealtimeEvent('student_updated', { username, dual_device_allowed: newStatus });
       showToast('success', newStatus 
-        ? `@${username} සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර ලබා දෙන ලදී.` 
+        ? `@${username} සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර (ටික් එක) සාර්ථකව ලබා දෙන ලදී.` 
         : `@${username} සිසුවාගේ ඩිවයිස් 2 අවසරය ඉවත් කර තනි ඩිවයිස් නීතිය ක්‍රියාත්මක කරන ලදී.`);
     } catch (e: any) {
+      console.error('Supabase dual device toggle error:', e);
       showToast('error', `අවසරය යාවත්කාලීන කිරීමේදී දෝෂයක්: ${e?.message || e}`);
     } finally {
       setProcessingUser(null);
+    }
+  };
+
+  // Toggle Approval for a Specific Device (Max 2 devices)
+  const normalizeDevKey = (d: StudentLoginDevice | string) => {
+    if (typeof d === 'string') return d.trim().toLowerCase().replace(/[\s\-_]+/g, '');
+    return `${d.deviceType}_${d.os}_${d.browser}`.trim().toLowerCase().replace(/[\s\-_]+/g, '');
+  };
+
+  const handleToggleApproveDevice = async (item: any, dev: StudentLoginDevice) => {
+    const rawDevKey = `${dev.deviceType}_${dev.os}_${dev.browser}`.toLowerCase();
+    const devKey = normalizeDevKey(dev);
+    const username = item.username;
+    const uNorm = (username || '').toLowerCase().trim();
+
+    const currentApproved: string[] = Array.isArray(item.approvedDevices)
+      ? [...item.approvedDevices]
+      : Array.isArray(item.student?.approved_devices)
+      ? [...item.student.approved_devices]
+      : typeof item.student?.approved_devices === 'string'
+      ? JSON.parse(item.student?.approved_devices || '[]')
+      : [];
+
+    const isAlreadyApproved = currentApproved.some(k => normalizeDevKey(k) === devKey);
+    let updatedApproved: string[] = [];
+
+    if (isAlreadyApproved) {
+      updatedApproved = currentApproved.filter(k => normalizeDevKey(k) !== devKey);
+    } else {
+      if (currentApproved.length >= 2) {
+        alert('උපරිම අනුමත කළ හැක්කේ ඩිවයිස් 2ක් පමණි. කරුණාකර තවත් ඩිවයිස් එකක් එක් කිරීමට පෙර කලින් අනුමත කළ ඩිවයිස් එකක ටික් එක ඉවත් කරන්න.');
+        return;
+      }
+      updatedApproved = [...currentApproved, rawDevKey];
+    }
+
+    const dualAllowed = updatedApproved.length > 0;
+    const updatePayload = {
+      approved_devices: updatedApproved,
+      dual_device_allowed: dualAllowed,
+      dualDeviceAllowed: dualAllowed
+    };
+
+    // 1. Instant 0ms local state update
+    item.approvedDevices = updatedApproved;
+    if (item.student) {
+      item.student.approved_devices = updatedApproved;
+      item.student.dual_device_allowed = dualAllowed;
+    }
+
+    setLocalStudents(prev => prev.map(s => {
+      const match = (s.username || '').toLowerCase().trim() === uNorm || (item.student?.id && s.id === item.student.id);
+      if (match) {
+        return { ...s, ...updatePayload };
+      }
+      return s;
+    }));
+
+    // 3. Callback to parent App.tsx if present
+    if (onUpdateStudents) {
+      onUpdateStudents((prev: any[]) => prev.map(s => {
+        if ((s.username || '').toLowerCase().trim() === uNorm || (item.student?.id && s.id === item.student.id)) {
+          return { ...s, ...updatePayload };
+        }
+        return s;
+      }));
+    }
+
+    emitRealtimeEvent('student_updated', { username, ...updatePayload });
+    showToast('success', isAlreadyApproved 
+      ? `@${username} ගේ ${dev.os} (${dev.deviceType}) ඩිවයිස් අනුමැතිය ඉවත් කරන ලදී.`
+      : `@${username} සිසුවා සඳහා ${dev.os} (${dev.deviceType}) ඩිවයිස් එක සාර්ථකව අනුමත කරන ලදී (${updatedApproved.length}/2).`
+    );
+
+    // 4. Background update to Supabase
+    try {
+      if (item.student?.id) {
+        await supabase.from('students').update(updatePayload).eq('id', item.student.id);
+      }
+      await supabase.from('students').update(updatePayload).ilike('username', username);
+    } catch (e: any) {
+      console.warn('Supabase device update fallback:', e);
     }
   };
 
@@ -666,77 +789,126 @@ export default function AdminDeviceSecurityManager({ students, onUpdateStudents 
                         )}
                       </td>
 
-                      {/* Device info: Sequential Devices (ඩිවයිස් 1, 2, 3...) */}
-                      <td className="py-4 px-4 min-w-[260px] max-w-sm">
-                        <div className="space-y-1.5">
-                          {studentDevices.map((dev) => (
-                            <div 
-                              key={dev.deviceNum} 
-                              className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 text-xs space-y-0.5 shadow-sm"
-                            >
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="text-blue-400 font-extrabold flex items-center gap-1.5 text-[11px]">
-                                  {dev.deviceType === 'Mobile' ? (
-                                    <Smartphone size={12} className="text-emerald-400 shrink-0" />
-                                  ) : (
-                                    <Monitor size={12} className="text-sky-400 shrink-0" />
-                                  )}
-                                  ඩිවයිස් {dev.deviceNum} ({dev.deviceType})
-                                </span>
-                                {dev.isCurrent ? (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold font-mono">
-                                    වත්මන් (Active)
-                                  </span>
-                                ) : (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
-                                    ලොග් වීමට දැරූ
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-200 flex items-center gap-1 font-semibold truncate">
-                                <span className="text-white truncate">{dev.os}</span>
-                                <span className="text-slate-500">•</span>
-                                <span className="text-slate-300 font-mono text-[10px] bg-slate-800/80 px-1 py-0.5 rounded border border-slate-700/60">
-                                  {dev.browser}
+                      {/* Device info: Sequential Devices with 2-Device Approval Checkboxes */}
+                      <td className="py-4 px-4 min-w-[280px] max-w-sm">
+                        {(() => {
+                          const uNorm = (item.username || '').toLowerCase().trim();
+                          const currentApproved: string[] = Array.isArray(item.approvedDevices)
+                            ? item.approvedDevices
+                            : Array.isArray(item.student?.approved_devices)
+                            ? item.student.approved_devices
+                            : typeof item.student?.approved_devices === 'string'
+                            ? JSON.parse(item.student?.approved_devices || '[]')
+                            : [];
+
+                          return (
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                                <span className="text-[10px] font-bold text-slate-400">ලොග් වූ ඩිවයිස් රෙකෝඩින්:</span>
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border font-mono ${
+                                  currentApproved.length === 2 
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                                    : currentApproved.length === 1 
+                                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' 
+                                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                                }`}>
+                                  අනුමත: {currentApproved.length} / 2
                                 </span>
                               </div>
-                              <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                                <Clock size={10} className="text-slate-500 shrink-0" />
-                                <span>ලොගින්: {dev.loginDate} {dev.loginTime}</span>
+
+                              <div className="space-y-1.5">
+                                {studentDevices.map((dev) => {
+                                  const devKey = normalizeDevKey(dev);
+                                  const isApproved = currentApproved.some(k => normalizeDevKey(k) === devKey);
+
+                                  return (
+                                    <div 
+                                      key={dev.deviceNum} 
+                                      className={`p-2.5 rounded-xl border text-xs space-y-1 transition shadow-sm ${
+                                        isApproved 
+                                          ? 'bg-emerald-950/30 border-emerald-500/40 ring-1 ring-emerald-500/20' 
+                                          : 'bg-slate-950/80 border-slate-800'
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="text-blue-400 font-extrabold flex items-center gap-1.5 text-[11px]">
+                                          {dev.deviceType === 'Mobile' ? (
+                                            <Smartphone size={12} className="text-emerald-400 shrink-0" />
+                                          ) : (
+                                            <Monitor size={12} className="text-sky-400 shrink-0" />
+                                          )}
+                                          ඩිවයිස් {dev.deviceNum} ({dev.deviceType})
+                                        </span>
+                                        {dev.isCurrent ? (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold font-mono">
+                                            වත්මන් (Active)
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                                            ලොග් වීමට දැරූ
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-200 flex items-center gap-1 font-semibold truncate">
+                                        <span className="text-white truncate">{dev.os}</span>
+                                        <span className="text-slate-500">•</span>
+                                        <span className="text-slate-300 font-mono text-[10px] bg-slate-800/80 px-1 py-0.5 rounded border border-slate-700/60">
+                                          {dev.browser}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                                        <Clock size={10} className="text-slate-500 shrink-0" />
+                                        <span>ලොගින්: {dev.loginDate} {dev.loginTime}</span>
+                                      </div>
+
+                                      {/* Approved Device Checkbox (Admin Selection up to 2) */}
+                                      <label 
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="flex items-center gap-2 pt-1.5 mt-1 border-t border-slate-800/80 cursor-pointer select-none group"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(isApproved)}
+                                          disabled={isBusy}
+                                          onChange={() => handleToggleApproveDevice(item, dev)}
+                                          className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0 cursor-pointer accent-emerald-500"
+                                        />
+                                        <span className={`text-[11px] font-bold ${isApproved ? 'text-emerald-400 font-black' : 'text-slate-400 group-hover:text-white'}`}>
+                                          {isApproved ? '✓ අනුමත ඩිවයිස් එකක් (Approved)' : 'මෙම ඩිවයිස් එක අනුමත කරන්න'}
+                                        </span>
+                                      </label>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })()}
                       </td>
 
-                      {/* Dual Device Permission Toggle */}
+                      {/* Dual Device Permission Checkbox (ඩිවයිස් දෙකක් සඳහා ඇක්සස් ලබා දීමේ ටික් එක) */}
                       <td className="py-4 px-4 text-center">
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => handleToggleDualDevice(item)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 mx-auto cursor-pointer border ${
-                            item.dualDeviceAllowed
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
-                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-750'
+                        <label 
+                          onClick={(e) => e.stopPropagation()}
+                          className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-2xl cursor-pointer select-none transition border shadow-sm ${
+                            item.dualDeviceAllowed 
+                              ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/50 hover:bg-emerald-900/30 ring-1 ring-emerald-500/30' 
+                              : 'bg-slate-950 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
                           }`}
-                          title={item.dualDeviceAllowed 
-                            ? 'ක්ලික් කර තනි ඩිවයිස් නීතියට මාරු කරන්න' 
-                            : 'ක්ලික් කර මෙම සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර දෙන්න'}
+                          title="සිසුවාට ඩිවයිස් 2ක් භාවිතා කිරීමට අවසර ලබා දීමට ටික් කරන්න"
                         >
-                          {item.dualDeviceAllowed ? (
-                            <>
-                              <CheckCircle2 size={13} className="text-emerald-400" />
-                              <span>ඩිවයිස් 2 අවසරය ඇත</span>
-                            </>
-                          ) : (
-                            <>
-                              <Smartphone size={13} className="text-slate-500" />
-                              <span>තනි ඩිවයිස් (Strict)</span>
-                            </>
-                          )}
-                        </button>
-                        <span className="block text-[9px] text-slate-500 mt-1">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.dualDeviceAllowed)}
+                            disabled={isBusy}
+                            onChange={() => handleToggleDualDevice(item)}
+                            className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-emerald-500 focus:ring-0 cursor-pointer accent-emerald-500"
+                          />
+                          <span className={`text-xs font-black ${item.dualDeviceAllowed ? 'text-emerald-400' : 'text-slate-400'}`}>
+                            {item.dualDeviceAllowed ? '✓ ඩිවයිස් 2 සක්‍රියයි' : 'ඩිවයිස් 2 අවසරය (ටික)'}
+                          </span>
+                        </label>
+                        <span className="block text-[9px] text-slate-500 mt-1 font-semibold">
                           {item.dualDeviceAllowed 
                             ? 'අනෙක් ඩිවයිස් එකෙන් ලොග් වූ විට පෙර ඩිවයිස් එක තත්. 5න් Logout වේ' 
                             : 'ඩිවයිස් 2කින් ලොග් වුවහොත් Strike එකක් වැටේ'}

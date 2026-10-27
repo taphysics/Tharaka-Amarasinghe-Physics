@@ -123,10 +123,13 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [paymentReminders, setPaymentReminders] = useState<any[]>([]);
   const [totalRemindersCount, setTotalRemindersCount] = useState<number>(0);
   const [recordingsCount, setRecordingsCount] = useState<number>(0);
+  const [watchedRecordingsCount, setWatchedRecordingsCount] = useState<number>(0);
+  const [unwatchedRecordingsCount, setUnwatchedRecordingsCount] = useState<number>(0);
   const [examsCount, setExamsCount] = useState<number>(0);
   const [availableExamsCount, setAvailableExamsCount] = useState<number>(0);
   const [completedExamsCount, setCompletedExamsCount] = useState<number>(0);
   const [tutesCount, setTutesCount] = useState<number>(0);
+  const [downloadedTutesCount, setDownloadedTutesCount] = useState<number>(0);
   const [isPaidCurrentMonth, setIsPaidCurrentMonth] = useState<boolean>(true);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -794,23 +797,32 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setPaymentReminders(explicitPaymentReminders);
         setTotalRemindersCount(activeRemindersSum);
 
-        // 4. Fetch counts (Recordings, Exams, Completed Exam Results, Tutes, Calendar)
-        const [calRes, livesRes, recRes, examRes, tuteRes, resultsRes] = await Promise.all([
+        // 4. Fetch counts (Recordings, Exams, Completed Exam Results, Tutes, Calendar, Live Views) - 100% Live Database
+        const [calRes, livesRes, recRes, examRes, tuteRes, resultsRes, recViewsRes, resourceViewsRes] = await Promise.all([
           supabase.from('calendar_events').select('*').order('date', { ascending: true }),
           supabase.from('scheduled_lives').select('*').order('date', { ascending: true }),
           supabase.from('recordings').select('id, class_type'),
           supabase.from('exams').select('id, title, status, class_type, target_class_type'),
           supabase.from('class_resources').select('id, type, target_classes').in('type', ['tute', 'paper']),
-          supabase.from('exam_results').select('id, exam_id, score, submitted_at').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`)
+          supabase.from('exam_results').select('id, exam_id, score, submitted_at').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`),
+          supabase.from('recording_views').select('recording_id').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`),
+          supabase.from('resource_views').select('resource_id').eq('username', studentToUse.username)
         ]);
 
-        // Recordings Count
+        // Recordings Count & Live Database Watched / Unwatched tracking
         if (recRes.data) {
-          const count = recRes.data.filter((r: any) => {
+          const matchingRecordings = recRes.data.filter((r: any) => {
             if (enrolledClasses.length === 0) return true;
             return enrolledClasses.some(c => (r.class_type || '').toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes((r.class_type || '').toLowerCase()));
-          }).length;
-          setRecordingsCount(count);
+          });
+          const totalRecs = matchingRecordings.length;
+          setRecordingsCount(totalRecs);
+
+          // Retrieve watched recordings from LIVE SUPABASE DATABASE table `recording_views`
+          const watchedIds = new Set((recViewsRes?.data || []).map((v: any) => String(v.recording_id)));
+          const watchedCount = matchingRecordings.filter((r: any) => watchedIds.has(String(r.id))).length;
+          setWatchedRecordingsCount(watchedCount);
+          setUnwatchedRecordingsCount(Math.max(0, totalRecs - watchedCount));
         }
 
         // Exams & Completed calculation
@@ -834,16 +846,22 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
         setAvailableExamsCount(Math.max(0, computedExamsCount - completedCount));
 
-        // Tutes Count
+        // Tutes & Papers Count & Live Database Downloaded tracking
         if (tuteRes.data) {
-          const count = tuteRes.data.filter((t: any) => {
+          const matchingTutes = tuteRes.data.filter((t: any) => {
             if (enrolledClasses.length === 0) return true;
             const tc = t.target_classes || [];
             if (tc.length === 0) return true;
             const tcArr = Array.isArray(tc) ? tc : [tc];
             return tcArr.some((c: string) => enrolledClasses.some(ec => ec.toLowerCase().includes(c.toLowerCase()) || c.toLowerCase().includes(ec.toLowerCase())));
-          }).length;
-          setTutesCount(count);
+          });
+          const totalTutes = matchingTutes.length;
+          setTutesCount(totalTutes);
+
+          // Retrieve downloaded/accessed tutes from LIVE SUPABASE DATABASE table `resource_views`
+          const accessedIds = new Set((resourceViewsRes?.data || []).map((v: any) => String(v.resource_id)));
+          const downloadedCount = matchingTutes.filter((t: any) => accessedIds.has(String(t.id))).length;
+          setDownloadedTutesCount(downloadedCount);
         }
 
         // Unified Calendar & Live Classes
@@ -2766,78 +2784,154 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {dashboardTab === null && (
               <div className="space-y-6 animate-in fade-in duration-200">
                 
-                {/* 1. ROYAL BLUE GRADIENT HERO BANNER (Screenshot 1) */}
-                <div className="relative rounded-3xl p-6 sm:p-8 md:p-10 bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-800 text-white shadow-xl shadow-blue-900/15 overflow-hidden">
-                  <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/5 rounded-full blur-2xl pointer-events-none" />
-                  <div className="absolute right-20 -top-20 w-48 h-48 bg-blue-400/10 rounded-full blur-xl pointer-events-none" />
+                {/* 1. ROYAL BLUE GRADIENT HERO BANNER (Persists on Mobile & Crystal Clear in Day/Night Mode) */}
+                <div 
+                  style={{
+                    backgroundColor: '#1d4ed8',
+                    backgroundImage: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #3730a3 100%)',
+                    color: '#ffffff'
+                  }}
+                  className="relative rounded-3xl p-6 sm:p-8 md:p-10 !bg-blue-700 bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-800 text-white shadow-xl shadow-blue-900/25 overflow-hidden"
+                >
+                  <div className="absolute -right-10 -bottom-10 w-64 h-64 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+                  <div className="absolute right-20 -top-20 w-48 h-48 bg-blue-300/20 rounded-full blur-xl pointer-events-none" />
 
                   <div className="relative z-10 space-y-2.5 max-w-2xl">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md border border-white/20 text-[11px] font-bold tracking-wider uppercase text-blue-100">
-                      <span>WELCOME BACK, {studentDisplayName}!</span>
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/30 text-[11px] font-extrabold tracking-wider uppercase text-white shadow-sm">
+                      <span className="!text-white" style={{ color: '#ffffff' }}>WELCOME BACK, {studentDisplayName}!</span>
                     </div>
-                    <h1 className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight leading-tight">
+                    <h1 
+                      style={{ color: '#ffffff' }}
+                      className="text-2xl sm:text-3xl md:text-4xl font-black tracking-tight leading-tight !text-white drop-shadow-md"
+                    >
                       Your learning hub, all in one place
                     </h1>
-                    <p className="text-xs sm:text-sm text-blue-100/90 font-medium leading-relaxed pt-1">
+                    <p 
+                      style={{ color: '#dbeafe' }}
+                      className="text-xs sm:text-sm !text-blue-100 font-semibold leading-relaxed pt-1 drop-shadow-sm"
+                    >
                       Exams, recordings, live classes and study materials — everything you need for {siteConfig?.headerTitle || 'Physics Online Hub'}, built for your device.
                     </p>
                   </div>
                 </div>
 
-                {/* 2. OVERVIEW STATS CARDS (Screenshot 1: Total Exams, Available Now, Completed) */}
+                {/* 2. OVERVIEW STATS CARDS: Exams, Recordings, Tutes & Papers */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {/* Card 1: Total Exams */}
+                  {/* Card 1: Exams (විභාග) */}
                   <div 
                     onClick={() => handleTabChange('exams')}
-                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400/50 transition cursor-pointer group"
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-blue-400/50 transition cursor-pointer group flex flex-col justify-between"
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
-                        <FileText size={18} />
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold shadow-sm">
+                          <FileText size={20} />
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                          Exams Hub
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                          {examsCount}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                          ලැබී ඇති විභාග
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">
+                        විභාග (Online Exams)
+                      </p>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-emerald-50/60 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200/50 dark:border-emerald-900/30">
+                        <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">සම්පූර්ණ කළ (Completed)</div>
+                        <div className="text-sm font-black text-emerald-800 dark:text-emerald-300">{completedExamsCount}</div>
+                      </div>
+                      <div className="bg-amber-50/60 dark:bg-amber-950/30 p-2 rounded-xl border border-amber-200/50 dark:border-amber-900/30">
+                        <div className="text-[10px] font-bold text-amber-700 dark:text-amber-400">ඉතිරි (Pending)</div>
+                        <div className="text-sm font-black text-amber-800 dark:text-amber-300">{availableExamsCount}</div>
                       </div>
                     </div>
-                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
-                      {examsCount}
-                    </div>
-                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                      Total Exams
-                    </p>
                   </div>
 
-                  {/* Card 2: Available Now */}
+                  {/* Card 2: Video Recordings (වීඩියෝ රෙකෝඩින්) */}
                   <div 
-                    onClick={() => handleTabChange('exams')}
-                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-emerald-400/50 transition cursor-pointer group"
+                    onClick={() => handleTabChange('recordings')}
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-purple-400/50 transition cursor-pointer group flex flex-col justify-between"
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-10 h-10 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
-                        <CheckCircle2 size={18} />
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="w-10 h-10 rounded-2xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold shadow-sm">
+                          <Video size={20} />
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                          Class Videos
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                          {recordingsCount}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                          දී ඇති රෙකෝඩින්
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">
+                        වීඩියෝ රෙකෝඩින් (Recordings)
+                      </p>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-rose-50/60 dark:bg-rose-950/30 p-2 rounded-xl border border-rose-200/50 dark:border-rose-900/30">
+                        <div className="text-[10px] font-bold text-rose-700 dark:text-rose-400">නොනැරඹූ (Unwatched)</div>
+                        <div className="text-sm font-black text-rose-800 dark:text-rose-300">{unwatchedRecordingsCount}</div>
+                      </div>
+                      <div className="bg-indigo-50/60 dark:bg-indigo-950/30 p-2 rounded-xl border border-indigo-200/50 dark:border-indigo-900/30">
+                        <div className="text-[10px] font-bold text-indigo-700 dark:text-indigo-400">නැරඹූ (Watched)</div>
+                        <div className="text-sm font-black text-indigo-800 dark:text-indigo-300">{watchedRecordingsCount}</div>
                       </div>
                     </div>
-                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
-                      {availableExamsCount}
-                    </div>
-                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                      Available Now
-                    </p>
                   </div>
 
-                  {/* Card 3: Completed */}
+                  {/* Card 3: Tutes & Papers (ටියුට් සහ පේපර්) */}
                   <div 
-                    onClick={() => handleTabChange('exams')}
-                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-amber-400/50 transition cursor-pointer group"
+                    onClick={() => handleTabChange('tutes')}
+                    className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-amber-400/50 transition cursor-pointer group flex flex-col justify-between"
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-10 h-10 rounded-2xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
-                        <Trophy size={18} />
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="w-10 h-10 rounded-2xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold shadow-sm">
+                          <BookOpen size={20} />
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                          Materials
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
+                          {tutesCount}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                          ලැබී ඇති ටියුට්/පේපර්
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">
+                        ටියුට් සහ ප්‍රශ්න පත්‍ර (Tutes & Papers)
+                      </p>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-emerald-50/60 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200/50 dark:border-emerald-900/30">
+                        <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">ඩවුන්ලෝඩ් කළ (Accessed)</div>
+                        <div className="text-sm font-black text-emerald-800 dark:text-emerald-300">{downloadedTutesCount}</div>
+                      </div>
+                      <div className="bg-amber-50/60 dark:bg-amber-950/30 p-2 rounded-xl border border-amber-200/50 dark:border-amber-900/30">
+                        <div className="text-[10px] font-bold text-amber-700 dark:text-amber-400">නොබැලූ (New)</div>
+                        <div className="text-sm font-black text-amber-800 dark:text-amber-300">{Math.max(0, tutesCount - downloadedTutesCount)}</div>
                       </div>
                     </div>
-                    <div className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">
-                      {completedExamsCount}
-                    </div>
-                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
-                      Completed
-                    </p>
                   </div>
                 </div>
 

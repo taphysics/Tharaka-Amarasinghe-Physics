@@ -23,7 +23,10 @@ import {
   Eye,
   EyeOff,
   Lock,
-  LayoutDashboard
+  LayoutDashboard,
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import SecurityPasswordModal from './components/SecurityPasswordModal';
 import { Student, StaffMember } from './types';
@@ -60,7 +63,8 @@ import LecturerDashboard from './components/LecturerDashboard';
 import BannerLandingPage from './components/BannerLandingPage';
 import FinanceDepartment from './components/FinanceDepartment';
 import AdminDeviceSecurityManager from './components/AdminDeviceSecurityManager';
-import { registerDeviceLogin } from './deviceSecurityService';
+import AdminClassDirectory from './components/AdminClassDirectory';
+import { registerDeviceLogin, confirmDualDeviceSwitch } from './deviceSecurityService';
 import { fetchAllPendingPayments } from './pendingPaymentsService';
 import { subscribeRealtimeEvents } from './realtimeSync';
 import { translations, Language } from './translations';
@@ -281,8 +285,8 @@ export default function App() {
     }
   }, [students]);
 
-  // Dashboard inner tabs with persistence
-  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams' | 'calendar' | 'history' | null>(() => (getSavedStudentTab() as any) || 'live');
+  // Dashboard inner tabs: default to null (Hub Overview)
+  const [dashboardTab, setDashboardTab] = useState<'live' | 'recordings' | 'tutes' | 'exams' | 'calendar' | 'history' | null>(null);
   const [playingVideoUrl, setPlayingVideoUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const studentAlerts = currentStudent ? announcements.filter((alert: any) => 
@@ -319,6 +323,10 @@ useEffect(() => {
   // Profile modal click details
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
+  // Security Unlock for Website Appearance & Configurations
+  const [isSiteConfigUnlocked, setIsSiteConfigUnlocked] = useState(false);
+  const [showSiteConfigPasswordModal, setShowSiteConfigPasswordModal] = useState(false);
+
   // Admin access states with 6-Hour Persistent Session
   const [currentStaff, setCurrentStaff] = useState<StaffMember | null>(() => getActiveStaffSession());
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => {
@@ -326,10 +334,180 @@ useEffect(() => {
   });
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator' | 'device_security'>(() => {
+  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'class_directory' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator' | 'device_security'>(() => {
     return (getSavedAdminTab() as any) || 'overview';
   });
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
+  const [dualDevicePromptData, setDualDevicePromptData] = useState<{
+    student: any;
+    prevDeviceName: string;
+    prevDeviceId: string;
+  } | null>(null);
+
+  // Android Chrome / PWA Mobile Back Button Navigation & Double-Tap Exit Confirmation
+  const [showExitModal, setShowExitModal] = useState(false);
+  const [exitToastMessage, setExitToastMessage] = useState<string | null>(null);
+  const lastBackPressTimeRef = useRef<number>(0);
+  const exitToastTimerRef = useRef<any>(null);
+
+  const navStateRef = useRef({
+    currentView,
+    dashboardTab,
+    activeAdminTab,
+    playingVideoUrl,
+    isProfileModalOpen,
+    isModalOpen,
+    showSiteConfigPasswordModal,
+    dualDevicePromptData,
+    showExitModal
+  });
+
+  useEffect(() => {
+    navStateRef.current = {
+      currentView,
+      dashboardTab,
+      activeAdminTab,
+      playingVideoUrl,
+      isProfileModalOpen,
+      isModalOpen,
+      showSiteConfigPasswordModal,
+      dualDevicePromptData,
+      showExitModal
+    };
+  }, [
+    currentView,
+    dashboardTab,
+    activeAdminTab,
+    playingVideoUrl,
+    isProfileModalOpen,
+    isModalOpen,
+    showSiteConfigPasswordModal,
+    dualDevicePromptData,
+    showExitModal
+  ]);
+
+  // Push history state whenever navigation occurs so back button has entries to consume
+  useEffect(() => {
+    try {
+      window.history.pushState({ 
+        view: currentView, 
+        tab: dashboardTab, 
+        adminTab: activeAdminTab,
+        ts: Date.now() 
+      }, '');
+    } catch (e) {}
+  }, [currentView, dashboardTab, activeAdminTab]);
+
+  useEffect(() => {
+    // Ensure initial history state is primed
+    try {
+      if (!window.history.state) {
+        window.history.replaceState({ root: true }, '');
+      }
+      window.history.pushState({ rootGuard: true }, '');
+    } catch (e) {}
+
+    const handlePopState = () => {
+      const state = navStateRef.current;
+
+      // 1. If Exit Modal is open and user presses back, close exit modal
+      if (state.showExitModal) {
+        setShowExitModal(false);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+
+      // 2. If a popup/modal is open, close the modal first
+      if (state.playingVideoUrl) {
+        setPlayingVideoUrl(null);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+      if (state.isProfileModalOpen) {
+        setIsProfileModalOpen(false);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+      if (state.isModalOpen) {
+        setIsModalOpen(false);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+      if (state.showSiteConfigPasswordModal) {
+        setShowSiteConfigPasswordModal(false);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+      if (state.dualDevicePromptData) {
+        setDualDevicePromptData(null);
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+
+      // 3. If in Student Dashboard and inside a sub-tab (e.g. live, recordings, tutes, exams, calendar, history)
+      if (state.currentView === 'dashboard' && state.dashboardTab !== null) {
+        setDashboardTab(null);
+        localStorage.removeItem('physics_hub_student_tab');
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+
+      // 4. If in Admin Panel and inside a sub-tab other than overview
+      if (state.currentView === 'admin' && state.activeAdminTab !== 'overview') {
+        setActiveAdminTab('overview');
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+
+      // 5. If in non-home, non-dashboard view (e.g. login, register, free-notes)
+      if (state.currentView !== 'home' && state.currentView !== 'dashboard') {
+        setCurrentView('home');
+        try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+        return;
+      }
+
+      // 6. At root view (Home, or Hub Overview with dashboardTab === null):
+      // Double tap back button within 2500ms shows Exit Confirmation Modal
+      const now = Date.now();
+      const elapsed = now - lastBackPressTimeRef.current;
+
+      // Always re-push guard state so the browser/PWA doesn't exit abruptly
+      try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+
+      if (elapsed < 2500 && elapsed > 100) {
+        // Double tap confirmed -> show Exit confirmation modal
+        setShowExitModal(true);
+        setExitToastMessage(null);
+      } else {
+        lastBackPressTimeRef.current = now;
+        setExitToastMessage('ඉවත් වීමට නැවත Back ඔබන්න (Press Back again to exit)');
+        if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
+        exitToastTimerRef.current = setTimeout(() => {
+          setExitToastMessage(null);
+        }, 2500);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
+    };
+  }, []);
+
+  const handleExitAppConfirm = () => {
+    setShowExitModal(false);
+    try {
+      window.close();
+    } catch (e) {}
+    setTimeout(() => {
+      try {
+        window.history.go(-window.history.length);
+      } catch (e) {
+        window.location.href = 'about:blank';
+      }
+    }, 100);
+  };
 
   // Restore staff session on reload and ensure isAdminLoggedIn stays true
   useEffect(() => {
@@ -379,7 +557,7 @@ useEffect(() => {
 
     // Default safe tabs based on role if allowed_sections is not defined
     if (currentStaff.role === 'admin' || currentStaff.role === 'manager') {
-      return ['overview', 'registry', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner', 'device_security'].includes(tabId);
+      return ['overview', 'registry', 'class_directory', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner', 'device_security'].includes(tabId);
     }
     if (currentStaff.role === 'lecturer') {
       return ['overview', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
@@ -392,7 +570,7 @@ useEffect(() => {
     if (isAdminLoggedIn && currentStaff) {
       if (!isTabAllowed(activeAdminTab)) {
         const candidateTabs: Array<typeof activeAdminTab> = [
-          'overview', 'registry', 'manual_student', 'staff', 'resets', 'payments', 
+          'overview', 'registry', 'class_directory', 'manual_student', 'staff', 'resets', 'payments', 
           'pending_payments', 'bank_accounts', 'history', 'qr_generator', 
           'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast', 'device_security'
         ];
@@ -487,10 +665,7 @@ useEffect(() => {
   const [loginError, setLoginError] = useState(false);
   const [loginShake, setLoginShake] = useState(false);
   const [loginAttempts, setLoginAttempts] = useState(0);
-
-  // Security Unlock for Website Appearance & Configurations
-  const [isSiteConfigUnlocked, setIsSiteConfigUnlocked] = useState(false);
-  const [showSiteConfigPasswordModal, setShowSiteConfigPasswordModal] = useState(false);
+  const [isSwitchingDevice, setIsSwitchingDevice] = useState(false);
 
   // Forgot password username
   const [forgotUsername, setForgotUsername] = useState('');
@@ -624,6 +799,15 @@ useEffect(() => {
 
         // Single Device Login & Disciplinary Security Verification
         const loginCheck = await registerDeviceLogin(found);
+        if (loginCheck.needsDualDevicePrompt) {
+          setDualDevicePromptData({
+            student: found,
+            prevDeviceName: loginCheck.previousDeviceName || 'කලින් ලොග් වූ Device එක',
+            prevDeviceId: loginCheck.previousDeviceId || ''
+          });
+          return;
+        }
+
         if (loginCheck.isConcurrent) {
           found.device_violations_count = loginCheck.strikeCount;
           found.device_block_until = loginCheck.blockedUntil;
@@ -637,6 +821,10 @@ useEffect(() => {
 
         // Save student session with full object and 6-hour offline validity
         saveActiveStudentSession(found);
+
+        // Always bring student directly to the main Hub Overview page
+        setDashboardTab(null);
+        localStorage.removeItem('physics_hub_student_tab');
 
         setLoginUser('');
         setLoginPass('');
@@ -1553,11 +1741,20 @@ if (isLoading) {
                   </p>
                 </div>
 
-                <div className="bg-slate-950/70 border border-blue-300/30 rounded-2xl p-4 mt-6 text-left relative z-10 shadow-lg">
-                  <span className="absolute -top-3 left-4 bg-blue-900 border border-blue-300/50 p-0.5 px-2.5 font-mono text-[9px] text-white font-extrabold uppercase tracking-wider rounded-md shadow-sm">
+                <div 
+                  style={{ backgroundColor: 'rgba(15, 23, 42, 0.92)', color: '#ffffff' }}
+                  className="bg-slate-900/95 dark:bg-slate-950/90 border border-blue-300/40 rounded-2xl p-4 mt-6 text-left relative z-10 shadow-xl"
+                >
+                  <span 
+                    style={{ backgroundColor: '#1e3a8a', color: '#ffffff' }}
+                    className="absolute -top-3 left-4 bg-blue-900 border border-blue-300/60 p-0.5 px-2.5 font-mono text-[9px] !text-white font-black uppercase tracking-wider rounded-md shadow-md"
+                  >
                     {lang === 'si' ? 'ගුරු උපදෙස්' : 'Advice & Quote'}
                   </span>
-                  <p className="text-white text-sm italic font-sans leading-relaxed py-1 drop-shadow-sm font-medium">
+                  <p 
+                    style={{ color: '#ffffff' }}
+                    className="!text-white text-sm italic font-sans leading-relaxed py-1 drop-shadow-md font-semibold"
+                  >
                     "{siteConfig.directorQuote || (lang === 'si' ? 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.' : 'Physics is not mere memorization; it is a fascinating journey of understanding how the universe works.')}"
                   </p>
                 </div>
@@ -2185,6 +2382,14 @@ if (isLoading) {
                       Student Registry
                     </button>
                   )}
+                  {isTabAllowed('class_directory') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('class_directory')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'class_directory' ? 'bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      <span>🏛️ පන්ති හා ශිෂ්‍ය නාමාවලිය</span>
+                    </button>
+                  )}
                   {isTabAllowed('manual_student') && (
                     <button 
                       onClick={() => handleAdminTabChange('manual_student')}
@@ -2373,6 +2578,12 @@ if (isLoading) {
                     </div>
                   )}
 
+                  {activeAdminTab === 'class_directory' && isTabAllowed('class_directory') && (
+                    <div className="col-span-12 w-full">
+                      <AdminClassDirectory />
+                    </div>
+                  )}
+
                   {activeAdminTab === 'staff' && isTabAllowed('staff') && (
                     <div className="col-span-12 w-full">
                       <AdminStaffManager currentStaff={currentStaff} />
@@ -2556,7 +2767,7 @@ if (isLoading) {
 
                   {activeAdminTab === 'device_security' && isTabAllowed('device_security') && (
                     <div className="col-span-12 w-full">
-                      <AdminDeviceSecurityManager students={students} />
+                      <AdminDeviceSecurityManager students={students} onUpdateStudents={setStudents} />
                     </div>
                   )}
                 </div>
@@ -2682,6 +2893,80 @@ if (isLoading) {
         </div>
       )}
 
+      {/* Interactive Dual Device Concurrent Login Modal */}
+      {dualDevicePromptData && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-white animate-in zoom-in-95 duration-200">
+            
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">ඩිවයිස් මාරු කිරීමේ දැනුම්දීම</h3>
+                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider font-mono">
+                  Active Session Detected
+                </span>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <p className="text-sm font-semibold text-slate-200 leading-relaxed">
+                ඔබ දැනටමත් <strong className="text-amber-400 font-bold font-mono">[{dualDevicePromptData.prevDeviceName}]</strong> ලොග් වී ඇති බව හඳුනාගෙන ඇත. ඔබට මෙම Device එකෙන් ලොග් වීමට අවශ්‍යනම් අනෙක් ඩිවයිස් එකෙන් ඔබගේ ගිණුම ඔටෝ ලොග් අවුට් වෙනු ඇත.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              {/* Button 1: Logout / Return to Home */}
+              <button
+                type="button"
+                onClick={() => {
+                  setDualDevicePromptData(null);
+                  setLoginUser('');
+                  setLoginPass('');
+                  setCurrentView('home');
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-750 text-rose-300 hover:text-white border border-rose-500/40 text-xs sm:text-sm font-black transition flex items-center justify-center gap-2 cursor-pointer shadow-md active:scale-95"
+              >
+                <LogOut size={16} />
+                <span>ලොග් අවුට් වන්න</span>
+              </button>
+
+              {/* Button 2: Continue on this device */}
+              <button
+                type="button"
+                disabled={isSwitchingDevice}
+                onClick={async () => {
+                  setIsSwitchingDevice(true);
+                  try {
+                    await confirmDualDeviceSwitch(dualDevicePromptData.student, dualDevicePromptData.prevDeviceId);
+                    setCurrentStudent(dualDevicePromptData.student);
+                    saveActiveStudentSession(dualDevicePromptData.student);
+                    setTheme('light');
+                    localStorage.setItem('physics_hub_theme', 'light');
+                    setDashboardTab(null);
+                    localStorage.removeItem('physics_hub_student_tab');
+                    setLoginUser('');
+                    setLoginPass('');
+                    setDualDevicePromptData(null);
+                    setCurrentView('dashboard');
+                  } catch (err: any) {
+                    alert('ලොග් වීමේ දෝෂයක්: ' + (err?.message || err));
+                  } finally {
+                    setIsSwitchingDevice(false);
+                  }
+                }}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-black shadow-lg shadow-emerald-900/40 border border-emerald-400/50 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                <CheckCircle2 size={16} />
+                <span>{isSwitchingDevice ? 'මාරු වෙමින් පවතී...' : 'ඔව් මට තේරුණා මෙම ඩිවයිස් එකෙන් ලොග් කරන්න'}</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       {currentView !== 'dashboard' && (
         <footer className={`border-t py-6 px-4 mt-12 text-center text-xs space-y-2 font-sans ${
@@ -2715,6 +3000,61 @@ if (isLoading) {
             🏛️ Powered by Amarasinghe Digital
           </div>
         </footer>
+      )}
+
+      {/* Android PWA Exit Toast Notice */}
+      {exitToastMessage && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[9999] bg-slate-900/95 dark:bg-slate-800/95 text-white px-5 py-3 rounded-2xl shadow-2xl border border-slate-700/80 text-xs sm:text-sm font-bold flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 duration-200 pointer-events-none">
+          <AlertCircle size={18} className="text-amber-400 shrink-0" />
+          <span>{exitToastMessage}</span>
+        </div>
+      )}
+
+      {/* Android Chrome / PWA Double-Tap Exit Confirmation Modal */}
+      {showExitModal && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 mx-auto flex items-center justify-center shadow-sm">
+              <LogOut size={28} />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                ඇප් එකෙන් ඉවත් වීම
+              </h3>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-1">
+                Exit Application
+              </p>
+            </div>
+
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed px-2">
+              ඔබට මෙම ඇප් එකෙන් ඉවත් වීමට අවශ්‍යද?
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              {/* Button 1: No (නැත) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowExitModal(false);
+                  try { window.history.pushState({ rootGuard: true }, ''); } catch (e) {}
+                }}
+                className="w-full py-3 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs sm:text-sm transition cursor-pointer active:scale-95 shadow-sm"
+              >
+                නැත (No)
+              </button>
+
+              {/* Button 2: Yes (ඔව්) */}
+              <button
+                type="button"
+                onClick={handleExitAppConfirm}
+                className="w-full py-3 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs sm:text-sm transition cursor-pointer active:scale-95 shadow-lg shadow-rose-600/30"
+              >
+                ඔව් (Yes)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

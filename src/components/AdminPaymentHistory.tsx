@@ -706,13 +706,16 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     // who are explicitly assigned to target classes AND configured in class_lecturer_shares with > 0%
     lecturersList.forEach(l => {
       const lLower = l.name.toLowerCase().trim();
-      if (lLower !== currentNameLower) {
+      const isSamePerson = lLower === currentNameLower ||
+        (l.id && currentLecturerObj.id && String(l.id) === String(currentLecturerObj.id));
+
+      if (!isSamePerson) {
         const hasAssigned = l.assignedClasses.some(ac => 
           targetClassList.some(tc => tc.toLowerCase().trim() === ac.toLowerCase().trim())
         );
         const hasShareConfig = targetClassList.some(tc => {
           const shares = lecturerShares.filter(s => s.class_type.toLowerCase().trim() === tc.toLowerCase().trim());
-          return shares.length > 1 && shares.some(cs => cs.lecturer_name.toLowerCase().trim() === lLower && cs.share_percentage > 0);
+          return shares.length > 1 && shares.some(cs => cs.lecturer_name.toLowerCase().trim() === lLower && Number(cs.share_percentage) > 0);
         });
 
         if (hasAssigned && hasShareConfig) {
@@ -724,11 +727,11 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
     return list;
   }, [currentLecturerObj, lecturersList, targetClassList, lecturerShares]);
 
-  const hasTwoLecturers = associatedLecturers.length >= 2;
   const lecturer1 = associatedLecturers[0];
   const lecturer2 = associatedLecturers[1];
   const l1Pct = lecturer1 ? getLecturerShareForClass(targetClassList[0] || '', lecturer1.name, lecturerShares) : 100;
   const l2Pct = lecturer2 ? getLecturerShareForClass(targetClassList[0] || '', lecturer2.name, lecturerShares) : 0;
+  const hasTwoLecturers = associatedLecturers.length >= 2 && Boolean(lecturer2) && l2Pct > 0;
   const splitShareLecturer1 = hasTwoLecturers ? Math.round(financialStats.netLecturerPayable * (l1Pct / 100)) : financialStats.netLecturerPayable;
   const splitShareLecturer2 = hasTwoLecturers ? (financialStats.netLecturerPayable - splitShareLecturer1) : 0;
 
@@ -879,8 +882,8 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
       let dateDisplay = s.paymentDate && s.paymentDate !== '-' ? s.paymentDate : '-';
 
       if (s.status === 'unpaid') {
-        displayStatus = '-';
-        displayAmount = '-';
+        displayStatus = 'Unpaid';
+        displayAmount = 'Unpaid';
         dateDisplay = '-';
       } else if (s.status === 'free') {
         displayStatus = 'Free';
@@ -930,18 +933,21 @@ export default function AdminPaymentHistory({ students: propStudents = [] }: Adm
         if (data.section === 'body') {
           const rawItem = studentLedger[data.row.index];
           if (rawItem?.status === 'paid') {
-            if (data.column.index === 5 || data.column.index === 6) {
-              data.cell.styles.textColor = [22, 101, 52]; // Green for Paid & Amount
+            // Green for Student Name (col 1), Status (col 5), and Amount (col 6)
+            if (data.column.index === 1 || data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [22, 101, 52]; // Green
               data.cell.styles.fontStyle = 'bold';
             }
           } else if (rawItem?.status === 'unpaid') {
-            if (data.column.index === 5 || data.column.index === 6) {
-              data.cell.styles.textColor = [220, 38, 38]; // Red for '-'
+            // Red for Student Name (col 1), Status (col 5), and Amount (col 6)
+            if (data.column.index === 1 || data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [220, 38, 38]; // Red
               data.cell.styles.fontStyle = 'bold';
             }
           } else if (rawItem?.status === 'free') {
-            if (data.column.index === 5 || data.column.index === 6) {
-              data.cell.styles.textColor = [2, 132, 199]; // Blue for 'Free'
+            // Blue for Student Name (col 1), Status (col 5), and Amount (col 6)
+            if (data.column.index === 1 || data.column.index === 5 || data.column.index === 6) {
+              data.cell.styles.textColor = [2, 132, 199]; // Blue
               data.cell.styles.fontStyle = 'bold';
             }
           }
@@ -1460,13 +1466,13 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
           </p>
         </div>
 
-        {/* Co-Lecturers 50% Equal Split Statement Card */}
-        {hasTwoLecturers && (
+        {/* Co-Lecturers Configured Revenue Split Statement Card */}
+        {hasTwoLecturers && lecturer2 && (
           <div className="sm:col-span-2 lg:col-span-4 p-5 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border-2 border-indigo-500/50 space-y-3 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-500/30 pb-3">
               <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold text-xs">🤝 CO-LECTURERS 50% REVENUE SPLIT</span>
-                <h4 className="text-sm font-black text-white">මෙම විෂය සඳහා ලියාපදිංචි දේශකවරුන් 2 දෙනා අතර 50% සමාන බෙදීයාම</h4>
+                <span className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold text-xs">🤝 CO-LECTURERS REVENUE SPLIT</span>
+                <h4 className="text-sm font-black text-white">මෙම විෂය සඳහා ලියාපදිංචි දේශකවරුන් අතර ප්‍රතිශත බෙදීයාම ({l1Pct}% / {l2Pct}%)</h4>
               </div>
               <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-xl border border-emerald-500/30">
                 මුළු ශුද්ධ මුදල: රු. {financialStats.netLecturerPayable.toLocaleString()}
@@ -1481,7 +1487,7 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                   <p className="text-sm font-black text-white mt-0.5">{lecturer1.name}</p>
                   <p className="text-[11px] font-mono text-slate-400">📱 {lecturer1.whatsapp}</p>
                   <div className="mt-2 text-base font-black font-mono text-emerald-400">
-                    50% කොටස: රු. {splitShareLecturer1.toLocaleString()}
+                    {l1Pct}% කොටස: රු. {splitShareLecturer1.toLocaleString()}
                   </div>
                 </div>
                 <button
@@ -1492,7 +1498,7 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                   title={`Send PDF to ${lecturer1.name} via WhatsApp`}
                 >
                   <MessageCircle size={15} />
-                  <span>WhatsApp (50%)</span>
+                  <span>WhatsApp ({l1Pct}%)</span>
                 </button>
               </div>
 
@@ -1503,7 +1509,7 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                   <p className="text-sm font-black text-white mt-0.5">{lecturer2.name}</p>
                   <p className="text-[11px] font-mono text-slate-400">📱 {lecturer2.whatsapp}</p>
                   <div className="mt-2 text-base font-black font-mono text-purple-400">
-                    50% කොටස: රු. {splitShareLecturer2.toLocaleString()}
+                    {l2Pct}% කොටස: රු. {splitShareLecturer2.toLocaleString()}
                   </div>
                 </div>
                 <button
@@ -1514,7 +1520,7 @@ Paid: ${financialStats.paidCount} | Unpaid: ${financialStats.unpaidCount} | Free
                   title={`Send PDF to ${lecturer2.name} via WhatsApp`}
                 >
                   <MessageCircle size={15} />
-                  <span>WhatsApp (50%)</span>
+                  <span>WhatsApp ({l2Pct}%)</span>
                 </button>
               </div>
             </div>
