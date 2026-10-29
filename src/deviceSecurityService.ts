@@ -500,7 +500,122 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
       : 'පෙර ලොග් වූ ඩිවයිස් (Previous Session)';
 
     if (isDualDeviceAllowed) {
-      // DUAL DEVICE PERMITTED:
+      // DUAL DEVICE PERMITTED: Max 2 devices allowed!
+      // 1. Check approved devices list
+      let approvedList: string[] = [];
+      if (Array.isArray(student.approved_devices)) {
+        approvedList = student.approved_devices.map(String);
+      } else if (typeof student.approved_devices === 'string') {
+        try { approvedList = JSON.parse(student.approved_devices || '[]'); } catch {}
+      }
+
+      const currentDevKey = `${currentDevice.deviceType}_${currentDevice.os}_${currentDevice.browser}`.toLowerCase().replace(/[\s\-_]+/g, '');
+      const currentDevId = currentDevice.deviceId.toLowerCase();
+
+      const normalizeDevItem = (item: any) => {
+        if (!item) return '';
+        if (typeof item === 'string') return item.toLowerCase().replace(/[\s\-_]+/g, '');
+        if (item.deviceId) return String(item.deviceId).toLowerCase();
+        return `${item.deviceType || ''}_${item.os || ''}_${item.browser || ''}`.toLowerCase().replace(/[\s\-_]+/g, '');
+      };
+
+      const isCurrentDeviceApproved = approvedList.some(item => {
+        const norm = normalizeDevItem(item);
+        const itemObj = (typeof item === 'object' && item !== null) ? item as any : null;
+        return norm === currentDevKey || norm === currentDevId || (itemObj?.deviceId && itemObj.deviceId === currentDevice.deviceId);
+      });
+
+      // If approvedList has 2 devices already, and this device is NOT one of them:
+      // STRICT BAN: 3rd device attempt blocks account across all devices immediately!
+      if (approvedList.length >= 2 && !isCurrentDeviceApproved) {
+        newStrikeCount = currentStrikes + 1;
+        const ladderStep = getDurationForStrike(newStrikeCount);
+        newBlockedUntil = new Date(Date.now() + ladderStep.durationMs).toISOString();
+
+        const violationRecord: DeviceViolationRecord = {
+          id: `viol_3rd_dev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          student_username: username,
+          student_name: student.name || `${student.firstName || ''} ${student.lastName || ''}`.trim() || username,
+          strike_count: newStrikeCount,
+          blocked_until: newBlockedUntil,
+          blocked_at: new Date().toISOString(),
+          reason: `අවසර ලබා දී ඇති ඩිවයිස් 2 හැර වෙනත් 3 වන ඩිවයිස් එකකින් ලොග් වීමට උත්සාහ කර ඇත. (Strike ${newStrikeCount}: ${ladderStep.label} තහනමක් ක්‍රියාත්මක විය)`,
+          device_info_previous: JSON.stringify(previousSession || { os: 'Approved Devices', browser: 'Browser', deviceType: 'Desktop' }),
+          device_info_new: JSON.stringify(currentDevice),
+          is_active: true,
+          warning_notification_shown: false,
+          warning_notification_expires_at: new Date(Date.now() + ladderStep.durationMs + 24 * 60 * 60 * 1000).toISOString()
+        };
+
+        const currentViolations = getLocalViolations();
+        saveLocalViolations([violationRecord, ...currentViolations]);
+
+        updateLocalStudentsCache(username, {
+          device_violations_count: newStrikeCount,
+          deviceViolationsCount: newStrikeCount,
+          device_block_until: newBlockedUntil,
+          deviceBlockUntil: newBlockedUntil
+        }, student.id);
+
+        try {
+          await supabase.from('student_device_violations').insert([violationRecord]);
+        } catch (e) {}
+
+        try {
+          const updateData = {
+            device_violations_count: newStrikeCount,
+            device_block_until: newBlockedUntil
+          };
+          if (student.id) {
+            await supabase.from('students').update(updateData).eq('id', student.id);
+          }
+          await supabase.from('students').update(updateData).ilike('username', username);
+        } catch (e) {}
+
+        // Broadcast immediate force-logout to all devices
+        const banLogoutPayload = {
+          username,
+          targetDeviceId: 'all',
+          countdownSeconds: 0,
+          strikeCount: newStrikeCount,
+          blockedUntil: newBlockedUntil,
+          newDevice: newDeviceFormatted,
+          isDualDeviceSwitch: false,
+          isBlocked: true,
+          message: 'අවසරලත් ඩිවයිස් 2 හැර 3 වන අනවසර ඩිවයිස් එකකින් ලොග් වීමට උත්සාහ කළ බැවින් ඔබගේ ගිණුම සම්පූර්ණයෙන්ම බ්ලොක් කරන ලදී.'
+        };
+
+        emitRealtimeEvent('device_force_logout' as any, banLogoutPayload);
+
+        try {
+          const channel = supabase.channel('student_device_security');
+          channel.send({
+            type: 'broadcast',
+            event: 'force_logout',
+            payload: banLogoutPayload
+          });
+        } catch {}
+
+        return {
+          isConcurrent: true,
+          oldDeviceId: previousDeviceId || undefined,
+          strikeCount: newStrikeCount,
+          isBlocked: true,
+          blockedUntil: newBlockedUntil
+        };
+      }
+
+      // If approvedList has fewer than 2 devices, automatically register this device as approved device #1 or #2
+      if (!isCurrentDeviceApproved && approvedList.length < 2) {
+        const rawDevKey = `${currentDevice.deviceType}_${currentDevice.os}_${currentDevice.browser}`.toLowerCase();
+        const updatedApproved = [...approvedList, rawDevKey];
+        try {
+          const payload = { approved_devices: updatedApproved, dual_device_allowed: true };
+          if (student.id) await supabase.from('students').update(payload).eq('id', student.id);
+          await supabase.from('students').update(payload).ilike('username', username);
+        } catch (e) {}
+      }
+
       // If student hasn't explicitly confirmed the switch yet, return prompt trigger
       if (!options?.forceSwitch) {
         return {
@@ -513,14 +628,15 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
         };
       }
 
-      // Explicitly confirmed switch: force-logout old device and register this device
+      // Explicitly confirmed switch: INSTANT 0-delay logout on old device
       const logoutPayload = {
         username,
         targetDeviceId: previousDeviceId,
-        countdownSeconds: 5,
+        newDeviceId: currentDeviceId,
+        countdownSeconds: 0,
         newDevice: newDeviceFormatted,
         isDualDeviceSwitch: true,
-        message: `මෙම මොහොතේ ඔබගේ (${newDeviceFormatted}) ලොග්වී ඇති බැවින් ඔබව මෙම Device එකෙන් Logout කරේ`
+        message: `මෙම මොහොතේ ඔබගේ (${newDeviceFormatted}) ලොග්වී ඇති බැවින් ඔබව මෙම Device එකෙන් Logout විය.`
       };
 
       emitRealtimeEvent('device_force_logout' as any, logoutPayload);
@@ -528,6 +644,15 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
       try {
         const channel = supabase.channel('student_device_security');
         channel.send({
+          type: 'broadcast',
+          event: 'force_logout',
+          payload: logoutPayload
+        });
+      } catch {}
+
+      try {
+        const userChannel = supabase.channel(`student_device_${username}`);
+        userChannel.send({
           type: 'broadcast',
           event: 'force_logout',
           payload: logoutPayload
@@ -608,11 +733,11 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
         await supabase.from('students').update(updateData).ilike('username', username);
       } catch (e) {}
 
-      // Broadcast force-logout with 5-second countdown to the old device
+      // Broadcast force-logout with instant/zero-delay to old device
       const logoutPayload = {
         username,
         targetDeviceId: previousDeviceId,
-        countdownSeconds: 5,
+        countdownSeconds: 0,
         strikeCount: newStrikeCount,
         blockedUntil: newBlockedUntil,
         newDevice: newDeviceFormatted,
@@ -625,6 +750,15 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
       try {
         const channel = supabase.channel('student_device_security');
         channel.send({
+          type: 'broadcast',
+          event: 'force_logout',
+          payload: logoutPayload
+        });
+      } catch {}
+
+      try {
+        const userChannel = supabase.channel(`student_device_${username}`);
+        userChannel.send({
           type: 'broadcast',
           event: 'force_logout',
           payload: logoutPayload

@@ -97,3 +97,29 @@ export function getLecturerShareForClass(
   // If not found among the shares for this multi-lecturer class
   return 0;
 }
+
+export async function getLecturerForClass(classType?: string, currentLecturerName?: string): Promise<string> {
+  const fallback = 'තාරක අමරසිංහ (Tharaka Amarasinghe)';
+  if (currentLecturerName) {
+    const lower = currentLecturerName.toLowerCase().trim();
+    if (!lower.includes('admin') && !lower.includes('manager') && !lower.includes('staff') && lower !== '') {
+      return currentLecturerName;
+    }
+  }
+  if (!classType) return fallback;
+
+  try {
+    const shares = await fetchClassLecturerShares();
+    const cleanClass = classType.trim().toLowerCase();
+    const match = shares.find(s => {
+      const sLower = s.class_type.trim().toLowerCase();
+      return sLower === cleanClass || sLower.includes(cleanClass) || cleanClass.includes(sLower);
+    });
+    if (match && match.lecturer_name && match.lecturer_name.trim() !== '') {
+      return match.lecturer_name.trim();
+    }
+  } catch {}
+
+  return fallback;
+}
+

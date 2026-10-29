@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { subscribeRealtimeEvents } from '../realtimeSync';
+import { subscribeRealtimeEvents, emitRealtimeEvent } from '../realtimeSync';
 import { fetchAllPendingPayments } from '../pendingPaymentsService';
 import { 
   FileText, Calendar, EyeOff, Search, Filter, ShieldCheck, 
@@ -250,7 +250,7 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
     return acc;
   }, {});
 
-  const handleOpenSecureViewer = (doc: any) => {
+  const handleOpenSecureViewer = async (doc: any) => {
     if (!doc.link) {
       alert("වලංගු ලේඛන ලින්ක් එකක් ඇතුළත් කර නොමැත.");
       return;
@@ -259,13 +259,16 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
 
     // Record access in Live Supabase Database table `resource_views`
     if (currentStudent?.username && doc.id) {
-      supabase.from('resource_views').upsert({
-        username: currentStudent.username,
-        resource_id: String(doc.id),
-        viewed_at: new Date().toISOString()
-      }, { onConflict: 'username,resource_id' }).then(() => {
+      try {
+        await supabase.from('resource_views').upsert({
+          username: currentStudent.username,
+          resource_id: String(doc.id),
+          viewed_at: new Date().toISOString()
+        }, { onConflict: 'username,resource_id' });
         emitRealtimeEvent('resource_viewed' as any, { username: currentStudent.username, resource_id: doc.id });
-      }).catch(console.error);
+      } catch (err) {
+        console.warn('Error recording resource view:', err);
+      }
     }
   };
 

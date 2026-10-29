@@ -40,6 +40,16 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
   const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
   const [attendanceLiveTitle, setAttendanceLiveTitle] = useState('');
 
+  // Exam Status Modal State (Completed vs Uncompleted Students)
+  const [examStatusModalOpen, setExamStatusModalOpen] = useState(false);
+  const [selectedLiveForStatus, setSelectedLiveForStatus] = useState<any | null>(null);
+  const [selectedExamForStatus, setSelectedExamForStatus] = useState<any | null>(null);
+  const [completedExamStudents, setCompletedExamStudents] = useState<any[]>([]);
+  const [uncompletedExamStudents, setUncompletedExamStudents] = useState<any[]>([]);
+  const [loadingExamStatus, setLoadingExamStatus] = useState(false);
+  const [examStatusTab, setExamStatusTab] = useState<'uncompleted' | 'completed'>('uncompleted');
+  const [examStatusSearch, setExamStatusSearch] = useState('');
+
   // Live Class Form State
   const [formData, setFormData] = useState({
     id: '',
@@ -330,6 +340,8 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         updatePayload.is_exam_active = false;
         await supabase.from('scheduled_lives').update(updatePayload).eq('id', liveId);
         await supabase.from('exams').update({ status: 'pending' }).eq('id', examId);
+        try { await supabase.from('ubt_exams').update({ status: 'ended' }).eq('id', examId); } catch (e) {}
+        emitRealtimeEvent('ubt_exam_updated', { id: examId, status: 'ended' });
         alert("විභාගය PUSH කිරීම අත්හිටුවන ලදී.");
       } else if (action === 'repush_pending') {
         updatePayload.is_exam_active = true;
@@ -337,7 +349,10 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         updatePayload.exam_push_mode = 'pending_only';
         updatePayload.exam_push_timestamp = nowIso;
         await supabase.from('scheduled_lives').update(updatePayload).eq('id', liveId);
-        await supabase.from('exams').update({ status: 'active' }).eq('id', examId);
+        await supabase.from('exams').update({ status: 'active', exam_push_timestamp: nowIso }).eq('id', examId);
+        try { await supabase.from('ubt_exams').update({ status: 'active', exam_push_timestamp: nowIso }).eq('id', examId); } catch (e) {}
+        emitRealtimeEvent('ubt_exam_updated', { id: examId, status: 'active' });
+        emitRealtimeEvent('exam_created', { id: examId });
         alert("විභාගය තවමත් නොකළ සිසුන්ට පමණක් සාර්ථකව Re-Push කරන ලදී!");
       } else if (action === 'repush_all') {
         updatePayload.is_exam_active = true;
@@ -346,7 +361,11 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         updatePayload.exam_retake_timestamp = nowIso;
         updatePayload.exam_push_timestamp = nowIso;
         await supabase.from('scheduled_lives').update(updatePayload).eq('id', liveId);
-        await supabase.from('exams').update({ status: 'active' }).eq('id', examId);
+        await supabase.from('exams').update({ status: 'active', exam_push_timestamp: nowIso, exam_retake_timestamp: nowIso, exam_push_mode: 'allow_retake' }).eq('id', examId);
+        try { await supabase.from('ubt_exams').update({ status: 'active', exam_push_timestamp: nowIso, exam_retake_timestamp: nowIso, exam_push_mode: 'allow_retake' }).eq('id', examId); } catch (e) {}
+        try { await supabase.from('exam_results').delete().eq('exam_id', examId); } catch (e) {}
+        emitRealtimeEvent('ubt_exam_updated', { id: examId, status: 'active', allowRetake: true });
+        emitRealtimeEvent('exam_created', { id: examId });
         alert("විභාගය දැනටමත් කළ සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි සියලු දෙනාටම Re-Push කරන ලදී!");
       } else {
         updatePayload.is_exam_active = true;
@@ -354,13 +373,106 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         updatePayload.exam_push_mode = 'pending_only';
         updatePayload.exam_push_timestamp = nowIso;
         await supabase.from('scheduled_lives').update(updatePayload).eq('id', liveId);
-        await supabase.from('exams').update({ status: 'active' }).eq('id', examId);
+        await supabase.from('exams').update({ status: 'active', exam_push_timestamp: nowIso }).eq('id', examId);
+        try { await supabase.from('ubt_exams').update({ status: 'active', exam_push_timestamp: nowIso }).eq('id', examId); } catch (e) {}
+        emitRealtimeEvent('ubt_exam_updated', { id: examId, status: 'active' });
+        emitRealtimeEvent('exam_created', { id: examId });
         alert("විභාගය සිසුන්ට සජීවීව සාර්ථකව Push කරන ලදී!");
       }
 
+      emitRealtimeEvent('live_exam_updated', { liveId, examId, action, timestamp: nowIso });
+      emitRealtimeEvent('exam_pushed', { liveId, examId, action, timestamp: nowIso });
+
+      try {
+        const liveChannel = supabase.channel('live_class_push_events');
+        liveChannel.send({
+          type: 'broadcast',
+          event: 'exam_pushed',
+          payload: { liveId, examId, action, timestamp: nowIso }
+        });
+      } catch (e) {}
+
       await fetchInitialData();
+
+      if (selectedLiveForStatus && selectedExamForStatus) {
+        handleOpenExamStatus(selectedLiveForStatus, selectedExamForStatus);
+      }
     } catch (err: any) {
       alert("Push operation failed: " + (err?.message || ""));
+    }
+  };
+
+  const handleOpenExamStatus = async (live: any, exam: any) => {
+    setSelectedLiveForStatus(live);
+    setSelectedExamForStatus(exam);
+    setExamStatusModalOpen(true);
+    setLoadingExamStatus(true);
+    setExamStatusTab('uncompleted');
+    setExamStatusSearch('');
+
+    try {
+      const { data: allStudents } = await supabase.from('students').select('*');
+      const targetClasses = (live.target_classes || [live.target_class_type]).filter(Boolean).map((c: string) => c.toLowerCase().trim());
+
+      const enrolledStudents = (allStudents || []).filter((s: any) => {
+        const studentClasses = (s.class_types || []).map((c: string) => String(c).toLowerCase().trim());
+        if (targetClasses.length === 0) return true;
+        return targetClasses.some(tc => studentClasses.some(sc => sc.includes(tc) || tc.includes(sc)));
+      });
+
+      const { data: results } = await supabase.from('exam_results').select('*').eq('exam_id', exam.id);
+
+      const completedMap = new Map<string, any>();
+      (results || []).forEach((r: any) => {
+        const u = (r.username || '').toLowerCase().trim();
+        const sid = r.student_id ? String(r.student_id) : '';
+        if (u) completedMap.set(u, r);
+        if (sid) completedMap.set(sid, r);
+      });
+
+      const completed: any[] = [];
+      const uncompleted: any[] = [];
+
+      enrolledStudents.forEach((st: any) => {
+        const u = (st.username || '').toLowerCase().trim();
+        const sid = String(st.id || '');
+        const res = completedMap.get(u) || completedMap.get(sid);
+        if (res) {
+          completed.push({
+            student: st,
+            result: res,
+            score: res.score,
+            percentage: res.meta_data?.percentage ?? (exam.total_questions ? Math.round((res.score / exam.total_questions) * 100) : 0),
+            submitted_at: res.submitted_at
+          });
+        } else {
+          uncompleted.push({
+            student: st,
+            status: 'නොකළ (Pending)'
+          });
+        }
+      });
+
+      (results || []).forEach((r: any) => {
+        const u = (r.username || '').toLowerCase().trim();
+        const alreadyInCompleted = completed.some(c => (c.student.username || '').toLowerCase().trim() === u);
+        if (!alreadyInCompleted) {
+          completed.push({
+            student: { username: r.username, name: r.username, mobile: '' },
+            result: r,
+            score: r.score,
+            percentage: r.meta_data?.percentage ?? 0,
+            submitted_at: r.submitted_at
+          });
+        }
+      });
+
+      setCompletedExamStudents(completed);
+      setUncompletedExamStudents(uncompleted);
+    } catch (err) {
+      console.error('Error fetching exam status:', err);
+    } finally {
+      setLoadingExamStatus(false);
     }
   };
 
@@ -658,6 +770,16 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                               <Edit size={12}/> Edit Exam
                             </button>
                           )}
+
+                          {/* Student Exam Status Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenExamStatus(live, attachedExam)}
+                            className="text-[11px] px-2.5 py-1 rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 border border-blue-500/40 font-bold flex items-center gap-1 transition cursor-pointer"
+                            title="විභාගය කළ සහ නොකළ සිසුන්ගේ ලැයිස්තුව බලන්න"
+                          >
+                            <UserCheck size={12} /> සිසුන්ගේ තත්ත්වය (Status)
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -1108,6 +1230,246 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- LIVE EXAM STUDENT COMPLETION STATUS MODAL (Completed vs Pending) --- */}
+      {examStatusModalOpen && selectedExamForStatus && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[70] p-3 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            
+            {/* Header */}
+            <div className="p-5 sm:p-6 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                    Live Exam Real-time Analytics
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {selectedLiveForStatus?.target_class_type || selectedLiveForStatus?.target_classes?.[0] || 'Class'}
+                  </span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
+                  <FileText className="text-amber-400 shrink-0" size={20} />
+                  <span>{selectedExamForStatus.title}</span>
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setExamStatusModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Action Re-Push Bar */}
+            <div className="p-4 bg-slate-850 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handlePushExamToStudents(selectedLiveForStatus.id, selectedExamForStatus.id, 'repush_pending')}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-400/40 shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  title="විභාගය තවමත් නොකළ සිසුන්ට පමණක් නැවත Push කරන්න"
+                >
+                  <RotateCcw size={14} />
+                  <span>නොකළ අයට නැවත Push කරන්න (Re-Push to Pending)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handlePushExamToStudents(selectedLiveForStatus.id, selectedExamForStatus.id, 'repush_all')}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-purple-600 hover:bg-purple-500 border border-purple-400/40 shadow-md flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                  title="විභාගය කළ සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි සියලු දෙනාටම Re-push කරන්න"
+                >
+                  <Send size={14} />
+                  <span>සැමටම Re-Push කරන්න (Allow Retake for All)</span>
+                </button>
+              </div>
+
+              {/* Refresh data */}
+              <button
+                type="button"
+                onClick={() => handleOpenExamStatus(selectedLiveForStatus, selectedExamForStatus)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw size={13} className={loadingExamStatus ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {/* Search and Tabs Header */}
+            <div className="p-4 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExamStatusTab('uncompleted')}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer ${
+                    examStatusTab === 'uncompleted'
+                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <Clock size={14} />
+                  <span>විභාගය නොකළ සිසුන් ({uncompletedExamStudents.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExamStatusTab('completed')}
+                  className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer ${
+                    examStatusTab === 'completed'
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <UserCheck size={14} />
+                  <span>විභාගය කළ සිසුන් ({completedExamStudents.length})</span>
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="සිසුවාගේ නම හෝ Username සොයන්න..."
+                value={examStatusSearch}
+                onChange={(e) => setExamStatusSearch(e.target.value)}
+                className="bg-slate-950 text-white px-3 py-1.5 rounded-xl border border-slate-800 text-xs focus:outline-none focus:border-blue-500 w-full sm:w-60"
+              />
+            </div>
+
+            {/* List Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {loadingExamStatus ? (
+                <div className="p-12 text-center text-slate-400 text-xs">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  දත්ත පූරණය වෙමින් පවතී...
+                </div>
+              ) : examStatusTab === 'uncompleted' ? (
+                // TAB 1: UNCOMPLETED / PENDING STUDENTS
+                uncompletedExamStudents.length === 0 ? (
+                  <div className="p-12 text-center text-emerald-400 bg-emerald-950/20 border border-emerald-800/40 rounded-2xl text-xs font-bold">
+                    🎉 සියලුම සිසුන් මෙම විභාගය සම්පූර්ණ කර ඇත! (All enrolled students have completed this exam)
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                        <tr>
+                          <th className="p-3">#</th>
+                          <th className="p-3">සිසුවාගේ නම (Student)</th>
+                          <th className="p-3">Username</th>
+                          <th className="p-3">පන්ති (Class)</th>
+                          <th className="p-3">දුරකථන / WhatsApp</th>
+                          <th className="p-3 text-center">තත්ත්වය (Status)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-medium">
+                        {uncompletedExamStudents
+                          .filter(item => {
+                            if (!examStatusSearch) return true;
+                            const q = examStatusSearch.toLowerCase();
+                            const name = (item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`).toLowerCase();
+                            const user = (item.student.username || '').toLowerCase();
+                            return name.includes(q) || user.includes(q);
+                          })
+                          .map((item, idx) => (
+                            <tr key={item.student.id || idx} className="hover:bg-slate-800/40 transition">
+                              <td className="p-3 text-slate-500 font-mono">{idx + 1}</td>
+                              <td className="p-3 font-bold text-white">
+                                {item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`.trim() || item.student.username}
+                              </td>
+                              <td className="p-3 font-mono text-amber-400">{item.student.username}</td>
+                              <td className="p-3 text-slate-400">
+                                {Array.isArray(item.student.class_types) ? item.student.class_types.join(', ') : item.student.class_types || '-'}
+                              </td>
+                              <td className="p-3 font-mono text-slate-400">
+                                {item.student.whatsapp || item.student.WhatsApp || item.student.mobile || '-'}
+                              </td>
+                              <td className="p-3 text-center">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                  තවමත් කර නොමැත (Pending)
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : (
+                // TAB 2: COMPLETED STUDENTS
+                completedExamStudents.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 bg-slate-950 border border-slate-800 rounded-2xl text-xs">
+                    තවමත් කිසිදු සිසුවෙක් මෙම විභාගය Submit කර නොමැත.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                        <tr>
+                          <th className="p-3">#</th>
+                          <th className="p-3">සිසුවාගේ නම (Student)</th>
+                          <th className="p-3">Username</th>
+                          <th className="p-3 text-center">ලකුණු (Score)</th>
+                          <th className="p-3 text-center">ප්‍රතිශතය (%)</th>
+                          <th className="p-3">දිනය සහ වේලාව</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-medium">
+                        {completedExamStudents
+                          .filter(item => {
+                            if (!examStatusSearch) return true;
+                            const q = examStatusSearch.toLowerCase();
+                            const name = (item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`).toLowerCase();
+                            const user = (item.student.username || '').toLowerCase();
+                            return name.includes(q) || user.includes(q);
+                          })
+                          .map((item, idx) => (
+                            <tr key={item.student.id || idx} className="hover:bg-slate-800/40 transition">
+                              <td className="p-3 text-slate-500 font-mono">{idx + 1}</td>
+                              <td className="p-3 font-bold text-white">
+                                {item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`.trim() || item.student.username}
+                              </td>
+                              <td className="p-3 font-mono text-blue-400">{item.student.username}</td>
+                              <td className="p-3 text-center font-bold text-white font-mono">
+                                <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
+                                  {item.score} / {selectedExamForStatus.total_questions || 50}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center font-black font-mono">
+                                <span className={`px-2 py-0.5 rounded text-[11px] ${
+                                  item.percentage >= 75 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                                  item.percentage >= 50 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                                  'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                }`}>
+                                  {item.percentage}%
+                                </span>
+                              </td>
+                              <td className="p-3 font-mono text-slate-400 text-[11px]">
+                                {item.submitted_at ? new Date(item.submitted_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '-'}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 text-right">
+              <button
+                type="button"
+                onClick={() => setExamStatusModalOpen(false)}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+              >
+                වසන්න (Close)
+              </button>
+            </div>
+
           </div>
         </div>
       )}

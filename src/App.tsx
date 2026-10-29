@@ -26,7 +26,8 @@ import {
   LayoutDashboard,
   AlertTriangle,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  ShieldCheck
 } from 'lucide-react';
 import SecurityPasswordModal from './components/SecurityPasswordModal';
 import { Student, StaffMember } from './types';
@@ -64,6 +65,8 @@ import BannerLandingPage from './components/BannerLandingPage';
 import FinanceDepartment from './components/FinanceDepartment';
 import AdminDeviceSecurityManager from './components/AdminDeviceSecurityManager';
 import AdminClassDirectory from './components/AdminClassDirectory';
+import AdminUbtExamManager from './components/AdminUbtExamManager';
+import PublicExamPortal from './components/PublicExamPortal';
 import { registerDeviceLogin, confirmDualDeviceSwitch } from './deviceSecurityService';
 import { fetchAllPendingPayments } from './pendingPaymentsService';
 import { subscribeRealtimeEvents } from './realtimeSync';
@@ -96,6 +99,22 @@ export default function App() {
       <BannerLandingPage
         slug={bannerSlug}
         onNavigateHome={() => {
+          window.location.href = window.location.origin;
+        }}
+      />
+    );
+  }
+
+  // Check for Public Exam URL (?public_exam=..., /public-exam, /public-exam/:id)
+  const publicExamParam = searchParams?.get('public_exam') || 
+    (window.location.pathname === '/public-exam' ? searchParams?.get('id') : null) ||
+    (window.location.pathname.startsWith('/public-exam/') ? window.location.pathname.replace(/^\/public-exam\//, '') : null);
+
+  if (publicExamParam || window.location.pathname === '/public-exam') {
+    return (
+      <PublicExamPortal
+        examId={publicExamParam || undefined}
+        onBackHome={() => {
           window.location.href = window.location.origin;
         }}
       />
@@ -334,7 +353,7 @@ useEffect(() => {
   });
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [adminError, setAdminError] = useState('');
-  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'class_directory' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'resets' | 'qr_generator' | 'device_security'>(() => {
+  const [activeAdminTab, setActiveAdminTab] = useState<'overview' | 'registry' | 'class_directory' | 'manual_student' | 'staff' | 'planner' | 'broadcast' | 'site_configs' | 'payments' | 'pending_payments' | 'bank_accounts' | 'history' | 'finance' | 'resources' | 'tutes' | 'live_classes' | 'ubt_exams' | 'resets' | 'qr_generator' | 'device_security'>(() => {
     return (getSavedAdminTab() as any) || 'overview';
   });
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
@@ -557,10 +576,10 @@ useEffect(() => {
 
     // Default safe tabs based on role if allowed_sections is not defined
     if (currentStaff.role === 'admin' || currentStaff.role === 'manager') {
-      return ['overview', 'registry', 'class_directory', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'resources', 'tutes', 'planner', 'device_security'].includes(tabId);
+      return ['overview', 'registry', 'class_directory', 'manual_student', 'staff', 'payments', 'pending_payments', 'live_classes', 'ubt_exams', 'resources', 'tutes', 'planner', 'device_security'].includes(tabId);
     }
     if (currentStaff.role === 'lecturer') {
-      return ['overview', 'live_classes', 'resources', 'tutes', 'planner'].includes(tabId);
+      return ['overview', 'live_classes', 'ubt_exams', 'resources', 'tutes', 'planner'].includes(tabId);
     }
     return false;
   };
@@ -572,7 +591,7 @@ useEffect(() => {
         const candidateTabs: Array<typeof activeAdminTab> = [
           'overview', 'registry', 'class_directory', 'manual_student', 'staff', 'resets', 'payments', 
           'pending_payments', 'bank_accounts', 'history', 'qr_generator', 
-          'site_configs', 'planner', 'live_classes', 'resources', 'tutes', 'broadcast', 'device_security'
+          'site_configs', 'planner', 'live_classes', 'ubt_exams', 'resources', 'tutes', 'broadcast', 'device_security'
         ];
         const firstPermitted = candidateTabs.find(t => isTabAllowed(t));
         if (firstPermitted) {
@@ -2491,6 +2510,14 @@ if (isLoading) {
                       Live Scheduled
                     </button>
                   )}
+                  {isTabAllowed('ubt_exams') && (
+                    <button 
+                      onClick={() => handleAdminTabChange('ubt_exams')}
+                      className={`px-4 py-2 text-xs font-bold whitespace-nowrap rounded-t-xl transition-colors flex items-center gap-1.5 ${activeAdminTab === 'ubt_exams' ? 'bg-indigo-600/20 text-indigo-400 border-b-2 border-indigo-500' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+                    >
+                      <span>📝 UBT ඔන්ලයින් විභාග (Exams)</span>
+                    </button>
+                  )}
                   {isTabAllowed('tutes') && (
                     <button 
                       onClick={() => handleAdminTabChange('tutes')}
@@ -2765,6 +2792,12 @@ if (isLoading) {
                   </div>
                   )}
 
+                  {activeAdminTab === 'ubt_exams' && isTabAllowed('ubt_exams') && (
+                    <div className="col-span-12 w-full">
+                      <AdminUbtExamManager currentStaff={currentStaff} />
+                    </div>
+                  )}
+
                   {activeAdminTab === 'device_security' && isTabAllowed('device_security') && (
                     <div className="col-span-12 w-full">
                       <AdminDeviceSecurityManager students={students} onUpdateStudents={setStudents} />
@@ -2895,25 +2928,35 @@ if (isLoading) {
 
       {/* Interactive Dual Device Concurrent Login Modal */}
       {dualDevicePromptData && (
-        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 text-white animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-amber-400 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-[0_0_50px_rgba(251,191,36,0.3)] space-y-6 text-white animate-in zoom-in-95 duration-200">
             
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
-                <AlertTriangle size={24} />
+            <div className="flex items-center gap-3.5 border-b border-amber-500/30 pb-4">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/25 border-2 border-amber-400 text-amber-300 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/20">
+                <AlertTriangle size={28} className="animate-pulse" />
               </div>
               <div>
-                <h3 className="text-lg font-black text-white">ඩිවයිස් මාරු කිරීමේ දැනුම්දීම</h3>
-                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider font-mono">
-                  Active Session Detected
+                <h3 className="text-xl font-black text-white tracking-tight">ඩිවයිස් මාරු කිරීමේ දැනුම්දීම</h3>
+                <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wider font-mono flex items-center gap-1.5 mt-0.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
+                  Active Session Detected (Dual Device Protection)
                 </span>
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-              <p className="text-sm font-semibold text-slate-200 leading-relaxed">
-                ඔබ දැනටමත් <strong className="text-amber-400 font-bold font-mono">[{dualDevicePromptData.prevDeviceName}]</strong> ලොග් වී ඇති බව හඳුනාගෙන ඇත. ඔබට මෙම Device එකෙන් ලොග් වීමට අවශ්‍යනම් අනෙක් ඩිවයිස් එකෙන් ඔබගේ ගිණුම ඔටෝ ලොග් අවුට් වෙනු ඇත.
+            {/* High-Contrast Crystal-Clear Alert Box */}
+            <div className="p-5 rounded-2xl bg-gradient-to-b from-amber-950/60 via-slate-950 to-slate-950 border-2 border-amber-400/80 shadow-inner space-y-3">
+              <p className="text-base sm:text-lg font-bold text-white leading-relaxed">
+                ඔබ දැනටමත්{' '}
+                <span className="inline-block my-1 px-3 py-1 rounded-xl bg-amber-400 text-slate-950 font-black font-mono text-sm sm:text-base shadow-md">
+                  [{dualDevicePromptData.prevDeviceName}]
+                </span>{' '}
+                ලොග් වී ඇති බව හඳුනාගෙන ඇත. ඔබට මෙම Device එකෙන් ලොග් වීමට අවශ්‍යනම් අනෙක් ඩිවයිස් එකෙන් ඔබගේ ගිණුම ඔටෝ ලොග් අවුට් වෙනු ඇත.
               </p>
+              <div className="pt-1 flex items-center gap-2 text-xs font-semibold text-amber-200/90 border-t border-amber-500/20">
+                <ShieldCheck size={16} className="text-amber-400 shrink-0" />
+                <span>අවසරලත් ඩිවයිස් 2න් එකවර එකකින් පමණක් ඩෑෂ්බෝඩයට ප්‍රවේශ විය හැක.</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">

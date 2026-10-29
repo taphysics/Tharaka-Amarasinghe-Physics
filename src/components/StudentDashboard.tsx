@@ -212,12 +212,14 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Real-time live notifications for payment approval/rejection
   interface LiveAlert {
     id: string;
-    type: 'approved' | 'rejected';
+    type: 'approved' | 'rejected' | 'exam';
     title: string;
     message: string;
     time: string;
+    actionTab?: string | null;
   }
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+  const [activeLivePushedExams, setActiveLivePushedExams] = useState<any[]>([]);
 
   // Listen for top header logo click to return to Hub Overview
   useEffect(() => {
@@ -459,28 +461,49 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         }
       }
 
+      // Live Exam Pushed Alert Listener
+      if ((type === 'exam_pushed' || type === 'exam_created' || type === 'ubt_exam_created' || type === 'ubt_exam_updated') && p) {
+        const studentRaw = liveStudentData?.class_types || currentStudent?.class_types || liveStudentData?.classTypes || currentStudent?.classTypes || [];
+        const studentClasses: string[] = Array.isArray(studentRaw) ? studentRaw : [studentRaw].filter(Boolean);
+        const examClass = (p.classType || p.class_type || '').toLowerCase().trim();
+        const isMatch = !examClass || examClass === 'all' || examClass === 'general' || studentClasses.length === 0 || studentClasses.some((sc: string) => {
+          const scLower = sc.toLowerCase().trim();
+          if (examClass.includes(scLower) || scLower.includes(examClass)) return true;
+          const eWords = examClass.split(/\s+/).filter(Boolean);
+          const scWords = scLower.split(/\s+/).filter(Boolean);
+          return eWords.some(w => scWords.includes(w));
+        });
+
+        if (isMatch) {
+          const aId = `exam_alert_${p.examId || p.id || Date.now()}`;
+          setLiveAlerts(prev => [
+            {
+              id: aId,
+              type: 'exam',
+              title: '📝 සජීවී විභාගයක් ආරම්භ විය! (Live Exam Pushed)',
+              message: `"${p.title || 'විභාගය'}" පන්තිය සඳහා දැන් සක්‍රිය කර ඇත. පහත Exams ටැබ් එකෙන් දැන්ම ලියන්න.`,
+              time: new Date().toLocaleTimeString(),
+              actionTab: 'exams'
+            },
+            ...prev.filter(a => a.id !== aId)
+          ]);
+        }
+      }
+
       // Single device concurrent login listener: Old device auto-logout
       if (type === 'device_force_logout' && p) {
-        const sUsername = (liveStudentData?.username || currentStudent?.username || '').toLowerCase().trim();
+        const sUsername = (liveStudentData?.username || currentStudent?.username || '').toLowerCase().trim().replace(/^@/, '');
+        const pUser = (p.username || '').toLowerCase().trim().replace(/^@/, '');
         const myDeviceId = getOrCreateDeviceId();
-        if (p.username?.toLowerCase()?.trim() === sUsername && p.targetDeviceId === myDeviceId) {
-          setForcedLogoutMsg(p.message || 'වෙනත් පුද්ගලයෙකු ඔබගේ ගිණුමට ලොග් වී ඇති හෙයින් ඔබගේ ගිණුමෙන් ලොග් අවුට්වනු ඇත.');
-          setForcedLogoutCountdown(5);
-
-          let counter = 5;
-          const countInterval = setInterval(() => {
-            counter -= 1;
-            setForcedLogoutCountdown(counter);
-            if (counter <= 0) {
-              clearInterval(countInterval);
-              handleStudentLogout();
-            }
-          }, 1000);
+        if (pUser === sUsername && (p.targetDeviceId === myDeviceId || p.targetDeviceId === 'all' || (p.newDeviceId && p.newDeviceId !== myDeviceId))) {
+          handleStudentLogout();
         }
       }
     });
 
     if (supabase) {
+      const cleanUsername = (currentStudent?.username || '').toLowerCase().trim().replace(/^@/, '');
+
       const channel = supabase.channel('student_dashboard_realtime')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => {
           fetchDashboardData();
@@ -500,6 +523,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => {
           fetchDashboardData();
         })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => {
+          fetchDashboardData();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ubt_exams' }, () => {
+          fetchDashboardData();
+        })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_payments' }, () => {
           loadStudentPendingPayments();
         })
@@ -517,11 +546,31 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         })
         .subscribe();
 
+      const securityChannel = supabase.channel('student_device_security')
+        .on('broadcast', { event: 'force_logout' }, (payload: any) => {
+          const p = payload?.payload || payload;
+          const sUsername = (currentStudent?.username || '').toLowerCase().trim().replace(/^@/, '');
+          const pUser = (p?.username || '').toLowerCase().trim().replace(/^@/, '');
+          const myDeviceId = getOrCreateDeviceId();
+          if (pUser === sUsername && (p?.targetDeviceId === myDeviceId || p?.targetDeviceId === 'all' || (p?.newDeviceId && p.newDeviceId !== myDeviceId))) {
+            handleStudentLogout();
+          }
+        })
+        .subscribe();
+
+      const userSecurityChannel = supabase.channel(`student_device_${cleanUsername}`)
+        .on('broadcast', { event: 'force_logout' }, () => {
+          handleStudentLogout();
+        })
+        .subscribe();
+
       return () => {
         clearInterval(pollTimer);
         unsubRealtime();
         supabase.removeChannel(channel);
         supabase.removeChannel(broadcastChannel);
+        supabase.removeChannel(securityChannel);
+        supabase.removeChannel(userSecurityChannel);
       };
     }
 
@@ -555,6 +604,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
             .ilike('username', currentStudent.username.trim())
             .maybeSingle();
           freshStudentData = data;
+        }
+
+        // Live check: If another device is now marked active or if student is blocked, logout immediately
+        const myDeviceId = getOrCreateDeviceId();
+        if (freshStudentData) {
+          const blockInfo = isStudentBlocked(freshStudentData);
+          if (blockInfo.isBlocked) {
+            handleStudentLogout();
+            return;
+          }
+          if (freshStudentData.current_device_id && freshStudentData.current_device_id !== myDeviceId) {
+            handleStudentLogout();
+            return;
+          }
         }
 
         const rawStudent = freshStudentData || currentStudent;
@@ -797,14 +860,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         setPaymentReminders(explicitPaymentReminders);
         setTotalRemindersCount(activeRemindersSum);
 
-        // 4. Fetch counts (Recordings, Exams, Completed Exam Results, Tutes, Calendar, Live Views) - 100% Live Database
-        const [calRes, livesRes, recRes, examRes, tuteRes, resultsRes, recViewsRes, resourceViewsRes] = await Promise.all([
+        // 4. Fetch counts (Recordings, Exams & UBT Exams, Completed Exam Results, Tutes, Calendar, Live Views) - 100% Live Database
+        const [calRes, livesRes, recRes, examRes, ubtRes, tuteRes, resultsRes, recViewsRes, resourceViewsRes] = await Promise.all([
           supabase.from('calendar_events').select('*').order('date', { ascending: true }),
           supabase.from('scheduled_lives').select('*').order('date', { ascending: true }),
           supabase.from('recordings').select('id, class_type'),
-          supabase.from('exams').select('id, title, status, class_type, target_class_type'),
+          supabase.from('exams').select('*'),
+          supabase.from('ubt_exams').select('*'),
           supabase.from('class_resources').select('id, type, target_classes').in('type', ['tute', 'paper']),
-          supabase.from('exam_results').select('id, exam_id, score, submitted_at').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`),
+          supabase.from('exam_results').select('*').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`),
           supabase.from('recording_views').select('recording_id').or(`username.eq.${studentToUse.username},student_id.eq.${studentToUse.id}`),
           supabase.from('resource_views').select('resource_id').eq('username', studentToUse.username)
         ]);
@@ -825,26 +889,111 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           setUnwatchedRecordingsCount(Math.max(0, totalRecs - watchedCount));
         }
 
-        // Exams & Completed calculation
+        // Exams & Completed calculation (combining standard & UBT exams, prioritizing UBT schema)
         let computedExamsCount = 0;
-        if (examRes.data) {
-          const matchingExams = examRes.data.filter((e: any) => {
-            if (enrolledClasses.length === 0) return true;
-            const tClass = (e.target_class_type || e.class_type || '').toLowerCase();
-            if (!tClass || tClass === 'all' || tClass === 'general') return true;
-            return enrolledClasses.some(c => tClass.includes(c.toLowerCase()) || c.toLowerCase().includes(tClass));
-          });
-          computedExamsCount = matchingExams.length;
-          setExamsCount(computedExamsCount);
-        }
+        const allAvailableExams: any[] = [];
+        const seenExIds = new Set<string>();
 
-        let completedCount = 0;
-        if (resultsRes.data) {
-          const completedSet = new Set(resultsRes.data.map((r: any) => r.exam_id).filter(Boolean));
-          completedCount = completedSet.size;
-          setCompletedExamsCount(completedCount);
-        }
-        setAvailableExamsCount(Math.max(0, computedExamsCount - completedCount));
+        // 1. Prioritize UBT exams so full metadata (__push_mode, __retake_timestamp, questions) is preserved
+        (ubtRes.data || []).forEach((u: any) => {
+          if (!seenExIds.has(String(u.id))) {
+            seenExIds.add(String(u.id));
+            allAvailableExams.push(u);
+          }
+        });
+
+        // 2. Add standard exams if not already present, or merge properties
+        (examRes.data || []).forEach((e: any) => {
+          if (!seenExIds.has(String(e.id))) {
+            seenExIds.add(String(e.id));
+            allAvailableExams.push(e);
+          }
+        });
+
+        // Auto-Push Scheduled Exams: Check if any scheduled exam time has arrived
+        const nowMs = Date.now();
+        allAvailableExams.forEach(ex => {
+          if (ex.status === 'scheduled') {
+            let isDue = false;
+            if (ex.scheduled_at) {
+              isDue = new Date(ex.scheduled_at).getTime() <= nowMs;
+            } else if (ex.scheduled_date) {
+              const timeStr = ex.scheduled_time || '00:00';
+              const schedMs = new Date(`${ex.scheduled_date}T${timeStr}:00`).getTime();
+              if (!isNaN(schedMs) && schedMs <= nowMs) {
+                isDue = true;
+              }
+            }
+            if (isDue) {
+              ex.status = 'active';
+              supabase.from('exams').update({ status: 'active' }).eq('id', ex.id).then(() => {});
+              supabase.from('ubt_exams').update({ status: 'active' }).eq('id', ex.id).then(() => {});
+            }
+          }
+        });
+
+        const matchingExams = allAvailableExams.filter((e: any) => {
+          // EXCLUDE Public Exams from registered students' count
+          if (e.is_public || e.class_type === 'Public Exam' || e.target_class_type === 'Public Exam') {
+            return false;
+          }
+          if (enrolledClasses.length === 0) return true;
+          const tClass = (e.target_class_type || e.class_type || '').toLowerCase();
+          if (!tClass || tClass === 'all' || tClass === 'general') return true;
+          return enrolledClasses.some(c => tClass.includes(c.toLowerCase()) || c.toLowerCase().includes(tClass));
+        });
+        computedExamsCount = matchingExams.length;
+        setExamsCount(computedExamsCount);
+
+        // Calculate student's completed results & active pushed exams (including retakes)
+        const studentResults = resultsRes.data || [];
+        const completedExamIds = new Set<string>();
+        studentResults.forEach((r: any) => {
+          if (r.exam_id) completedExamIds.add(String(r.exam_id));
+        });
+
+        const activePushedList: any[] = [];
+
+        matchingExams.forEach((ex: any) => {
+          if (ex.status !== 'active') return;
+
+          const hasSubmitted = completedExamIds.has(String(ex.id)) || (ex.title && studentResults.some((r: any) => r.meta_data?.exam_title === ex.title));
+          
+          if (!hasSubmitted) {
+            activePushedList.push({ ...ex, isRetake: false });
+          } else {
+            // Check if re-push / retake is allowed
+            const retakeTime = 
+              ex.exam_retake_timestamp || 
+              ex.correct_answers?.__retake_timestamp || 
+              ex.correct_answer?.__retake_timestamp || 
+              (ex.exam_push_mode === 'allow_retake' || ex.correct_answers?.__push_mode === 'allow_retake' || ex.correct_answer?.__push_mode === 'allow_retake' 
+                ? (ex.exam_push_timestamp || ex.updated_at) 
+                : null);
+
+            const lastSub = studentResults
+              .filter((r: any) => String(r.exam_id) === String(ex.id) || r.meta_data?.exam_title === ex.title)
+              .sort((a: any, b: any) => new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime())[0];
+
+            const submissionTime = lastSub ? new Date(lastSub.submitted_at).getTime() : 0;
+            const retakeTimeMs = retakeTime ? new Date(retakeTime).getTime() : 0;
+            const examUpdatedTime = ex.updated_at ? new Date(ex.updated_at).getTime() : 0;
+            const isAllowRetake = ex.exam_push_mode === 'allow_retake' || 
+                                 ex.correct_answers?.__push_mode === 'allow_retake' || 
+                                 ex.correct_answer?.__push_mode === 'allow_retake';
+
+            if (
+              (retakeTimeMs > 0 && retakeTimeMs > submissionTime) ||
+              (isAllowRetake && (examUpdatedTime > submissionTime || retakeTimeMs > submissionTime))
+            ) {
+              activePushedList.push({ ...ex, isRetake: true });
+            }
+          }
+        });
+
+        setActiveLivePushedExams(activePushedList);
+        setCompletedExamsCount(studentResults.length);
+        setAvailableExamsCount(activePushedList.length);
 
         // Tutes & Papers Count & Live Database Downloaded tracking
         if (tuteRes.data) {
@@ -1050,7 +1199,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Nav Menu Definitions
   const navMenuItems = [
-    { id: null, label: 'Hub Overview', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
+    { id: null, label: 'Dashboard', sinhala: 'ප්‍රධාන පිටුව', icon: Layers, badge: null, color: 'blue' },
     { id: 'exams', label: 'Exams', sinhala: 'ඔන්ලයින් විභාග', icon: PenTool, badge: examsCount > 0 ? `${examsCount}` : null, color: 'blue' },
     { id: 'recordings', label: 'Your Classes', sinhala: 'ඔබගේ පන්ති', icon: Video, badge: recordingsCount > 0 ? `${recordingsCount}` : null, color: 'amber' },
     { id: 'tutes', label: 'Documents', sinhala: 'ටියුට් & Papers', icon: FileText, badge: tutesCount > 0 ? `${tutesCount}` : null, color: 'slate' },
@@ -2725,7 +2874,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       {unblockWarning.message}
                     </p>
                     <span className="text-[10px] text-amber-700 dark:text-amber-400 font-mono mt-1.5 block font-semibold">
-                      මෙම ආරක්ෂක දැනුම්දීම පැය 24ක් සම්පූර්ණ වූ පසු ඩේටාබේස් එකෙන් ස්වයංක්‍රීයවම ඉවත් වනු ඇත.
+                      මෙම ආරක්ෂක දැනුම්දීම පැය 24ක් සම්පූර්ණ වූ පසු ඔබගේ Dashboard එකෙන් ස්වයංක්‍රීයවම ඉවත් වනු ඇත.
                     </span>
                   </div>
                 </div>
@@ -2746,14 +2895,16 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     className={`p-4 md:p-5 rounded-3xl border flex items-start justify-between gap-3 shadow-xl animate-in fade-in slide-in-from-top-3 duration-300 ${
                       alert.type === 'approved'
                         ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100 dark:bg-emerald-950/40'
+                        : alert.type === 'exam'
+                        ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-100 dark:bg-indigo-950/40'
                         : 'bg-rose-500/15 border-rose-500/40 text-rose-100 dark:bg-rose-950/40'
                     }`}
                   >
                     <div className="flex items-start gap-3">
                       <div className={`p-2.5 rounded-2xl mt-0.5 shrink-0 ${
-                        alert.type === 'approved' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+                        alert.type === 'approved' ? 'bg-emerald-500 text-white' : alert.type === 'exam' ? 'bg-indigo-600 text-white' : 'bg-rose-500 text-white'
                       }`}>
-                        {alert.type === 'approved' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+                        {alert.type === 'approved' ? <CheckCircle2 size={20} /> : alert.type === 'exam' ? <PenTool size={20} /> : <AlertCircle size={20} />}
                       </div>
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
@@ -2763,6 +2914,21 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         <p className="text-xs text-slate-700 dark:text-slate-200 leading-relaxed font-semibold">
                           {alert.message}
                         </p>
+                        {alert.actionTab === 'exams' && (
+                          <div className="pt-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleTabChange('exams');
+                                handleDismissAlert(alert.id);
+                              }}
+                              className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <PenTool size={13} />
+                              <span>✍️ විභාගයට යන්න (Start Exam Now)</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2814,6 +2980,51 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     </p>
                   </div>
                 </div>
+
+                {/* 1.5. ACTIVE PUSHED EXAMS NOTIFICATION CARD (If any exam is active or re-pushed for retake) */}
+                {activeLivePushedExams.length > 0 && (
+                  <div className="space-y-3">
+                    {activeLivePushedExams.map((exam) => (
+                      <div 
+                        key={exam.id}
+                        className="bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-indigo-500/10 dark:from-rose-950/40 dark:via-amber-950/30 dark:to-indigo-950/40 border-2 border-rose-500/40 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300"
+                      >
+                        <div className="space-y-1.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {exam.isRetake ? (
+                              <span className="px-3 py-1 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40 animate-pulse">
+                                🔄 RE-PUSHED / RETAKE ALLOWED (2 වන අවස්ථාව)
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/40 animate-pulse">
+                                🔥 LIVE PUSHED EXAM
+                              </span>
+                            )}
+                            <span className="px-2.5 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-indigo-700 dark:bg-slate-900 dark:text-indigo-300 border border-slate-200 dark:border-slate-800">
+                              {exam.class_type || exam.target_class_type}
+                            </span>
+                          </div>
+                          <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white truncate">
+                            {exam.title}
+                          </h3>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
+                            {exam.isRetake 
+                              ? 'මෙම විභාගය නැවත කිරීමට (2nd Attempt) දේශකතුමා / ඇඩ්මින් විසින් විවෘත කර ඇත. දැන්ම පිළිතුරු ලියන්න.'
+                              : 'දේශකතුමා / ඇඩ්මින් විසින් මෙම විභාගය ඔබගේ පන්තියට සජීවීව පවරා ඇත. දැන්ම සහභාගී වන්න.'}
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => handleTabChange('exams')}
+                          className="w-full sm:w-auto px-6 py-3.5 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs sm:text-sm rounded-2xl shadow-xl shadow-rose-900/30 flex items-center justify-center gap-2 transition cursor-pointer hover:scale-105 shrink-0"
+                        >
+                          <Play size={16} fill="currentColor" />
+                          <span>{exam.isRetake ? 'නැවත විභාගය ආරම්භ කරන්න (Retake)' : 'විභාගය ආරම්භ කරන්න (Start Exam)'}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* 2. OVERVIEW STATS CARDS: Exams, Recordings, Tutes & Papers */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

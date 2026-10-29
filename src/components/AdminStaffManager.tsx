@@ -82,6 +82,7 @@ const AVAILABLE_SECTIONS = [
   { id: 'site_configs', label: 'වෙබ් අඩවි සැකසුම් (Site Configs)' },
   { id: 'planner', label: 'දින දර්ශනය (Calendar Planner)' },
   { id: 'live_classes', label: 'සජීවී පන්ති (Scheduled Lives)' },
+  { id: 'ubt_exams', label: '📝 UBT Online Exams (විභාග සැකසුම් පද්ධතිය)' },
   { id: 'resources', label: 'වීඩියෝ රෙකෝඩින් (Recordings)' },
   { id: 'tutes', label: 'ටියුට්ස් (Tutes Drive)' },
   { id: 'broadcast', label: 'නිවේදන (Broadcast Notices)' }

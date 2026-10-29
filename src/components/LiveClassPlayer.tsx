@@ -440,6 +440,47 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     };
   }, [currentUser?.id, currentUser?.username]);
 
+  // Screen Wake Lock API to prevent device screen from sleeping during Live Class / Online Exam
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+
+    const requestWakeLock = async () => {
+      try {
+        if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && (navigator as any).wakeLock?.request) {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {
+        // Wake Lock may be refused if page is in background or low power mode
+      }
+    };
+
+    if (viewState === 'live' || isExamOpen) {
+      requestWakeLock();
+    }
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && (viewState === 'live' || isExamOpen)) {
+        requestWakeLock();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (wakeLockSentinel) {
+        try {
+          wakeLockSentinel.release();
+        } catch {}
+        wakeLockSentinel = null;
+      }
+    };
+  }, [viewState, isExamOpen]);
+
   const fetchData = async () => {
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
@@ -1395,9 +1436,11 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 setIsExamOpen(true);
               }
             }}
-            className="px-4 py-2 bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer"
+            className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-2xl text-xs sm:text-sm shadow-lg shadow-emerald-950/40 border-2 border-emerald-400 transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer active:scale-95"
+            title="විභාගයේ සම්පූර්ණ ලකුණු සහ නිවැරදි පිළිතුරු සටහන බලන්න"
           >
-            <Award size={14} /> ප්‍රතිඵල සටහන බලන්න
+            <Award size={18} className="text-white shrink-0" />
+            <span className="text-white">ප්‍රතිඵල සටහන බලන්න (View Results)</span>
           </button>
         </div>
       )}
@@ -2015,32 +2058,6 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       {/* 6. LIVE ZOOM PLAYER EMBEDDED DIRECTLY IN SECTION */}
       {viewState === 'live' && targetClass && (
         <>
-          {/* Mobile Direct Auto-Join Banner without Passcode */}
-          {!isExamOpen && !isFullscreen && (
-            <div className="block md:hidden mb-3 p-3 bg-gradient-to-r from-emerald-950/90 via-slate-900 to-blue-950/90 border-2 border-emerald-500/50 rounded-2xl shadow-lg">
-              <div className="flex items-center justify-between gap-2.5">
-                <div className="flex-1">
-                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    Mobile Direct Access (පාස්කෝඩ් අවශ්‍ය නැත)
-                  </span>
-                  <p className="text-xs text-white font-bold mt-0.5">
-                    එක ටච් එකෙන් කෙලින්ම සූම් එකට එක්වන්න:
-                  </p>
-                </div>
-                <a
-                  href={getDirectZoomJoinUrl(zoomDirectUrl, studentUsername, targetClass)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/30 shrink-0 cursor-pointer"
-                >
-                  <Play size={13} fill="currentColor" />
-                  <span>Join Live</span>
-                </a>
-              </div>
-            </div>
-          )}
-
           <div
             ref={playerContainerRef}
             style={isExamOpen && isZoomMinimized && floatingPos ? { 
@@ -2163,17 +2180,6 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </button>
               )}
 
-              {/* Mobile Phone Native Zoom App Direct Launch & Direct Auto-Join */}
-              {mobileZoomAppUrl && !isExamOpen && (
-                <a
-                  href={mobileZoomAppUrl}
-                  className="bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-blue-500/40 transition shadow-sm"
-                  title="Mobile Phone එකෙන් Zoom App එක හරහා පාස්කෝඩ් නොමැතිව Auto Open කරන්න"
-                >
-                  <Smartphone size={13} /> <span className="hidden sm:inline">Zoom App</span>
-                </a>
-              )}
-
               {zoomDirectUrl && !isExamOpen && (
                 <a
                   href={getDirectZoomJoinUrl(zoomDirectUrl, studentUsername, targetClass)}
@@ -2214,44 +2220,6 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
               </button>
             </div>
           </div>
-
-          {/* Mobile & Desktop Passcode Helper & Quick Join Bar */}
-          {zoomMeetingInfo.pwd && !isExamOpen && (
-            <div className="bg-amber-500/15 border-b border-amber-500/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs z-10">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                <span className="text-amber-800 dark:text-amber-200 font-semibold text-[11px] sm:text-xs">
-                  Meeting Passcode: <span className="font-mono font-black text-amber-900 dark:text-amber-100 bg-amber-400/25 px-2 py-0.5 rounded text-xs select-all">{zoomMeetingInfo.pwd}</span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (navigator.clipboard) {
-                      navigator.clipboard.writeText(zoomMeetingInfo.pwd);
-                    }
-                    setPasscodeCopied(true);
-                    setTimeout(() => setPasscodeCopied(false), 2000);
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
-                  title="Copy Passcode"
-                >
-                  {passcodeCopied ? <Check size={12} className="text-white" /> : <Copy size={12} />}
-                  {passcodeCopied ? 'Copied!' : 'Copy Passcode'}
-                </button>
-                {mobileZoomAppUrl && (
-                  <a
-                    href={mobileZoomAppUrl}
-                    className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1 shadow transition"
-                    title="Zoom App එකෙන් Auto Join වන්න"
-                  >
-                    <Smartphone size={12} /> Open in Zoom App
-                  </a>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Invisible Top Edge Hover / Touch Area to trigger controls in Fullscreen */}
           {isFullscreen && !showFullscreenControls && (

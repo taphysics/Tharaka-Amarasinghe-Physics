@@ -53,18 +53,27 @@ export default function AdminClassDirectory() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClass, setSelectedClass] = useState<string>('all');
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (isManual = false) => {
+    if (isManual || classesList.length === 0) {
+      setLoading(true);
+    }
     try {
-      // 1. Fetch Class Types
-      const { data: clsData } = await supabase.from('class_types').select('*');
+      // 1. Fetch REAL Class Types from class_types_config table ONLY
+      const { data: clsData } = await supabase
+        .from('class_types_config')
+        .select('*')
+        .order('class_type', { ascending: true });
+
       let classes: ClassItem[] = [];
       if (clsData && clsData.length > 0) {
-        classes = clsData.map((c: any) => ({
-          id: c.id,
-          name: c.name || c.class_name,
-          fee: Number(c.monthly_fee || c.fee || 3500)
-        }));
+        classes = clsData
+          .filter((c: any) => c.is_active !== false)
+          .map((c: any) => ({
+            id: c.id || c.class_type,
+            name: (c.class_type || '').trim(),
+            fee: Number(c.monthly_fee || 3500)
+          }))
+          .filter(c => c.name.length > 0);
       }
 
       // 2. Fetch Lecturers from staff_members
@@ -118,18 +127,7 @@ export default function AdminClassDirectory() {
         });
       }
 
-      // If class_types was empty, extract classes from students and lecturers
-      if (classes.length === 0) {
-        const classNamesSet = new Set<string>();
-        lecturers.forEach(l => l.assignedClasses.forEach(c => classNamesSet.add(c)));
-        students.forEach(s => s.class_types.forEach(c => classNamesSet.add(c)));
-        classes = Array.from(classNamesSet).map((name, i) => ({
-          id: `cls_${i + 1}`,
-          name,
-          fee: 3500
-        }));
-      }
-
+      // ONLY show classes that exist in class_types_config
       setClassesList(classes);
       setLecturersList(lecturers);
       setStudentsList(students);
@@ -141,13 +139,26 @@ export default function AdminClassDirectory() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
+
+    // Realtime channel listener for instant background updates without flashing
+    const channelName = `class_directory_${Date.now()}`;
+    const channel = supabase.channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'class_types_config' }, () => loadData(false))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => loadData(false))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_members' }, () => loadData(false))
+      .subscribe();
+
     const unsub = subscribeRealtimeEvents((type) => {
-      if (['student_updated', 'staff_updated', 'class_updated'].includes(type)) {
-        loadData();
+      if (['student_updated', 'staff_updated', 'class_updated', 'class_types_updated'].includes(type)) {
+        loadData(false);
       }
     });
-    return () => unsub();
+
+    return () => {
+      try { supabase.removeChannel(channel); } catch (e) {}
+      unsub();
+    };
   }, []);
 
   const norm = (s: string) => (s || '').trim().toLowerCase();
@@ -195,7 +206,7 @@ export default function AdminClassDirectory() {
           </div>
 
           <button
-            onClick={loadData}
+            onClick={() => loadData(true)}
             disabled={loading}
             className="px-4 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
           >
