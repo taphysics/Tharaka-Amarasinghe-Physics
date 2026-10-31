@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Award, Clock, CheckCircle2, ChevronRight, Send, 
   ExternalLink, ArrowLeft, BookOpen, AlertCircle, Sparkles, Check, X, Phone, User,
   Download, Printer, Loader2, FileText, ChevronLeft
 } from 'lucide-react';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../supabaseClient';
+import { subscribeRealtimeEvents } from '../realtimeSync';
 
 interface Props {
   examId?: string;
@@ -57,6 +58,77 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
   // PDF Download States
   const [pdfPrintResult, setPdfPrintResult] = useState<any | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const questionCardRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to top of question card when active question changes
+  useEffect(() => {
+    if (isStarted && questionCardRef.current) {
+      questionCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeQuestionIndex, isStarted]);
+
+  // Live Exam Realtime Updates while guest is taking Public Exam:
+  // If admin updates questions, images, duration or choices, update exam state without losing guest's chosen answers!
+  useEffect(() => {
+    if (!exam?.id || !isStarted) return;
+    const currentId = String(exam.id);
+
+    const applyLiveExamUpdate = (updatedExam: any) => {
+      if (!updatedExam || String(updatedExam.id) !== currentId) return;
+
+      let questions = updatedExam.questions || [];
+      if ((!questions || questions.length === 0) && typeof updatedExam.pdf_url === 'string' && updatedExam.pdf_url.startsWith('ubt_manual_questions://')) {
+        try {
+          questions = JSON.parse(decodeURIComponent(updatedExam.pdf_url.replace('ubt_manual_questions://', '')));
+        } catch (e) {}
+      }
+
+      setExam((prev: any) => {
+        if (!prev || String(prev.id) !== currentId) return prev;
+        return {
+          ...prev,
+          title: updatedExam.title || prev.title,
+          questions: questions.length > 0 ? questions : prev.questions,
+          pdf_url: updatedExam.pdf_url ?? prev.pdf_url,
+          total_questions: updatedExam.total_questions || (questions.length > 0 ? questions.length : prev.total_questions),
+          duration_minutes: updatedExam.duration_minutes || prev.duration_minutes,
+          choices_count: updatedExam.choices_count || updatedExam.choices_per_question || prev.choices_count,
+          correct_answers: updatedExam.correct_answers || updatedExam.correct_answer || prev.correct_answers
+        };
+      });
+    };
+
+    const channel = supabase.channel(`live_public_exam_${currentId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'ubt_exams', filter: `id=eq.${currentId}` }, (payload) => {
+        applyLiveExamUpdate(payload.new);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'exams', filter: `id=eq.${currentId}` }, (payload) => {
+        applyLiveExamUpdate(payload.new);
+      })
+      .subscribe();
+
+    const unsub = subscribeRealtimeEvents((type, data) => {
+      if ((type === 'ubt_exam_updated' || type === 'exam_updated') && data && String(data.id) === currentId) {
+        if (data.exam) {
+          applyLiveExamUpdate(data.exam);
+        } else {
+          supabase.from('ubt_exams').select('*').eq('id', currentId).maybeSingle().then(({ data: d }) => {
+            if (d) applyLiveExamUpdate(d);
+            else {
+              supabase.from('exams').select('*').eq('id', currentId).maybeSingle().then(({ data: d2 }) => {
+                if (d2) applyLiveExamUpdate(d2);
+              });
+            }
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsub();
+      try { supabase.removeChannel(channel); } catch (e) {}
+    };
+  }, [exam?.id, isStarted]);
 
   // Screen Wake Lock API
   useEffect(() => {
@@ -248,8 +320,14 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
         id: submissionId,
         username: guestUsername,
         student_id: guestUsername,
+        full_name: guestName.trim(),
+        whatsapp_phone: guestPhone.trim(),
         exam_id: exam.id,
         score,
+        total_questions: totalQ,
+        percentage,
+        answers: examAnswers,
+        summary,
         submitted_at: nowIso,
         meta_data: {
           exam_title: exam.title,
@@ -257,7 +335,9 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
           is_public_submission: true,
           full_name: guestName.trim(),
           phone: guestPhone.trim(),
+          whatsapp_phone: guestPhone.trim(),
           school: guestSchool.trim(),
+          district: guestSchool.trim(),
           total_questions: totalQ,
           percentage,
           results_summary: summary,
@@ -304,63 +384,126 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
         return;
       }
 
-      const originalMaxHeight = element.style.maxHeight;
-      const originalOverflow = element.style.overflow;
-      element.style.maxHeight = 'none';
-      element.style.overflow = 'visible';
+      // 1. Create an isolated off-screen container with fixed desktop A4 dimensions (794px width)
+      // This guarantees mobile viewports DO NOT squish, wrap or overlap fonts and tables!
+      const offscreenWrap = document.createElement('div');
+      offscreenWrap.style.position = 'fixed';
+      offscreenWrap.style.left = '-9999px';
+      offscreenWrap.style.top = '0';
+      offscreenWrap.style.width = '794px';
+      offscreenWrap.style.minWidth = '794px';
+      offscreenWrap.style.maxWidth = '794px';
+      offscreenWrap.style.backgroundColor = '#ffffff';
+      offscreenWrap.style.color = '#0f172a';
+      offscreenWrap.style.zIndex = '-9999';
+      offscreenWrap.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", Arial, sans-serif';
+      offscreenWrap.style.letterSpacing = 'normal';
+      offscreenWrap.style.lineHeight = '1.6';
+      offscreenWrap.style.boxSizing = 'border-box';
+
+      // 2. Clone the printable content into the fixed A4 container
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.width = '794px';
+      clone.style.minWidth = '794px';
+      clone.style.maxWidth = '794px';
+      clone.style.padding = '36px 40px';
+      clone.style.boxSizing = 'border-box';
+      clone.style.overflow = 'visible';
+      clone.style.maxHeight = 'none';
+      clone.style.backgroundColor = '#ffffff';
+
+      // Normalize letter-spacing and word-break on all child nodes to completely eliminate mobile character overlapping
+      const allTextNodes = clone.querySelectorAll('*');
+      allTextNodes.forEach((node) => {
+        const el = node as HTMLElement;
+        el.style.letterSpacing = 'normal';
+        el.style.wordBreak = 'break-word';
+      });
+
+      offscreenWrap.appendChild(clone);
+      document.body.appendChild(offscreenWrap);
+
+      // 3. Smart Page-Break Margin Adjustment:
+      // A4 page height at 96 DPI is exactly 1123px.
+      // We calculate each question card's position. If a question card straddles an 1123px page boundary,
+      // we add top margin so that the entire question is pushed cleanly to the start of the next page.
+      // This completely prevents questions, images or tables from getting cut off across pages!
+      const PAGE_HEIGHT = 1123;
+      const questionCards = Array.from(clone.querySelectorAll('.pdf-question-card, .break-inside-avoid')) as HTMLElement[];
       
-      const canvas = await html2canvas(element, {
+      let currentBoundary = PAGE_HEIGHT;
+      for (const card of questionCards) {
+        const containerTop = clone.getBoundingClientRect().top;
+        const cardRect = card.getBoundingClientRect();
+        const cardTop = cardRect.top - containerTop;
+        const cardBottom = cardTop + cardRect.height;
+
+        // If card straddles current page boundary, push it to top of next page
+        if (cardTop < currentBoundary && cardBottom > (currentBoundary - 15)) {
+          const neededMargin = (currentBoundary - cardTop) + 28;
+          card.style.marginTop = `${neededMargin}px`;
+          currentBoundary += PAGE_HEIGHT;
+        } else if (cardTop >= currentBoundary) {
+          currentBoundary += PAGE_HEIGHT;
+        }
+      }
+
+      // 4. Capture using html2canvas-pro at high scale (scale: 2 for Retina clarity)
+      const canvas = await html2canvas(clone, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
         logging: false,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        windowWidth: 1200
       });
 
-      element.style.maxHeight = originalMaxHeight;
-      element.style.overflow = originalOverflow;
-      
+      // Remove offscreen clone immediately after capture
+      if (document.body.contains(offscreenWrap)) {
+        document.body.removeChild(offscreenWrap);
+      }
+
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'mm',
         format: 'a4'
       });
-      const pageWidth = 210;
-      const pageHeight = 297;
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * pageWidth) / canvas.width;
-      
-      const totalPages = Math.ceil(imgHeight / pageHeight);
 
-      // Add sliced pages
+      const pageWidthMm = 210;
+      const pageHeightMm = 297;
+      const imgWidthMm = pageWidthMm;
+      const imgHeightMm = (canvas.height * pageWidthMm) / canvas.width;
+      const totalPages = Math.ceil(imgHeightMm / pageHeightMm);
+
+      // 5. Slice and add each A4 page cleanly
       for (let i = 0; i < totalPages; i++) {
         if (i > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -(i * pageHeight), imgWidth, imgHeight, undefined, 'FAST');
+        pdf.addImage(imgData, 'JPEG', 0, -(i * pageHeightMm), imgWidthMm, imgHeightMm, undefined, 'FAST');
       }
 
-      // Overlay subtle, non-intrusive watermark and page numbering on every page
+      // 6. Overlay subtle, official background watermark & clean page numbering (Zero "Watermark :" text!)
       const numPages = pdf.getNumberOfPages();
       for (let p = 1; p <= numPages; p++) {
         pdf.setPage(p);
         try {
           if ((pdf as any).GState) {
             pdf.saveGraphicsState();
-            // Subtle, non-obtrusive watermark
-            pdf.setGState(new (pdf as any).GState({ opacity: 0.055 }));
+            // Subtle, non-intrusive diagonal watermark
+            pdf.setGState(new (pdf as any).GState({ opacity: 0.045 }));
             pdf.setTextColor(30, 41, 59);
             pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(20);
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 75, { align: 'center', angle: 40 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 150, { align: 'center', angle: 40 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 225, { align: 'center', angle: 40 });
+            pdf.setFontSize(22);
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 80, { align: 'center', angle: 35 });
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 155, { align: 'center', angle: 35 });
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 230, { align: 'center', angle: 35 });
 
-            // Page number footer
-            pdf.setGState(new (pdf as any).GState({ opacity: 0.7 }));
-            pdf.setFontSize(8);
+            // Professional footer page numbering
+            pdf.setGState(new (pdf as any).GState({ opacity: 0.8 }));
+            pdf.setFontSize(8.5);
             pdf.setFont('helvetica', 'normal');
             pdf.setTextColor(100, 116, 139);
-            pdf.text(`Page ${p} of ${numPages}  •  Smart Physics Public Assessment`, 105, 292, { align: 'center' });
+            pdf.text(`Page ${p} of ${numPages}  •  Smart Physics Public Assessment  •  Tharaka Amarasinghe`, 105, 291, { align: 'center' });
             pdf.restoreGraphicsState();
           }
         } catch (e) {
@@ -369,7 +512,7 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
       }
 
       const safeTitle = (pdfPrintResult.examTitle || 'Public_Exam_Report').replace(/[^a-zA-Z0-9_-]/g, '_');
-      pdf.save(`${safeTitle}_${pdfPrintResult.guestName || 'Report'}.pdf`);
+      pdf.save(`${safeTitle}_${(pdfPrintResult.guestName || 'Candidate').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`);
     } catch (err) {
       console.error('PDF export failed, using browser print dialog:', err);
       window.print();
@@ -550,31 +693,62 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
                 <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-12 divide-y md:divide-y-0 md:divide-x divide-slate-200">
                   
                   {/* Left Pane: Questions (Form A CBT or Form B PDF) */}
-                  <div className="p-4 md:col-span-7 lg:col-span-8 flex flex-col h-full overflow-y-auto bg-slate-50/60">
+                  <div className="p-3 sm:p-4 md:col-span-7 lg:col-span-8 flex flex-col h-full overflow-y-auto bg-slate-50/60">
                     {hasQuestions && currentQ ? (
-                      <div className="flex flex-col h-full space-y-4">
+                      <div ref={questionCardRef} className="flex flex-col space-y-4 pb-4">
+                        
+                        {/* Mobile-First Top Question Number Navigation Grid (OMR Sheet) */}
+                        <div className="block md:hidden bg-white border border-slate-200 rounded-2xl p-2.5 shadow-sm space-y-2">
+                          <div className="flex items-center justify-between text-[11px] font-bold">
+                            <span className="text-slate-700">පිළිතුරු පත්‍රිකාව (OMR Sheet):</span>
+                            <span className="font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                              {Object.keys(examAnswers).length} / {totalQ} සම්පූර්ණයි
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-thin">
+                            {Array.from({ length: totalQ }, (_, i) => i + 1).map(qNum => {
+                              const isAnswered = examAnswers[qNum] !== undefined;
+                              const selectedOption = examAnswers[qNum];
+                              const isCurrent = activeQuestionIndex === (qNum - 1);
+                              return (
+                                <button
+                                  key={qNum}
+                                  type="button"
+                                  onClick={() => setActiveQuestionIndex(qNum - 1)}
+                                  className={`shrink-0 w-9 h-9 rounded-xl border flex flex-col items-center justify-center font-mono font-black text-xs transition cursor-pointer active:scale-95 ${
+                                    isCurrent
+                                      ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50 text-blue-700 shadow-md'
+                                      : isAnswered
+                                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                                      : 'bg-slate-100 text-slate-700 border-slate-200'
+                                  }`}
+                                >
+                                  <span className="leading-none">{qNum}</span>
+                                  {isAnswered && (
+                                    <span className="text-[9px] opacity-90 leading-none mt-0.5 font-bold">
+                                      ({selectedOption})
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Question Header & Current Progress Badge */}
                         <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                           <span className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-black font-mono">
                             ප්‍රශ්න අංක {activeQuestionIndex + 1} / {totalQ}
                           </span>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={activeQuestionIndex === 0}
-                              onClick={() => setActiveQuestionIndex(prev => Math.max(0, prev - 1))}
-                              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer shadow-sm flex items-center gap-1"
-                            >
-                              <ChevronLeft size={14} /> පෙර ප්‍රශ්නය
-                            </button>
-                            <button
-                              type="button"
-                              disabled={activeQuestionIndex >= totalQ - 1}
-                              onClick={() => setActiveQuestionIndex(prev => Math.min(totalQ - 1, prev + 1))}
-                              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer shadow-sm flex items-center gap-1"
-                            >
-                              ඊළඟ ප්‍රශ්නය <ChevronRight size={14} />
-                            </button>
-                          </div>
+                          {examAnswers[currentQNumber] ? (
+                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              තෝරාගත් පිළිතුර: ({examAnswers[currentQNumber]})
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-slate-400">
+                              තවමත් පිළිතුරක් තෝරා නැත
+                            </span>
+                          )}
                         </div>
 
                         {/* Question Text */}
@@ -584,20 +758,20 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
                           </p>
                         </div>
 
-                        {/* Image Preview if available */}
+                        {/* Image Preview (Responsive max-height so it never overflows or blocks viewport) */}
                         {(currentQ.imageUrl || currentQ.image_url) && (
-                          <div className="bg-white border border-slate-200 p-2.5 rounded-2xl flex items-center justify-center max-h-[280px] overflow-hidden shadow-sm">
+                          <div className="bg-white border border-slate-200 p-2.5 sm:p-3.5 rounded-2xl flex items-center justify-center shadow-sm">
                             <img
                               src={getDirectDriveImageUrl(currentQ.imageUrl || currentQ.image_url)}
                               alt={`Question ${activeQuestionIndex + 1}`}
-                              className="max-h-[260px] w-auto object-contain rounded-lg"
+                              className="max-h-48 sm:max-h-64 md:max-h-[380px] w-auto max-w-full object-contain mx-auto rounded-xl shadow-sm"
                               onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
                             />
                           </div>
                         )}
 
                         {/* Options */}
-                        <div className="space-y-2 mt-auto pt-2">
+                        <div className="space-y-2 pt-1">
                           <span className="text-xs font-bold text-slate-700">පිළිතුර තෝරන්න:</span>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {Array.from({ length: choicesCount }, (_, i) => i + 1).map(opt => {
@@ -624,6 +798,45 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
                               );
                             })}
                           </div>
+                        </div>
+
+                        {/* Navigation Buttons: Prev & Next located BELOW answer options as requested */}
+                        <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            disabled={activeQuestionIndex === 0}
+                            onClick={() => setActiveQuestionIndex(prev => Math.max(0, prev - 1))}
+                            className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer shadow-sm flex items-center gap-1.5 transition active:scale-95"
+                          >
+                            ◀ පෙර ප්‍රශ්නය (Previous)
+                          </button>
+
+                          {activeQuestionIndex < totalQ - 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveQuestionIndex(prev => Math.min(totalQ - 1, prev + 1))}
+                              className="px-5 py-2.5 text-xs font-black rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                            >
+                              <span>ඊළඟ ප්‍රශ්නය (Next) ▶</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const answered = Object.keys(examAnswers).length;
+                                if (answered < totalQ) {
+                                  if (!window.confirm(`ඔබ තවමත් ප්‍රශ්න ${totalQ - answered} කට පිළිතුරු සපයා නොමැත. විභාගය Submit කිරීමට සනාථ කරන්නද?`)) return;
+                                } else {
+                                  if (!window.confirm('ප්‍රශ්න පත්‍රය අවසන් කර Submit කිරීමට සනාථ කරන්නද?')) return;
+                                }
+                                handleSubmitAnswers(false);
+                              }}
+                              className="px-5 py-2.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                            >
+                              <Send size={14} />
+                              <span>විභාගය Submit කරන්න</span>
+                            </button>
+                          )}
                         </div>
 
                       </div>
@@ -659,60 +872,109 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
                     )}
                   </div>
 
-                  {/* Right Pane: OMR Bubble Sheet */}
-                  <div className="p-4 md:col-span-5 lg:col-span-4 flex flex-col h-full overflow-y-auto bg-white">
-                    <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                      <span className="text-xs font-bold text-slate-800">OMR Bubble Sheet:</span>
-                      <span className="text-[11px] font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                        {Object.keys(examAnswers).length} / {totalQ} සම්පූර්ණයි
+                  {/* Right Pane: Form A Square Grid Tile OMR or Form B Bubble OMR */}
+                  <div className="hidden md:flex p-4 md:col-span-5 lg:col-span-4 flex-col h-full overflow-y-auto bg-white border-l border-slate-200">
+                    <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">
+                          පිළිතුරු පත්‍රිකාව (OMR Sheet)
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {hasQuestions ? 'කොටුව ක්ලික් කර ප්‍රශ්නයට යන්න' : 'පිළිතුරු බුබුළු තෝරන්න'}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono font-black px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+                        {Object.keys(examAnswers).length} / {totalQ}
                       </span>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[55vh]">
-                      {Array.from({ length: totalQ }, (_, i) => i + 1).map(qNum => {
-                        const selected = examAnswers[qNum];
-                        const isCurrent = hasQuestions && activeQuestionIndex === (qNum - 1);
-                        return (
-                          <div
-                            key={qNum}
-                            onClick={() => {
-                              if (hasQuestions) setActiveQuestionIndex(qNum - 1);
-                            }}
-                            className={`p-2 rounded-xl border flex items-center justify-between transition cursor-pointer ${
-                              isCurrent
-                                ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/50'
-                                : selected 
-                                ? 'bg-emerald-50/80 border-emerald-300' 
-                                : 'bg-slate-50 border-slate-200'
-                            }`}
-                          >
-                            <span className="font-mono font-bold text-xs text-slate-800 w-7">
-                              {qNum}.
-                            </span>
+                    {hasQuestions ? (
+                      /* Form A Square Tile Grid */
+                      <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                          <span className="flex items-center gap-1.5 text-emerald-700">
+                            <span className="w-3 h-3 rounded-md bg-emerald-600 inline-block"></span>
+                            සපයූ ({Object.keys(examAnswers).length})
+                          </span>
+                          <span className="flex items-center gap-1.5 text-slate-500">
+                            <span className="w-3 h-3 rounded-md bg-slate-200 inline-block"></span>
+                            නොසැපයූ ({totalQ - Object.keys(examAnswers).length})
+                          </span>
+                        </div>
 
-                            <div className="grid grid-cols-5 gap-1 flex-1 max-w-[200px]">
-                              {[1, 2, 3, 4, 5].map(opt => (
-                                <button
-                                  key={opt}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setExamAnswers(prev => ({ ...prev, [qNum]: opt }));
-                                  }}
-                                  className={`py-1 rounded text-[11px] font-bold font-mono transition border cursor-pointer ${
-                                    selected === opt
-                                      ? 'bg-blue-600 border-blue-600 text-white shadow'
-                                      : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
-                                  }`}
-                                >
-                                  {opt}
-                                </button>
-                              ))}
+                        <div className="grid grid-cols-5 gap-2.5 pt-1">
+                          {Array.from({ length: totalQ }, (_, i) => i + 1).map(qNum => {
+                            const isAnswered = examAnswers[qNum] !== undefined;
+                            const selectedOption = examAnswers[qNum];
+                            const isCurrentActive = activeQuestionIndex === (qNum - 1);
+
+                            return (
+                              <button
+                                key={qNum}
+                                type="button"
+                                onClick={() => setActiveQuestionIndex(qNum - 1)}
+                                className={`aspect-square rounded-xl border flex flex-col items-center justify-center transition p-1 cursor-pointer active:scale-95 ${
+                                  isCurrentActive
+                                    ? 'ring-2 ring-blue-500 border-blue-500 shadow-md'
+                                    : ''
+                                } ${
+                                  isAnswered
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500 shadow-sm'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                                }`}
+                              >
+                                <span className="font-mono text-xs font-black leading-none">
+                                  {qNum}
+                                </span>
+                                {isAnswered && (
+                                  <span className="text-[10px] font-black opacity-90 mt-0.5 font-mono">
+                                    ({selectedOption})
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Form B Traditional Bubble Sheet */
+                      <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[55vh]">
+                        {Array.from({ length: totalQ }, (_, i) => i + 1).map(qNum => {
+                          const selected = examAnswers[qNum];
+                          return (
+                            <div
+                              key={qNum}
+                              className={`p-2 rounded-xl border flex items-center justify-between transition ${
+                                selected 
+                                  ? 'bg-emerald-50 border-emerald-300' 
+                                  : 'bg-slate-50 border-slate-200'
+                              }`}
+                            >
+                              <span className="font-mono font-bold text-xs text-slate-800 w-7">
+                                {qNum}.
+                              </span>
+
+                              <div className="grid grid-cols-5 gap-1 flex-1 max-w-[200px]">
+                                {[1, 2, 3, 4, 5].map(opt => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    onClick={() => setExamAnswers(prev => ({ ...prev, [qNum]: opt }))}
+                                    className={`py-1 rounded text-[11px] font-bold font-mono transition border cursor-pointer ${
+                                      selected === opt
+                                        ? 'bg-blue-600 border-blue-600 text-white shadow'
+                                        : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
+                                    }`}
+                                  >
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {/* Submit Button */}
                     <div className="pt-3 mt-3 border-t border-slate-200">
@@ -961,7 +1223,7 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
                       return (
                         <div 
                           key={idx} 
-                          className={`p-4 rounded-xl border text-xs space-y-2 ${
+                          className={`pdf-question-card break-inside-avoid p-4 rounded-xl border text-xs space-y-2 ${
                             isCorrect 
                               ? 'bg-emerald-50/40 border-emerald-200' 
                               : 'bg-rose-50/40 border-rose-200'

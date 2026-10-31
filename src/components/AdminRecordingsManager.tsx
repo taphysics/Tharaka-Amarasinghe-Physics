@@ -511,13 +511,13 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
     <div className="w-full space-y-6 animate-in fade-in duration-300">
       
       {/* Top Header & Sub-Tab Switcher - Full Screen Width */}
-      <div className="bg-slate-900 border border-slate-800 p-5 md:p-6 rounded-3xl shadow-xl space-y-5">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl md:text-2xl font-black text-white flex items-center gap-2.5">
-              <BookOpen className="text-amber-400" size={26} /> Tutes &amp; Recordings මධ්‍යස්ථානය
+            <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
+              <BookOpen className="text-amber-500" size={26} /> Tutes &amp; Recordings මධ්‍යස්ථානය
             </h1>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
               Google Drive ලින්ක් මගින් ටියුට් / ප්‍රශ්න පත්‍ර සහ YouTube Unlisted / Public ලින්ක් මගින් පන්ති රෙකෝඩින් පුළුල් තිරයෙන් පහසුවෙන් කළමනාකරණය කරන්න.
             </p>
           </div>
@@ -530,22 +530,22 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
             onClick={() => setActiveTab('tutes')}
             className={`p-4 md:p-5 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
               activeTab === 'tutes'
-                ? 'bg-blue-600/20 border-blue-500 shadow-xl shadow-blue-900/30 ring-2 ring-blue-500/50'
-                : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
+                ? 'bg-blue-50 dark:bg-blue-600/20 border-blue-500 shadow-md ring-2 ring-blue-500/30'
+                : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900/80'
             }`}
           >
             <div className="flex items-center gap-3.5">
-              <div className={`p-3.5 rounded-2xl ${activeTab === 'tutes' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40' : 'bg-slate-800 text-blue-400'}`}>
+              <div className={`p-3.5 rounded-2xl ${activeTab === 'tutes' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-200 dark:bg-slate-800 text-blue-600 dark:text-blue-400'}`}>
                 <FileText size={24} />
               </div>
               <div>
-                <h3 className="text-sm md:text-base font-extrabold text-white flex items-center gap-2">
+                <h3 className="text-sm md:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   📚 ටියුට් සහ පේපර්ස් (Google Drive)
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Google Drive View Link මගින් සිසුන්ට ආරක්ෂිතව ලේඛන සපයන්න</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Google Drive View Link මගින් සිසුන්ට ආරක්ෂිතව ලේඛන සපයන්න</p>
               </div>
             </div>
-            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'tutes' ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'tutes' ? 'bg-blue-600 text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-400'}`}>
               {activeTab === 'tutes' ? 'ක්‍රියාකාරීයි ✓' : 'තෝරන්න'}
             </span>
           </button>
@@ -555,22 +555,22 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
             onClick={() => setActiveTab('recordings')}
             className={`p-4 md:p-5 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
               activeTab === 'recordings'
-                ? 'bg-amber-500/20 border-amber-500 shadow-xl shadow-amber-900/30 ring-2 ring-amber-500/50'
-                : 'bg-slate-950/60 border-slate-800 hover:border-slate-700 hover:bg-slate-900/80'
+                ? 'bg-amber-50 dark:bg-amber-500/20 border-amber-500 shadow-md ring-2 ring-amber-500/30'
+                : 'bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-900/80'
             }`}
           >
             <div className="flex items-center gap-3.5">
-              <div className={`p-3.5 rounded-2xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/40' : 'bg-slate-800 text-amber-400'}`}>
+              <div className={`p-3.5 rounded-2xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-200 dark:bg-slate-800 text-amber-500'}`}>
                 <Video size={24} />
               </div>
               <div>
-                <h3 className="text-sm md:text-base font-extrabold text-white flex items-center gap-2">
+                <h3 className="text-sm md:text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   📹 වීඩියෝ රෙකෝඩින් (YouTube Records)
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">YouTube Unlisted &amp; Public වීඩියෝ රෙකෝඩින් කළමනාකරණය</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">YouTube Unlisted &amp; Public වීඩියෝ රෙකෝඩින් කළමනාකරණය</p>
               </div>
             </div>
-            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+            <span className={`text-xs font-black px-3 py-1.5 rounded-xl ${activeTab === 'recordings' ? 'bg-amber-500 text-slate-950' : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-400'}`}>
               {activeTab === 'recordings' ? 'ක්‍රියාකාරීයි ✓' : 'තෝරන්න'}
             </span>
           </button>
@@ -584,13 +584,13 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
         <div className="space-y-6">
           
           {/* Form Card (Full Width) */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-6">
-            <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
+            <div className="border-b border-slate-200 dark:border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
-                  <Plus size={20} className="text-blue-400" /> නව ටියුට් / ප්‍රශ්න පත්‍රයක් එක් කරන්න (Add Tute)
+                <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Plus size={20} className="text-blue-500" /> නව ටියුට් / ප්‍රශ්න පත්‍රයක් එක් කරන්න (Add Tute)
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Google Drive ලින්ක් එක මගින් සිසුන්ට ආරක්ෂිතව PDF ටියුට් ලබා දෙන්න.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Google Drive ලින්ක් එක මගින් සිසුන්ට ආරක්ෂිතව PDF ටියුට් ලබා දෙන්න.</p>
               </div>
             </div>
 
@@ -610,26 +610,26 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 
                 {/* 1. Title */}
                 <div className="md:col-span-2">
-                  <label className="text-slate-300 font-bold text-xs block mb-1.5">ටියුට් / ප්‍රශ්න පත්‍රයේ නම (Title) *</label>
+                  <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">ටියුට් / ප්‍රශ්න පත්‍රයේ නම (Title) *</label>
                   <input
                     type="text"
                     required
                     placeholder="උදා: යාන්ත්‍ර විද්‍යාව - සිද්ධාන්ත ටියුට් 01 (Theory Sheet 01)"
                     value={tuteTitle}
                     onChange={(e) => setTuteTitle(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white text-xs focus:outline-none focus:border-blue-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-4 py-3 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-blue-500"
                   />
                 </div>
 
                 {/* 2. Type */}
                 <div>
-                  <label className="text-slate-300 font-bold text-xs block mb-1.5">ලේඛන වර්ගය (Type) *</label>
+                  <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">ලේඛන වර්ගය (Type) *</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button 
                       type="button"
                       onClick={() => setTuteType('tute')}
                       className={`py-3 rounded-2xl border text-xs flex items-center justify-center gap-1.5 font-bold cursor-pointer transition ${
-                        tuteType === 'tute' ? 'bg-blue-600/20 border-blue-500 text-blue-300 ring-1 ring-blue-500/40' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        tuteType === 'tute' ? 'bg-blue-50 dark:bg-blue-600/20 border-blue-500 text-blue-700 dark:text-blue-300 ring-1 ring-blue-500/40' : 'bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       <FileText size={15} /> ටියුට් (Tute)
@@ -638,7 +638,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                       type="button"
                       onClick={() => setTuteType('paper')}
                       className={`py-3 rounded-2xl border text-xs flex items-center justify-center gap-1.5 font-bold cursor-pointer transition ${
-                        tuteType === 'paper' ? 'bg-rose-600/20 border-rose-500 text-rose-300 ring-1 ring-rose-500/40' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        tuteType === 'paper' ? 'bg-rose-50 dark:bg-rose-600/20 border-rose-500 text-rose-700 dark:text-rose-300 ring-1 ring-rose-500/40' : 'bg-slate-100 dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       <Download size={15} /> පේපර් (Paper)
@@ -650,16 +650,16 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
               {/* Google Drive Link */}
               <div>
-                <label className="text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
+                <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
-                    <Link2 size={14} className="text-blue-400" /> Google Drive Link එක (View / Preview URL) *
+                    <Link2 size={14} className="text-blue-500" /> Google Drive Link එක (View / Preview URL) *
                   </span>
                   {tuteLink.trim() && (
                     <a
                       href={tuteLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 hover:underline"
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
                     >
                       <ExternalLink size={13} /> Test Link (නව ටැබ් එකකින් බලන්න)
                     </a>
@@ -672,14 +672,14 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                     placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
                     value={tuteLink}
                     onChange={(e) => setTuteLink(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-4 py-3 text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-blue-500"
                   />
                   {tuteLink.trim() && (
                     <a
                       href={tuteLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 rounded-2xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition"
+                      className="px-4 py-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-300 border border-slate-300 dark:border-slate-700 rounded-2xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition"
                     >
                       <ExternalLink size={14} /> Test
                     </a>
@@ -696,28 +696,28 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 {/* Target Classes */}
                 <div className="lg:col-span-8">
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setTuteSelectedClasses(displayClasses.map(c => c.class_type))}
-                        className="text-[10px] text-blue-400 hover:underline font-bold cursor-pointer"
+                        className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-bold cursor-pointer"
                       >
                         සියල්ල තෝරන්න (Select All)
                       </button>
-                      <span className="text-slate-600 text-xs">|</span>
+                      <span className="text-slate-400 text-xs">|</span>
                       <button
                         type="button"
                         onClick={() => setTuteSelectedClasses([])}
-                        className="text-[10px] text-slate-400 hover:underline font-bold cursor-pointer"
+                        className="text-[10px] text-slate-500 hover:underline font-bold cursor-pointer"
                       >
                         හිස් කරන්න (Clear)
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-950 p-3.5 rounded-2xl border border-slate-800 max-h-48 overflow-y-auto">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-50 dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 max-h-48 overflow-y-auto">
                     {displayClasses.map((cls) => (
-                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1 text-xs">
+                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white p-1 text-xs font-medium">
                         <input
                           type="checkbox"
                           checked={tuteSelectedClasses.includes(cls.class_type)}
@@ -733,21 +733,21 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 {/* Year & Month */}
                 <div className="lg:col-span-4 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
                     <select
                       value={tuteYear}
                       onChange={(e) => setTuteYear(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-blue-500"
                     >
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
                     <select
                       value={tuteMonth}
                       onChange={(e) => setTuteMonth(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-blue-500"
                     >
                       {months.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
@@ -758,20 +758,20 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
               {/* Description */}
               <div>
-                <label className="text-slate-300 font-bold text-xs block mb-1.5">කෙටි විස්තරයක් (අමතර උපදෙස්)</label>
+                <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">කෙටි විස්තරයක් (අමතර උපදෙස්)</label>
                 <textarea
                   rows={2}
                   placeholder="උදා: පළමු සතියේ සාකච්ඡා කෙරෙන ප්‍රශ්නාවලිය. සජීවී පන්තියට පෙර සම්පූර්ණ කරන්න."
                   value={tuteDesc}
                   onChange={(e) => setTuteDesc(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-white text-xs focus:outline-none focus:border-blue-500 resize-none"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-4 py-2.5 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-blue-500 resize-none"
                 />
               </div>
 
               {/* Allow Student Download Permission */}
-              <div className="p-3.5 bg-slate-950/90 rounded-2xl border border-slate-800 flex items-center justify-between">
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950/90 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <div>
-                  <label className="text-white font-bold text-xs flex items-center gap-2.5 cursor-pointer select-none">
+                  <label className="text-slate-800 dark:text-white font-bold text-xs flex items-center gap-2.5 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={allowDownload}
@@ -800,20 +800,20 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
           </div>
 
           {/* Tutes List Stream (Full Width Table/Grid) */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
               <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
-                  <FileText size={20} className="text-blue-400" /> දැනට ඇතුළත් කර ඇති ටියුට් &amp; ප්‍රශ්න පත්‍ර
+                <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <FileText size={20} className="text-blue-500" /> දැනට ඇතුළත් කර ඇති ටියුට් &amp; ප්‍රශ්න පත්‍ර
                 </h3>
-                <p className="text-xs text-slate-400">මුළු ලේඛන ගණන: {tutesList.length}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">මුළු ලේඛන ගණන: {tutesList.length}</p>
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <select
                   value={tuteFilterClass}
                   onChange={(e) => setTuteFilterClass(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
+                  className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-800 dark:text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
                 >
                   <option value="all">සියලු පන්ති (All Classes)</option>
                   {displayClasses.map(c => (
@@ -828,13 +828,13 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                     placeholder="ටියුට් සොයන්න..."
                     value={tuteSearch}
                     onChange={(e) => setTuteSearch(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-blue-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-blue-500"
                   />
                 </div>
 
                 <button
                   onClick={fetchTutes}
-                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 border border-slate-200 dark:border-slate-700"
                 >
                   <RefreshCw size={13} /> Refresh
                 </button>
@@ -843,7 +843,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
             {filteredTutes.length === 0 ? (
               <div className="py-16 text-center text-slate-500 text-xs space-y-2">
-                <FileText size={32} className="mx-auto text-slate-600" />
+                <FileText size={32} className="mx-auto text-slate-400" />
                 <p className="font-bold">කිසිදු ටියුට් එකක් හමු නොවීය.</p>
               </div>
             ) : (
@@ -855,29 +855,29 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                   return (
                     <div
                       key={tute.id}
-                      className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-md group"
+                      className="p-5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-sm group"
                     >
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className={`text-[10px] font-black px-2.5 py-1 rounded-xl uppercase border ${
-                            isTute ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                            isTute ? 'bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30' : 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-500/30'
                           }`}>
                             {isTute ? '📄 Tute' : '📝 Paper'}
                           </span>
 
                           {tute.target_month && (
-                            <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-lg">
+                            <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-lg">
                               📅 {tute.target_month}
                             </span>
                           )}
                         </div>
 
-                        <h4 className="font-extrabold text-sm text-white group-hover:text-blue-300 transition line-clamp-2" title={tute.title}>
+                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-300 transition line-clamp-2" title={tute.title}>
                           {tute.title}
                         </h4>
 
                         {tute.description && (
-                          <p className="text-xs text-slate-400 line-clamp-2">
+                          <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
                             {tute.description}
                           </p>
                         )}
@@ -885,7 +885,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                         {targetClasses.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 pt-1">
                             {targetClasses.map((c, i) => (
-                              <span key={i} className="text-[10px] bg-slate-900 border border-slate-800 text-amber-300 font-bold px-2 py-0.5 rounded-lg">
+                              <span key={i} className="text-[10px] bg-amber-50 dark:bg-slate-900 border border-amber-200 dark:border-slate-800 text-amber-700 dark:text-amber-300 font-bold px-2 py-0.5 rounded-lg">
                                 {c}
                               </span>
                             ))}
@@ -893,12 +893,12 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between pt-3 border-t border-slate-900 gap-2">
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-900 gap-2">
                         <a
                           href={tute.link}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-3.5 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                          className="px-3.5 py-2 bg-blue-50 dark:bg-blue-600/20 hover:bg-blue-100 dark:hover:bg-blue-600/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
                           title="Google Drive Link එක පරික්ෂා කරන්න"
                         >
                           <ExternalLink size={13} /> View Link
@@ -906,7 +906,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
                         {isLecturer && !canLecturerEdit(tute.created_at) ? (
                           <span 
-                            className="text-[10px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-1.5 rounded"
+                            className="text-[10px] bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 px-2 py-1.5 rounded"
                             title="පැය 1 ඉක්මවා ඇති බැවින් මැකීම කළ හැක්කේ සුපර් ඇඩ්මින් / ඇඩ්මින් / මැනේජර් මඟින් පමණි."
                           >
                             🔒 Locked (&gt;1h)
@@ -914,7 +914,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                         ) : (
                           <button
                             onClick={() => setDeleteTarget({ type: 'tute', id: tute.id, title: tute.title, created_at: tute.created_at })}
-                            className="p-2 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 rounded-xl transition cursor-pointer"
+                            className="p-2 bg-rose-50 hover:bg-rose-100 dark:bg-red-950/40 dark:hover:bg-red-900/60 text-rose-600 dark:text-red-400 border border-rose-200 dark:border-red-900/50 rounded-xl transition cursor-pointer"
                             title={isLecturer ? `ඉවත් කරන්න (Delete - ${getRemainingMinutes(tute.created_at)} mins left)` : "ඉවත් කරන්න (Delete)"}
                           >
                             <Trash2 size={15} />
@@ -938,12 +938,12 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
         <div className="space-y-6">
           
           {/* Add Recording Form (Full Width) */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-6">
-            <div className="border-b border-slate-800 pb-4">
-              <h3 className="text-lg font-black text-white flex items-center gap-2">
-                <Plus size={20} className="text-amber-400" /> නව වීඩියෝ රෙකෝඩින් එකක් එක් කරන්න (Add Class Recording)
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
+            <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus size={20} className="text-amber-500" /> නව වීඩියෝ රෙකෝඩින් එකක් එක් කරන්න (Add Class Recording)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 YouTube Unlisted හෝ Public ඕනෑම ලින්ක් එකක් ඇතුළත් කරන්න. ලින්ක් එක ඇතුළත් කළ විගස පහතින් Preview එක දිස්වේ.
               </p>
             </div>
@@ -964,25 +964,25 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 
                 {/* Title */}
                 <div className="lg:col-span-6">
-                  <label className="text-slate-300 font-bold text-xs block mb-1.5">වීඩියෝවේ මාතෘකාව (Title) *</label>
+                  <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">වීඩියෝවේ මාතෘකාව (Title) *</label>
                   <input
                     type="text"
                     required
-                    placeholder="උදා: 2027 Theory - චලිතය Day 01 (Motion Day 01)"
+                    placeholder="උදා: 2027 Physics Theory - චලිතය Day 01 (Motion Day 01)"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white text-xs focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-4 py-3 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-amber-500"
                   />
                 </div>
 
                 {/* YouTube Link with Realtime ID & Thumbnail Preview */}
                 <div className="lg:col-span-6">
-                  <label className="text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
+                  <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5 flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
                       <Youtube size={15} className="text-red-500" /> YouTube Video Link (URL හෝ Unlisted Link) *
                     </span>
                     {detectedYtId && (
-                      <span className="text-emerald-400 text-xs font-mono font-bold flex items-center gap-1">
+                      <span className="text-emerald-500 dark:text-emerald-400 text-xs font-mono font-bold flex items-center gap-1">
                         <Check size={13} /> Valid ID: {detectedYtId}
                       </span>
                     )}
@@ -993,7 +993,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                     placeholder="උදා: https://youtu.be/... හෝ https://www.youtube.com/watch?v=... (Unlisted or Public)"
                     value={youtubeLink}
                     onChange={(e) => setYoutubeLink(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-4 py-3 text-slate-900 dark:text-white font-mono text-xs focus:outline-none focus:border-amber-500"
                   />
                   <p className="text-[11px] text-slate-500 mt-1.5">
                     💡 YouTube Unlisted ලින්ක්, Short ලින්ක් (`youtu.be/`), Live ලින්ක් හෝ සම්පූර්ණ URL ඕනෑම ආකෘතියකට සහය දක්වයි.
@@ -1004,24 +1004,24 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
               {/* Live Preview Box if valid ID detected */}
               {detectedYtId && (
-                <div className="p-4 bg-slate-950/80 border border-amber-500/40 rounded-2xl flex flex-col sm:flex-row items-center gap-4 animate-in fade-in duration-200">
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/80 border border-amber-500/40 rounded-2xl flex flex-col sm:flex-row items-center gap-4 animate-in fade-in duration-200">
                   <img
                     src={`https://img.youtube.com/vi/${detectedYtId}/hqdefault.jpg`}
                     alt="Preview"
-                    className="w-36 h-24 object-cover rounded-xl border border-slate-800 shrink-0 shadow-md bg-slate-900"
+                    className="w-36 h-24 object-cover rounded-xl border border-slate-200 dark:border-slate-800 shrink-0 shadow-md bg-slate-100 dark:bg-slate-900"
                     onError={(e: any) => {
                       e.target.src = `https://img.youtube.com/vi/${detectedYtId}/default.jpg`;
                     }}
                   />
                   <div className="space-y-1 text-xs min-w-0 flex-1">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 uppercase">
                       ✓ YouTube Video හඳුනාගන්නා ලදී
                     </span>
-                    <p className="font-bold text-white text-sm">
+                    <p className="font-bold text-slate-900 dark:text-white text-sm">
                       {title || 'වීඩියෝ මාතෘකාව ඉහතින් ඇතුළත් කරන්න'}
                     </p>
-                    <p className="text-slate-400 font-mono text-[11px]">
-                      Video ID: <span className="text-amber-400 font-bold">{detectedYtId}</span>
+                    <p className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                      Video ID: <span className="text-amber-600 dark:text-amber-400 font-bold">{detectedYtId}</span>
                     </p>
                   </div>
                 </div>
@@ -1032,28 +1032,28 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 
                 <div className="lg:col-span-8">
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs">අදාළ පන්ති වර්ගය(න්) තෝරන්න *</label>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => setSelectedClasses(displayClasses.map(c => c.class_type))}
-                        className="text-[10px] text-amber-400 hover:underline font-bold cursor-pointer"
+                        className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline font-bold cursor-pointer"
                       >
                         සියල්ල තෝරන්න (Select All)
                       </button>
-                      <span className="text-slate-600 text-xs">|</span>
+                      <span className="text-slate-400 text-xs">|</span>
                       <button
                         type="button"
                         onClick={() => setSelectedClasses([])}
-                        className="text-[10px] text-slate-400 hover:underline font-bold cursor-pointer"
+                        className="text-[10px] text-slate-500 hover:underline font-bold cursor-pointer"
                       >
                         හිස් කරන්න (Clear)
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-950 p-3.5 rounded-2xl border border-slate-800 max-h-48 overflow-y-auto">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 bg-slate-50 dark:bg-slate-950 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 max-h-48 overflow-y-auto">
                     {displayClasses.map((cls) => (
-                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white p-1 text-xs">
+                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white p-1 text-xs font-medium">
                         <input
                           type="checkbox"
                           checked={selectedClasses.includes(cls.class_type)}
@@ -1069,21 +1069,21 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                 {/* Year & Month */}
                 <div className="lg:col-span-4 grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">වසර</label>
                     <select
                       value={selectedYear}
                       onChange={(e) => setSelectedYear(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-amber-500"
                     >
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
+                    <label className="text-slate-700 dark:text-slate-300 font-bold text-xs block mb-1.5">මාසය</label>
                     <select
                       value={selectedMonth}
                       onChange={(e) => setSelectedMonth(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-3 text-white text-xs font-bold focus:outline-none focus:border-amber-500"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-2xl px-3.5 py-3 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-amber-500"
                     >
                       {months.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
@@ -1103,20 +1103,20 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
           </div>
 
           {/* Recordings Stream (Full Width Grid) */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl space-y-5">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
               <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <Youtube size={22} className="text-red-500" /> දැනට පද්ධතියේ පවතින රෙකෝඩින්
                 </h3>
-                <p className="text-xs text-slate-400">මුළු වීඩියෝ ගණන: {recordings.length}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">මුළු වීඩියෝ ගණන: {recordings.length}</p>
               </div>
 
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <select
                   value={recFilterClass}
                   onChange={(e) => setRecFilterClass(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
+                  className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-800 dark:text-slate-300 text-xs px-3.5 py-2 rounded-xl focus:outline-none"
                 >
                   <option value="all">සියලු පන්ති (All Classes)</option>
                   {displayClasses.map(c => (
@@ -1131,13 +1131,13 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                     placeholder="රෙකෝඩින් සොයන්න..."
                     value={recSearch}
                     onChange={(e) => setRecSearch(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 text-xs text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-amber-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white pl-9 pr-3 py-2 rounded-xl focus:outline-none focus:border-amber-500"
                   />
                 </div>
 
                 <button
                   onClick={fetchRecordings}
-                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shrink-0 border border-slate-200 dark:border-slate-700"
                 >
                   <RefreshCw size={13} /> Refresh
                 </button>
@@ -1146,7 +1146,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
             {filteredRecordings.length === 0 ? (
               <div className="py-16 text-center text-slate-500 text-xs space-y-2">
-                <Video size={32} className="mx-auto text-slate-600" />
+                <Video size={32} className="mx-auto text-slate-400" />
                 <p className="font-bold">කිසිදු රෙකෝඩින් එකක් හමු නොවීය.</p>
               </div>
             ) : (
@@ -1157,10 +1157,10 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                   return (
                     <div
                       key={rec.id}
-                      className="p-5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-md group"
+                      className="p-5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 rounded-3xl flex flex-col justify-between gap-4 transition shadow-sm group"
                     >
                       <div className="space-y-3">
-                        <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-800 bg-slate-900">
+                        <div className="relative aspect-video rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900">
                           <img
                             src={rec.thumbnail_url}
                             alt=""
@@ -1180,26 +1180,26 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
                           </div>
                         </div>
 
-                        <h4 className="font-extrabold text-sm text-white group-hover:text-amber-400 transition line-clamp-2" title={rec.title}>
+                        <h4 className="font-extrabold text-sm text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition line-clamp-2" title={rec.title}>
                           {rec.title}
                         </h4>
                       </div>
 
-                      <div className="flex items-center justify-between pt-3 border-t border-slate-900 gap-2">
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-slate-900 gap-2">
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => setActiveViewId(activeViewId === rec.id ? null : rec.id)}
-                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-bold rounded-xl border border-slate-800 flex items-center gap-1.5 transition cursor-pointer"
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 transition cursor-pointer"
                             title="නැරඹූ සිසුන්"
                           >
-                            <Eye size={13} className="text-amber-400" /> {views.length} Views
+                            <Eye size={13} className="text-amber-500" /> {views.length} Views
                           </button>
 
                           <a
                             href={rec.video_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition"
+                            className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-900 dark:hover:bg-slate-800 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white rounded-xl transition border border-slate-200 dark:border-slate-800"
                             title="YouTube වෙතින් බලන්න"
                           >
                             <ExternalLink size={14} />
@@ -1208,7 +1208,7 @@ export default function AdminRecordingsManager({ initialTab = 'recordings', curr
 
                         {isLecturer && !canLecturerEdit(rec.created_at) ? (
                           <span 
-                            className="text-[10px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-1.5 rounded"
+                            className="text-[10px] bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 px-2 py-1.5 rounded"
                             title="පැය 1 ඉක්මවා ඇති බැවින් මැකීම කළ හැක්කේ සුපර් ඇඩ්මින් / ඇඩ්මින් / මැනේජර් මඟින් පමණි."
                           >
                             🔒 Locked (&gt;1h)

@@ -4,7 +4,7 @@ import {
   Award, Calendar, CheckCircle2, XCircle, Clock, ChevronDown, 
   ChevronUp, FileText, Check, X, Play, Send, ExternalLink, 
   AlertCircle, Sparkles, BookOpen, Printer, Download, HelpCircle,
-  CheckSquare, Square, Loader2
+  CheckSquare, Square, Loader2, TrendingUp, BarChart3, Target
 } from 'lucide-react';
 import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
@@ -91,6 +91,79 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
   const [pdfPrintResult, setPdfPrintResult] = useState<any | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const autoSubmitRef = useRef<() => void>(() => {});
+  const questionCardRef = useRef<HTMLDivElement>(null);
+  const [selectedChartPoint, setSelectedChartPoint] = useState<any | null>(null);
+
+  // Auto-scroll to top of question card when active question changes
+  useEffect(() => {
+    if (takingExam && questionCardRef.current) {
+      questionCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeQuestionIndex, Boolean(takingExam)]);
+
+  // Live Exam Realtime Updates while taking exam:
+  // If admin updates questions, images, duration or choices, update takingExam without losing student's answers!
+  useEffect(() => {
+    if (!takingExam?.id) return;
+    const currentTakingId = String(takingExam.id);
+
+    const applyLiveExamUpdate = (updatedExam: any) => {
+      if (!updatedExam || String(updatedExam.id) !== currentTakingId) return;
+
+      let questions = updatedExam.questions || [];
+      if ((!questions || questions.length === 0) && typeof updatedExam.pdf_url === 'string' && updatedExam.pdf_url.startsWith('ubt_manual_questions://')) {
+        try {
+          questions = JSON.parse(decodeURIComponent(updatedExam.pdf_url.replace('ubt_manual_questions://', '')));
+        } catch (e) {}
+      }
+
+      setTakingExam((prev: any) => {
+        if (!prev || String(prev.id) !== currentTakingId) return prev;
+        return {
+          ...prev,
+          title: updatedExam.title || prev.title,
+          questions: questions.length > 0 ? questions : prev.questions,
+          pdf_url: updatedExam.pdf_url ?? prev.pdf_url,
+          choices_count: updatedExam.choices_count || updatedExam.choices_per_question || prev.choices_count,
+          total_questions: updatedExam.total_questions || (questions.length > 0 ? questions.length : prev.total_questions),
+          correct_answers: updatedExam.correct_answers || updatedExam.correct_answer || prev.correct_answers
+        };
+      });
+    };
+
+    const channel = supabase.channel(`live_active_exam_${currentTakingId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'ubt_exams', filter: `id=eq.${currentTakingId}` }, (payload) => {
+        applyLiveExamUpdate(payload.new);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'exams', filter: `id=eq.${currentTakingId}` }, (payload) => {
+        applyLiveExamUpdate(payload.new);
+      })
+      .subscribe();
+
+    const unsub = subscribeRealtimeEvents((type, data) => {
+      if ((type === 'ubt_exam_updated' || type === 'exam_updated') && data) {
+        if (String(data.id) === currentTakingId) {
+          if (data.exam) {
+            applyLiveExamUpdate(data.exam);
+          } else {
+            supabase.from('ubt_exams').select('*').eq('id', currentTakingId).maybeSingle().then(({ data: d }) => {
+              if (d) applyLiveExamUpdate(d);
+              else {
+                supabase.from('exams').select('*').eq('id', currentTakingId).maybeSingle().then(({ data: d2 }) => {
+                  if (d2) applyLiveExamUpdate(d2);
+                });
+              }
+            });
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsub();
+      try { supabase.removeChannel(channel); } catch (e) {}
+    };
+  }, [takingExam?.id]);
 
   // Screen Wake Lock API to prevent screen sleeping during exam
   useEffect(() => {
@@ -480,6 +553,8 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
         submitted_at: nowIso,
         meta_data: {
           exam_title: takingExam.title,
+          student_name: currentStudent.full_name || currentStudent.name || currentStudent.username,
+          full_name: currentStudent.full_name || currentStudent.name || currentStudent.username,
           class_type: takingExam.class_type || takingExam.target_class_type || 'General',
           lecturer_name: resolvedLecturer,
           total_questions: totalQ,
@@ -556,64 +631,126 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
         return;
       }
 
-      // Temporarily expand element overflow for full document capture
-      const originalMaxHeight = element.style.maxHeight;
-      const originalOverflow = element.style.overflow;
-      element.style.maxHeight = 'none';
-      element.style.overflow = 'visible';
+      // 1. Create an isolated off-screen container with fixed desktop A4 dimensions (794px width)
+      // This guarantees mobile viewports DO NOT squish, wrap or overlap fonts and tables!
+      const offscreenWrap = document.createElement('div');
+      offscreenWrap.style.position = 'fixed';
+      offscreenWrap.style.left = '-9999px';
+      offscreenWrap.style.top = '0';
+      offscreenWrap.style.width = '794px';
+      offscreenWrap.style.minWidth = '794px';
+      offscreenWrap.style.maxWidth = '794px';
+      offscreenWrap.style.backgroundColor = '#ffffff';
+      offscreenWrap.style.color = '#0f172a';
+      offscreenWrap.style.zIndex = '-9999';
+      offscreenWrap.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", Arial, sans-serif';
+      offscreenWrap.style.letterSpacing = 'normal';
+      offscreenWrap.style.lineHeight = '1.6';
+      offscreenWrap.style.boxSizing = 'border-box';
+
+      // 2. Clone the printable content into the fixed A4 container
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.style.width = '794px';
+      clone.style.minWidth = '794px';
+      clone.style.maxWidth = '794px';
+      clone.style.padding = '36px 40px';
+      clone.style.boxSizing = 'border-box';
+      clone.style.overflow = 'visible';
+      clone.style.maxHeight = 'none';
+      clone.style.backgroundColor = '#ffffff';
+
+      // Normalize letter-spacing and word-break on all child nodes to completely eliminate mobile character overlapping
+      const allTextNodes = clone.querySelectorAll('*');
+      allTextNodes.forEach((node) => {
+        const el = node as HTMLElement;
+        el.style.letterSpacing = 'normal';
+        el.style.wordBreak = 'break-word';
+      });
+
+      offscreenWrap.appendChild(clone);
+      document.body.appendChild(offscreenWrap);
+
+      // 3. Smart Page-Break Margin Adjustment:
+      // A4 page height at 96 DPI is exactly 1123px.
+      // We calculate each question card's position. If a question card straddles an 1123px page boundary,
+      // we add top margin so that the entire question is pushed cleanly to the start of the next page.
+      // This completely prevents questions, images or tables from getting cut off across pages!
+      const PAGE_HEIGHT = 1123;
+      const questionCards = Array.from(clone.querySelectorAll('.pdf-question-card, .break-inside-avoid')) as HTMLElement[];
       
-      const canvas = await html2canvas(element, {
+      let currentBoundary = PAGE_HEIGHT;
+      for (const card of questionCards) {
+        const containerTop = clone.getBoundingClientRect().top;
+        const cardRect = card.getBoundingClientRect();
+        const cardTop = cardRect.top - containerTop;
+        const cardBottom = cardTop + cardRect.height;
+
+        // If card straddles current page boundary, push it to top of next page
+        if (cardTop < currentBoundary && cardBottom > (currentBoundary - 15)) {
+          const neededMargin = (currentBoundary - cardTop) + 28;
+          card.style.marginTop = `${neededMargin}px`;
+          currentBoundary += PAGE_HEIGHT;
+        } else if (cardTop >= currentBoundary) {
+          currentBoundary += PAGE_HEIGHT;
+        }
+      }
+
+      // 4. Capture using html2canvas-pro at high scale (scale: 2 for Retina clarity)
+      const canvas = await html2canvas(clone, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
         logging: false,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        windowWidth: 1200
       });
 
-      element.style.maxHeight = originalMaxHeight;
-      element.style.overflow = originalOverflow;
-      
+      // Remove offscreen clone immediately after capture
+      if (document.body.contains(offscreenWrap)) {
+        document.body.removeChild(offscreenWrap);
+      }
+
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'mm',
         format: 'a4'
       });
-      const pageWidth = 210;
-      const pageHeight = 297;
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * pageWidth) / canvas.width;
-      
-      const totalPages = Math.ceil(imgHeight / pageHeight);
 
-      // Add sliced pages
+      const pageWidthMm = 210;
+      const pageHeightMm = 297;
+      const imgWidthMm = pageWidthMm;
+      const imgHeightMm = (canvas.height * pageWidthMm) / canvas.width;
+      const totalPages = Math.ceil(imgHeightMm / pageHeightMm);
+
+      // 5. Slice and add each A4 page cleanly
       for (let i = 0; i < totalPages; i++) {
         if (i > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -(i * pageHeight), imgWidth, imgHeight, undefined, 'FAST');
+        pdf.addImage(imgData, 'JPEG', 0, -(i * pageHeightMm), imgWidthMm, imgHeightMm, undefined, 'FAST');
       }
 
-      // Overlay subtle, non-intrusive watermark and page numbering on every page
+      // 6. Overlay subtle, official background watermark & clean page numbering (Zero "Watermark :" text!)
       const numPages = pdf.getNumberOfPages();
       for (let p = 1; p <= numPages; p++) {
         pdf.setPage(p);
         try {
           if ((pdf as any).GState) {
             pdf.saveGraphicsState();
-            // Subtle, non-obtrusive watermark
-            pdf.setGState(new (pdf as any).GState({ opacity: 0.055 }));
+            // Subtle, non-intrusive diagonal watermark
+            pdf.setGState(new (pdf as any).GState({ opacity: 0.045 }));
             pdf.setTextColor(30, 41, 59);
             pdf.setFont('helvetica', 'bold');
-            pdf.setFontSize(20);
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 75, { align: 'center', angle: 40 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 150, { align: 'center', angle: 40 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 225, { align: 'center', angle: 40 });
+            pdf.setFontSize(22);
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 80, { align: 'center', angle: 35 });
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 155, { align: 'center', angle: 35 });
+            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 230, { align: 'center', angle: 35 });
 
-            // Page number footer
-            pdf.setGState(new (pdf as any).GState({ opacity: 0.7 }));
-            pdf.setFontSize(8);
+            // Professional footer page numbering
+            pdf.setGState(new (pdf as any).GState({ opacity: 0.8 }));
+            pdf.setFontSize(8.5);
             pdf.setFont('helvetica', 'normal');
             pdf.setTextColor(100, 116, 139);
-            pdf.text(`Page ${p} of ${numPages}  •  Smart Physics Official Assessment`, 105, 292, { align: 'center' });
+            pdf.text(`Page ${p} of ${numPages}  •  Smart Physics Assessment  •  Tharaka Amarasinghe`, 105, 291, { align: 'center' });
             pdf.restoreGraphicsState();
           }
         } catch (e) {
@@ -663,6 +800,396 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
           යාවත්කාලීන කරන්න (Refresh)
         </button>
       </div>
+
+      {/* =======================================================================
+          TOP SECTION: STUDENT EXAM PERFORMANCE PROGRESS GRAPH (ප්‍රස්ථාරගත කිරීම)
+          X-Axis: All Papers faced by student (chronological)
+          Y-Axis: Percentage obtained (0% - 100%)
+          Shows: Overall Average, Best Score, Latest Score, Current Grade/Level
+          ======================================================================= */}
+      {(() => {
+        const chronologicalExams = [...records]
+          .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime())
+          .map((r, idx) => {
+            const totalQ = r.total_questions || (r.meta_data?.total_questions) || (r.meta_data?.questions && r.meta_data.questions.length) || 1;
+            const rawScore = Number(r.score || 0);
+            const perc = Number(r.percentage ?? r.meta_data?.percentage ?? (totalQ > 0 ? Math.round((rawScore / totalQ) * 100) : 0));
+            const title = r.meta_data?.exam_title || r.title || `Paper #${idx + 1}`;
+            const dateStr = r.submitted_at ? new Date(r.submitted_at).toLocaleDateString('si-LK', { month: 'short', day: 'numeric' }) : '';
+            const attempt = r.meta_data?.attempt_number || 1;
+            return {
+              id: r.id || `exam_${idx}`,
+              index: idx + 1,
+              title,
+              score: rawScore,
+              totalQuestions: totalQ,
+              percentage: Math.min(100, Math.max(0, perc)),
+              dateStr,
+              attempt,
+              submittedAt: r.submitted_at
+            };
+          });
+
+        const totalFaced = chronologicalExams.length;
+        const allPercs = chronologicalExams.map(e => e.percentage);
+        const avgPerc = allPercs.length > 0 ? Math.round(allPercs.reduce((a, b) => a + b, 0) / allPercs.length) : 0;
+        const bestPerc = allPercs.length > 0 ? Math.max(...allPercs) : 0;
+        const latestPerc = allPercs.length > 0 ? allPercs[allPercs.length - 1] : 0;
+
+        const getStudentLevel = (avg: number) => {
+          if (avg >= 75) return {
+            badge: '🌟 විශිෂ්ඨ සාමාර්ථයක් (Distinction - A)',
+            desc: 'ඉහළම දක්ෂතාවයක සිටී! මෙම ලකුණු මට්ටම නොකඩවා පවත්වා ගන්න.',
+            color: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+          };
+          if (avg >= 65) return {
+            badge: '⭐ ඉතා හොඳ සාමාර්ථයක් (Very Good - B)',
+            desc: 'ඉතා හොඳ මට්ටමක සිටී. A සාමාර්ථයක් ඉලක්ක කර තව පුහුණු වන්න.',
+            color: 'bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30'
+          };
+          if (avg >= 50) return {
+            badge: '🎯 සාමාන්‍ය සාමාර්ථයක් (Credit / Pass - C)',
+            desc: 'සතුටුදායක මට්ටමක සිටී. තවත් විභාග පුහුණු වී B සහ A මට්ටම් කරා යන්න.',
+            color: 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/30'
+          };
+          return {
+            badge: '📈 පුහුණුව අවශ්‍යයි (Needs Improvement)',
+            desc: 'නැවත නැවත පේපර් පුහුණු වී ලකුණු මට්ටම 50% ඉක්මවා ඉහළ දමා ගන්න.',
+            color: 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+          };
+        };
+
+        const currentLevel = getStudentLevel(avgPerc);
+
+        // Chart coordinates
+        const svgWidth = 840;
+        const svgHeight = 280;
+        const paddingLeft = 55;
+        const paddingRight = 45;
+        const paddingTop = 35;
+        const paddingBottom = 50;
+
+        const chartWidth = svgWidth - paddingLeft - paddingRight;
+        const chartHeight = svgHeight - paddingTop - paddingBottom;
+        const baselineY = paddingTop + chartHeight;
+
+        const yForPerc = (perc: number) => {
+          return paddingTop + chartHeight - (perc / 100) * chartHeight;
+        };
+
+        const xForIndex = (idx: number) => {
+          if (totalFaced <= 1) return paddingLeft + chartWidth / 2;
+          return paddingLeft + (idx / (totalFaced - 1)) * chartWidth;
+        };
+
+        const points = chronologicalExams.map((e, idx) => ({
+          x: xForIndex(idx),
+          y: yForPerc(e.percentage),
+          data: e
+        }));
+
+        let linePath = '';
+        let areaPath = '';
+
+        if (points.length === 1) {
+          linePath = `M ${points[0].x - 40},${points[0].y} L ${points[0].x + 40},${points[0].y}`;
+          areaPath = `M ${points[0].x - 40},${points[0].y} L ${points[0].x + 40},${points[0].y} L ${points[0].x + 40},${baselineY} L ${points[0].x - 40},${baselineY} Z`;
+        } else if (points.length > 1) {
+          linePath = points.reduce((acc, curr, idx) => {
+            if (idx === 0) return `M ${curr.x},${curr.y}`;
+            return `${acc} L ${curr.x},${curr.y}`;
+          }, '');
+
+          areaPath = `${linePath} L ${points[points.length - 1].x},${baselineY} L ${points[0].x},${baselineY} Z`;
+        }
+
+        return (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-sm space-y-6">
+            
+            {/* Header & Badges */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-5">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                    <TrendingUp size={18} />
+                  </div>
+                  <h4 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    ඔබගේ විභාග ප්‍රගති ප්‍රස්ථාරය (Performance Progress Chart)
+                  </h4>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xl">
+                  X-අක්ෂයෙන් ඔබ මුහුණ දුන් සියලුම විභාග පත්‍රිකාද, Y-අක්ෂයෙන් ඔබ ලබාගත් ලකුණු ප්‍රතිශතයද (0% - 100%) පෙන්නුම් කරයි.
+                </p>
+              </div>
+
+              {/* Student Level Indicator */}
+              <div className={`p-3 rounded-2xl border flex items-center gap-3 ${currentLevel.color}`}>
+                <div className="space-y-0.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider block opacity-80">
+                    වත්මන් මට්ටම (Current Grade Status)
+                  </span>
+                  <div className="font-black text-xs sm:text-sm">{currentLevel.badge}</div>
+                  <p className="text-[10px] opacity-90 max-w-xs">{currentLevel.desc}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Stat Tiles */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                <span className="text-[10px] font-bold text-slate-500 block uppercase">මුහුණ දුන් විභාග</span>
+                <span className="text-2xl font-black font-mono text-slate-900 dark:text-white">{totalFaced}</span>
+                <span className="text-[10px] text-slate-400 block mt-0.5">Completed Papers</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20">
+                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 block uppercase">සාමාන්‍ය ලකුණ</span>
+                <span className="text-2xl font-black font-mono text-blue-700 dark:text-blue-300">{avgPerc}%</span>
+                <span className="text-[10px] text-blue-500/80 block mt-0.5">Overall Average</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 block uppercase">ඉහළම ලකුණ</span>
+                <span className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-300">{bestPerc}%</span>
+                <span className="text-[10px] text-emerald-500/80 block mt-0.5">Personal Best</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/20">
+                <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 block uppercase">අවසන් ලකුණ</span>
+                <span className="text-2xl font-black font-mono text-purple-700 dark:text-purple-300">{latestPerc}%</span>
+                <span className="text-[10px] text-purple-500/80 block mt-0.5">Latest Attempt</span>
+              </div>
+            </div>
+
+            {/* Interactive SVG Chart or Empty Notice */}
+            {totalFaced === 0 ? (
+              <div className="p-10 text-center rounded-2xl bg-slate-50 dark:bg-slate-950 border border-dashed border-slate-300 dark:border-slate-800 space-y-2">
+                <BarChart3 className="mx-auto text-slate-400" size={32} />
+                <p className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                  ඔබ තවමත් කිසිදු විභාගයකට පෙනී සිට නොමැත.
+                </p>
+                <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                  පහත ඇති Live විභාග වලට සහභාගී වී අවසන් කළ පසු ඔබගේ සම්පූර්ණ ප්‍රගති ප්‍රස්ථාරය මෙහි ස්වයංක්‍රීයව දිස්වේ.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative overflow-x-auto bg-slate-50/80 dark:bg-slate-950/80 p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+                  <svg
+                    viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+                    className="w-full h-auto min-w-[650px] overflow-visible select-none font-sans"
+                  >
+                    <defs>
+                      <linearGradient id="examProgressGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.35" />
+                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                      </linearGradient>
+                      <linearGradient id="lineGrad" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#3b82f6" />
+                        <stop offset="50%" stopColor="#6366f1" />
+                        <stop offset="100%" stopColor="#10b981" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Y-Axis Grid Lines & Percentage Labels */}
+                    {[100, 75, 50, 25, 0].map(val => {
+                      const yPos = yForPerc(val);
+                      const isPassingLine = val === 50;
+                      return (
+                        <g key={val}>
+                          <line
+                            x1={paddingLeft}
+                            y1={yPos}
+                            x2={svgWidth - paddingRight}
+                            y2={yPos}
+                            stroke={isPassingLine ? '#f59e0b' : 'currentColor'}
+                            strokeDasharray={isPassingLine ? '4 4' : '2 3'}
+                            className={isPassingLine ? 'opacity-50' : 'text-slate-300 dark:text-slate-800 opacity-70'}
+                            strokeWidth={isPassingLine ? 1.5 : 1}
+                          />
+                          <text
+                            x={paddingLeft - 10}
+                            y={yPos + 4}
+                            textAnchor="end"
+                            fontSize="11"
+                            fontWeight="bold"
+                            className={isPassingLine ? 'fill-amber-500 font-mono font-black' : 'fill-slate-400 font-mono'}
+                          >
+                            {val}%
+                          </text>
+                          {isPassingLine && (
+                            <text
+                              x={svgWidth - paddingRight + 5}
+                              y={yPos + 3}
+                              fontSize="9"
+                              fontWeight="bold"
+                              className="fill-amber-500 font-mono"
+                            >
+                              Pass (50%)
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+
+                    {/* X-Axis Baseline */}
+                    <line
+                      x1={paddingLeft}
+                      y1={baselineY}
+                      x2={svgWidth - paddingRight}
+                      y2={baselineY}
+                      stroke="currentColor"
+                      className="text-slate-400 dark:text-slate-700"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Gradient Area Fill under line */}
+                    {areaPath && (
+                      <path
+                        d={areaPath}
+                        fill="url(#examProgressGradient)"
+                      />
+                    )}
+
+                    {/* Main Trend Line */}
+                    {linePath && (
+                      <path
+                        d={linePath}
+                        fill="none"
+                        stroke="url(#lineGrad)"
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    )}
+
+                    {/* Data Points on Line */}
+                    {points.map((pt, idx) => {
+                      const isSelected = selectedChartPoint?.id === pt.data.id;
+                      const isPass = pt.data.percentage >= 50;
+                      const isHigh = pt.data.percentage >= 75;
+
+                      return (
+                        <g 
+                          key={pt.data.id} 
+                          className="cursor-pointer group"
+                          onClick={() => setSelectedChartPoint(pt.data)}
+                        >
+                          {/* Pulsing glow if selected */}
+                          {isSelected && (
+                            <circle
+                              cx={pt.x}
+                              cy={pt.y}
+                              r="14"
+                              fill="#3b82f6"
+                              opacity="0.25"
+                              className="animate-ping"
+                            />
+                          )}
+
+                          {/* Outer circle */}
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={isSelected ? '8' : '6.5'}
+                            fill={isHigh ? '#10b981' : isPass ? '#3b82f6' : '#ef4444'}
+                            stroke="#ffffff"
+                            strokeWidth="2.5"
+                            className="transition-all duration-150 drop-shadow-md group-hover:r-8"
+                          />
+
+                          {/* Value label above point */}
+                          <text
+                            x={pt.x}
+                            y={pt.y - 12}
+                            textAnchor="middle"
+                            fontSize="11"
+                            fontWeight="900"
+                            className="fill-slate-800 dark:fill-white font-mono"
+                          >
+                            {pt.data.percentage}%
+                          </text>
+
+                          {/* X-Axis Label below (Paper Name & Index) */}
+                          <text
+                            x={pt.x}
+                            y={baselineY + 18}
+                            textAnchor="middle"
+                            fontSize="11"
+                            fontWeight="bold"
+                            className={isSelected ? 'fill-blue-500 font-mono font-black' : 'fill-slate-600 dark:fill-slate-400 font-mono'}
+                          >
+                            P.{pt.data.index}
+                          </text>
+
+                          {pt.data.dateStr && (
+                            <text
+                              x={pt.x}
+                              y={baselineY + 32}
+                              textAnchor="middle"
+                              fontSize="9"
+                              className="fill-slate-400 font-mono"
+                            >
+                              {pt.data.dateStr}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+
+                {/* Selected Point Detail Card / Tooltip Info */}
+                {selectedChartPoint && (
+                  <div className="p-3.5 bg-blue-500/10 border border-blue-500/30 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-blue-600 text-white rounded-xl text-xs font-black font-mono">
+                        P.{selectedChartPoint.index}
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-black text-slate-900 dark:text-white">
+                          {selectedChartPoint.title}
+                        </h5>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                          {selectedChartPoint.submittedAt ? new Date(selectedChartPoint.submittedAt).toLocaleString() : ''}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-500 block uppercase font-bold">ලකුණු</span>
+                        <span className="text-xs font-black font-mono text-slate-900 dark:text-white">
+                          {selectedChartPoint.score} / {selectedChartPoint.totalQuestions}
+                        </span>
+                      </div>
+
+                      <div className={`px-3 py-1 rounded-xl font-mono font-black text-sm border ${
+                        selectedChartPoint.percentage >= 75
+                          ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                          : selectedChartPoint.percentage >= 50
+                          ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30'
+                          : 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                      }`}>
+                        {selectedChartPoint.percentage}%
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedChartPoint(null)}
+                        className="text-xs text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {/* =======================================================================
           SECTION 1: ACTIVE PUSHED LIVE EXAMS (ලෙක්චර පුෂ් කරන ලද සජීවී විභාග)
@@ -1034,32 +1561,65 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                 <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-12 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-800">
                   
                   {/* Left Pane: Question Paper (Interactive CBT Form A or Google Drive PDF Form B) */}
-                  <div className="p-4 md:col-span-7 lg:col-span-8 flex flex-col h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/50">
+                  <div className="p-3 sm:p-4 md:col-span-7 lg:col-span-8 flex flex-col h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/50">
                     {hasQuestionsArray && currentQ ? (
                       /* Form A Interactive CBT Question View */
-                      <div className="flex flex-col h-full space-y-4">
+                      <div ref={questionCardRef} className="flex flex-col space-y-4 pb-4">
+                        
+                        {/* Mobile-First Top Question Number Navigation Grid (OMR Sheet) */}
+                        <div className="block md:hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2.5 shadow-sm space-y-2">
+                          <div className="flex items-center justify-between text-[11px] font-bold">
+                            <span className="text-slate-700 dark:text-slate-300">
+                              පිළිතුරු පත්‍රිකාව (OMR Sheet):
+                            </span>
+                            <span className="font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md">
+                              {answeredCount} / {totalQ} සම්පූර්ණයි
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-thin">
+                            {Array.from({ length: totalQ }, (_, i) => i + 1).map(qNum => {
+                              const isAnswered = examAnswers[qNum] !== undefined;
+                              const selectedOption = examAnswers[qNum];
+                              const isCurrent = activeQuestionIndex === (qNum - 1);
+                              return (
+                                <button
+                                  key={qNum}
+                                  type="button"
+                                  onClick={() => setActiveQuestionIndex(qNum - 1)}
+                                  className={`shrink-0 w-9 h-9 rounded-xl border flex flex-col items-center justify-center font-mono font-black text-xs transition cursor-pointer active:scale-95 ${
+                                    isCurrent
+                                      ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 shadow-md'
+                                      : isAnswered
+                                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                  }`}
+                                >
+                                  <span className="leading-none">{qNum}</span>
+                                  {isAnswered && (
+                                    <span className="text-[9px] opacity-90 leading-none mt-0.5 font-bold">
+                                      ({selectedOption})
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Question Header & Current Progress Badge */}
                         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
                           <span className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-black font-mono">
                             ප්‍රශ්න අංක {activeQuestionIndex + 1} / {totalQ}
                           </span>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              disabled={activeQuestionIndex === 0}
-                              onClick={() => setActiveQuestionIndex(prev => Math.max(0, prev - 1))}
-                              className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
-                            >
-                              ◀ පෙර ප්‍රශ්නය
-                            </button>
-                            <button
-                              type="button"
-                              disabled={activeQuestionIndex >= totalQ - 1}
-                              onClick={() => setActiveQuestionIndex(prev => Math.min(totalQ - 1, prev + 1))}
-                              className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-40 cursor-pointer"
-                            >
-                              ඊළඟ ප්‍රශ්නය ▶
-                            </button>
-                          </div>
+                          {examAnswers[currentQNumber] ? (
+                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                              තෝරාගත් පිළිතුර: ({examAnswers[currentQNumber]})
+                            </span>
+                          ) : (
+                            <span className="text-xs font-medium text-slate-400">
+                              තවමත් පිළිතුරක් තෝරා නැත
+                            </span>
+                          )}
                         </div>
 
                         {/* Question Text */}
@@ -1069,13 +1629,13 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                           </p>
                         </div>
 
-                        {/* Attached Image Preview if available */}
+                        {/* Attached Image Preview (Responsive max-height so it never overflows or blocks viewport) */}
                         {directImageUrl && (
-                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl flex flex-col items-center justify-center">
+                          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 sm:p-3.5 rounded-2xl flex flex-col items-center justify-center">
                             <img
                               src={directImageUrl}
                               alt={`Question ${activeQuestionIndex + 1} Diagram`}
-                              className="w-full max-w-2xl max-h-[520px] object-contain rounded-xl shadow-sm"
+                              className="max-h-48 sm:max-h-64 md:max-h-[380px] w-auto max-w-full object-contain mx-auto rounded-xl shadow-sm"
                               loading="eager"
                               onError={(e) => {
                                 console.warn('Image failed to load:', directImageUrl);
@@ -1085,7 +1645,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                         )}
 
                         {/* Interactive Option Selector on Question Card */}
-                        <div className="space-y-2 mt-auto pt-2">
+                        <div className="space-y-2 pt-1">
                           <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
                             මෙම ප්‍රශ්නය සඳහා ඔබගේ පිළිතුර තෝරන්න:
                           </span>
@@ -1114,6 +1674,37 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                               );
                             })}
                           </div>
+                        </div>
+
+                        {/* Navigation Buttons: Prev & Next located BELOW answer options as requested */}
+                        <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            disabled={activeQuestionIndex === 0}
+                            onClick={() => setActiveQuestionIndex(prev => Math.max(0, prev - 1))}
+                            className="px-4 py-2.5 text-xs font-bold rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-750 disabled:opacity-40 cursor-pointer shadow-sm flex items-center gap-1.5 transition active:scale-95"
+                          >
+                            ◀ පෙර ප්‍රශ්නය (Previous)
+                          </button>
+
+                          {activeQuestionIndex < totalQ - 1 ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveQuestionIndex(prev => Math.min(totalQ - 1, prev + 1))}
+                              className="px-5 py-2.5 text-xs font-black rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                            >
+                              <span>ඊළඟ ප්‍රශ්නය (Next) ▶</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmSubmitModalOpen(true)}
+                              className="px-5 py-2.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                            >
+                              <Send size={14} />
+                              <span>විභාගය Submit කරන්න</span>
+                            </button>
+                          )}
                         </div>
 
                       </div>
@@ -1564,7 +2155,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                       return (
                         <div 
                           key={qIdx} 
-                          className={`p-4 rounded-2xl border ${
+                          className={`pdf-question-card p-4 rounded-2xl border ${
                             isCorrect 
                               ? 'border-emerald-300 bg-emerald-50/30' 
                               : 'border-rose-300 bg-rose-50/20'
@@ -1662,7 +2253,7 @@ const OnlineExamsHistory: React.FC<Props> = ({ currentStudent }) => {
                     Official System Generated Record • Tharaka Amarasinghe Physics • LMS Verified
                   </p>
                   <p className="text-[10px]">
-                    Watermark: SMART PHYSICS THARAKA AMARASINGHE &bull; Generated on {new Date().toLocaleString()}
+                    SMART PHYSICS &bull; THARAKA AMARASINGHE &bull; Generated on {new Date().toLocaleString()}
                   </p>
                 </div>
 

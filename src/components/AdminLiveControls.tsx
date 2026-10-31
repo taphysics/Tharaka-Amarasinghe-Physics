@@ -363,7 +363,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
         await supabase.from('scheduled_lives').update(updatePayload).eq('id', liveId);
         await supabase.from('exams').update({ status: 'active', exam_push_timestamp: nowIso, exam_retake_timestamp: nowIso, exam_push_mode: 'allow_retake' }).eq('id', examId);
         try { await supabase.from('ubt_exams').update({ status: 'active', exam_push_timestamp: nowIso, exam_retake_timestamp: nowIso, exam_push_mode: 'allow_retake' }).eq('id', examId); } catch (e) {}
-        try { await supabase.from('exam_results').delete().eq('exam_id', examId); } catch (e) {}
+        // Retain previous marks so student's past performance is safely preserved
         emitRealtimeEvent('ubt_exam_updated', { id: examId, status: 'active', allowRetake: true });
         emitRealtimeEvent('exam_created', { id: examId });
         alert("විභාගය දැනටමත් කළ සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි සියලු දෙනාටම Re-Push කරන ලදී!");
@@ -583,15 +583,15 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
   };
 
   return (
-    <div className="w-full bg-slate-950 min-h-screen text-white p-4 md:p-8 font-sans">
+    <div className="w-full bg-slate-50 dark:bg-slate-950 min-h-screen text-slate-900 dark:text-white p-4 md:p-8 font-sans">
       
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
         <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-blue-500 flex items-center gap-2">
+          <h1 className="text-2xl md:text-3xl font-extrabold text-blue-600 dark:text-blue-500 flex items-center gap-2">
             <Video size={32} className="animate-pulse" /> Live Administration Dashboard
           </h1>
-          <p className="text-slate-400 text-sm mt-1">සූම් පන්ති සහ ප්‍රශ්න පත්‍ර කළමනාකරණය.</p>
+          <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">සූම් පන්ති සහ ප්‍රශ්න පත්‍ර කළමනාකරණය.</p>
         </div>
         <button 
           onClick={() => {
@@ -639,10 +639,10 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
       )}
 
       {/* Main Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-950 text-slate-400 text-xs uppercase font-mono border-b border-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-400 text-xs uppercase font-mono border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="p-4">Class Information</th>
                 <th className="p-4">Target Groups</th>
@@ -651,7 +651,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 <th className="p-4 text-center">Core Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800 text-sm">
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-sm">
               {lives
                 .filter(live => {
                   if (!isLecturer) return true;
@@ -670,13 +670,13 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 const isClassEnded = live.status === 'ended';
 
                 return (
-                <tr key={live.id} className="hover:bg-slate-900/50 transition">
+                <tr key={live.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition">
                   <td className="p-4">
-                    <div className="font-bold text-white text-base">{live.title}</div>
-                    <div className="text-slate-400 text-xs mt-1 flex items-center gap-2">
+                    <div className="font-bold text-slate-900 dark:text-white text-base">{live.title}</div>
+                    <div className="text-slate-500 dark:text-slate-400 text-xs mt-1 flex items-center gap-2">
                       <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time}
                     </div>
-                    <div className="mt-2 text-[11px] font-mono text-emerald-400 border border-emerald-500/20 bg-emerald-500/5 w-fit px-2 py-0.5 rounded">
+                    <div className="mt-2 text-[11px] font-mono text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/5 w-fit px-2 py-0.5 rounded font-bold">
                       Target Month: {live.target_month || 'N/A'}
                     </div>
                   </td>
@@ -684,7 +684,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                   <td className="p-4">
                     <div className="flex flex-wrap gap-1 max-w-[180px]">
                       {live.target_classes?.map((c: string) => (
-                        <span key={c} className="bg-slate-950 text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-800">{c}</span>
+                        <span key={c} className="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-300 px-2 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-800 font-semibold">{c}</span>
                       ))}
                     </div>
                   </td>
@@ -692,10 +692,10 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                   {/* LIVE EXAM PANEL COLUMN */}
                   <td className="p-4">
                     {attachedExam ? (
-                      <div className="flex flex-col gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-w-xs">
-                        <div className="font-bold text-slate-200 text-xs flex justify-between items-center gap-2">
-                          <span className="truncate text-amber-500 font-medium">{attachedExam.title}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded shrink-0 ${isExamPushedLive ? 'text-emerald-400 bg-emerald-400/10 border border-emerald-500/20 animate-pulse' : 'text-slate-500 bg-slate-900'}`}>
+                      <div className="flex flex-col gap-2 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 max-w-xs">
+                        <div className="font-bold text-slate-800 dark:text-slate-200 text-xs flex justify-between items-center gap-2">
+                          <span className="truncate text-amber-600 dark:text-amber-500 font-medium">{attachedExam.title}</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded shrink-0 ${isExamPushedLive ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 border border-emerald-300 dark:border-emerald-500/20 font-bold animate-pulse' : 'text-slate-500 bg-slate-200 dark:bg-slate-900'}`}>
                             {isExamPushedLive ? 'PUSHED' : 'PENDING'}
                           </span>
                         </div>
@@ -705,7 +705,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                               <button
                                 disabled={isClassEnded}
                                 onClick={() => handlePushExamToStudents(live.id, attachedExam!.id, 'retract')}
-                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-red-500 hover:bg-red-600 text-white'}`}
+                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-200 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-800' : 'bg-red-600 hover:bg-red-500 text-white'}`}
                                 title="විභාගය අත්හිටුවන්න (Retract)"
                               >
                                 <EyeOff size={12}/> Retract
@@ -714,7 +714,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                               <button
                                 disabled={isClassEnded}
                                 onClick={() => handlePushExamToStudents(live.id, attachedExam!.id, 'repush_pending')}
-                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}
+                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-200 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-800' : 'bg-amber-600 hover:bg-amber-500 text-white'}`}
                                 title="විභාගය තවමත් නොකළ සිසුන්ට පමණක් නැවත Push කරන්න"
                               >
                                 <RotateCcw size={12}/> Re-push (නොකළ අයට)
@@ -723,7 +723,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                               <button
                                 disabled={isClassEnded}
                                 onClick={() => handlePushExamToStudents(live.id, attachedExam!.id, 'repush_all')}
-                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
+                                className={`text-[11px] px-2 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-200 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-800' : 'bg-purple-600 hover:bg-purple-500 text-white'}`}
                                 title="විභාගය කළ සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි සියලු දෙනාටම Re-push කරන්න"
                               >
                                 <Send size={12}/> Re-push (සියලු අයට / Retake)
@@ -733,7 +733,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                             <button
                               disabled={isClassEnded}
                               onClick={() => handlePushExamToStudents(live.id, attachedExam!.id, 'push_initial')}
-                              className={`text-[11px] px-2.5 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                              className={`text-[11px] px-2.5 py-1 rounded font-bold transition flex items-center gap-1 ${isClassEnded ? 'bg-slate-200 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
                             >
                               <Send size={12}/> Push Paper Live
                             </button>
@@ -741,7 +741,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           
                           {isLecturer && !canLecturerEdit(attachedExam?.created_at || live.created_at) ? (
                             <span 
-                              className="text-[10px] text-slate-500 italic py-1 px-1.5 bg-slate-900 border border-slate-800 rounded"
+                              className="text-[10px] text-slate-500 italic py-1 px-1.5 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded"
                               title="පැය 1 ඉක්මවා ඇති බැවින් සංස්කරණය කළ හැක්කේ සුපර් ඇඩ්මින් / ඇඩ්මින් / මැනේජර් මඟින් පමණි."
                             >
                               🔒 Locked (&gt;1h)
@@ -765,7 +765,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                                 });
                                 setExamModalOpen(true);
                               }}
-                              className={`text-[11px] px-2 py-1 rounded flex items-center gap-1 border ${isClassEnded ? 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border-slate-700'}`}
+                              className={`text-[11px] px-2 py-1 rounded flex items-center gap-1 border ${isClassEnded ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800 cursor-not-allowed' : 'bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-700 dark:text-amber-400 border-slate-200 dark:border-slate-700 shadow-xs'}`}
                             >
                               <Edit size={12}/> Edit Exam
                             </button>
@@ -775,7 +775,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           <button
                             type="button"
                             onClick={() => handleOpenExamStatus(live, attachedExam)}
-                            className="text-[11px] px-2.5 py-1 rounded bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 border border-blue-500/40 font-bold flex items-center gap-1 transition cursor-pointer"
+                            className="text-[11px] px-2.5 py-1 rounded bg-blue-50 hover:bg-blue-100 dark:bg-blue-600/30 dark:hover:bg-blue-600/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/40 font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
                             title="විභාගය කළ සහ නොකළ සිසුන්ගේ ලැයිස්තුව බලන්න"
                           >
                             <UserCheck size={12} /> සිසුන්ගේ තත්ත්වය (Status)
@@ -799,7 +799,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           });
                           setExamModalOpen(true);
                         }}
-                        className={`px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 border ${isClassEnded ? 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed' : 'bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border-amber-500/30'}`}
+                        className={`px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 border ${isClassEnded ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800 cursor-not-allowed' : 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-600/20 dark:hover:bg-amber-600/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/30 shadow-xs'}`}
                       >
                         <Plus size={12}/> Create & Attach Exam
                       </button>
@@ -809,9 +809,9 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                   {/* ZOOM STREAM CONTROL & WHATSAPP ALERT */}
                   <td className="p-4">
                     <div className="flex flex-col gap-1.5">
-                      {live.status === 'scheduled' && <span className="text-slate-400 bg-slate-800 px-2 py-0.5 rounded w-fit text-xs border border-slate-700">Scheduled</span>}
-                      {live.status === 'live' && <span className="text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> ZOOM LIVE</span>}
-                      {isClassEnded && <span className="text-slate-500 bg-slate-950 px-2 py-0.5 rounded w-fit text-xs border border-slate-900">Ended</span>}
+                      {live.status === 'scheduled' && <span className="text-slate-700 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded w-fit text-xs border border-slate-200 dark:border-slate-700 font-semibold">Scheduled</span>}
+                      {live.status === 'live' && <span className="text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-2 py-0.5 rounded w-fit text-xs font-bold flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span> ZOOM LIVE</span>}
+                      {isClassEnded && <span className="text-slate-500 dark:text-slate-500 bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded w-fit text-xs border border-slate-200 dark:border-slate-900">Ended</span>}
 
                       <div className="flex flex-col gap-1 mt-0.5">
                         
@@ -819,19 +819,19 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                         <button 
                           disabled={isClassEnded}
                           onClick={() => handleTeacherWhatsAppNotify(live)}
-                          className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
+                          className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-200 dark:border-slate-800' : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}
                         >
                           <UserCheck size={12}/> Send Host Link to Teacher
                         </button>
 
                         {/* START/END ZOOM BUTTON - Starts Zoom with Host Link and Pushes to Students */}
                         {live.status === 'scheduled' && (
-                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white text-center transition">
+                          <a href={live.zoom_start_url} target="_blank" rel="noreferrer" onClick={() => handleStatusChange(live.id, 'live')} className="bg-blue-600 hover:bg-blue-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white text-center transition shadow-xs">
                             <Play size={12} className="mr-1"/> Start Zoom & Push to Students
                           </a>
                         )}
                         {live.status === 'live' && (
-                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white transition">
+                          <button onClick={() => handleStatusChange(live.id, 'ended')} className="bg-red-600 hover:bg-red-500 text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center text-white transition shadow-xs">
                             <Square size={12} className="mr-1"/> End Class
                           </button>
                         )}
@@ -840,7 +840,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                         <button 
                           disabled={isClassEnded}
                           onClick={() => handleWhatsAppNotify(live)}
-                          className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
+                          className={`text-[11px] px-3 py-1.5 rounded font-bold flex items-center justify-center gap-1 transition shadow-md ${isClassEnded ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-200 dark:border-slate-800' : 'bg-emerald-600 hover:bg-emerald-500 text-white'}`}
                         >
                           <MessageCircle size={12}/> Send Students Alert
                         </button>
@@ -853,7 +853,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                     <div className="flex justify-center items-center gap-2">
                       {isLecturer && !canLecturerEdit(live.created_at) ? (
                         <span 
-                          className="text-[10px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-1 rounded inline-block"
+                          className="text-[10px] bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 px-2 py-1 rounded inline-block"
                           title="පැය 1 ඉක්මවා ඇති බැවින් සංස්කරණය/මැකීම කළ හැක්කේ ප්‍රධාන පරිපාලක (Super Admin / Admin / Manager) මඟින් පමණි."
                         >
                           🔒 අගුළුලා ඇත (&gt;1h)
@@ -880,7 +880,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                               setCurrentLiveId(live.id); 
                               setIsModalOpen(true); 
                             }} 
-                            className={`p-2 rounded border transition ${isClassEnded ? 'bg-slate-900 text-slate-600 border-slate-800 cursor-not-allowed' : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border-slate-700'}`}
+                            className={`p-2 rounded-xl border transition ${isClassEnded ? 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800 cursor-not-allowed' : 'bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-700 dark:text-amber-400 border-slate-200 dark:border-slate-700 shadow-xs'}`}
                             title={isClassEnded ? "පන්තිය අවසන් බැවින් සංස්කරණය කළ නොහැක" : isLecturer ? `Edit Class (${getLecturerRemainingMinutes(live.created_at)} mins left)` : "Edit Class"}
                           >
                             <Edit size={16} />
@@ -888,7 +888,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           
                           <button 
                             onClick={() => setDeleteTarget(live)} 
-                            className="p-2 bg-slate-800 hover:bg-rose-950 text-rose-400 hover:text-rose-200 rounded border border-slate-700 hover:border-rose-700 transition cursor-pointer" 
+                            className="p-2 bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950 text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-200 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-700 transition cursor-pointer shadow-xs" 
                             title={isLecturer ? `Delete Class (${getLecturerRemainingMinutes(live.created_at)} mins left)` : "Delete Class"}
                           >
                             <Trash2 size={16} />
@@ -916,43 +916,43 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
       {/* --- LIVE CLASS SCHEDULING MODAL --- */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[50] p-4">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative">
-            <h2 className="text-xl font-bold text-white mb-4 border-b border-slate-800 pb-2">
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-[50] p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative text-slate-900 dark:text-white">
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4 border-b border-slate-200 dark:border-slate-800 pb-2">
               {formData.id ? 'Edit Live Session' : 'Schedule New Live Zoom Class'}
             </h2>
             <form onSubmit={handleSaveLive} className="space-y-4">
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Class Topic</label>
-                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 text-sm" />
+                <label className="block text-xs font-mono text-slate-600 dark:text-slate-400 uppercase mb-1">Class Topic</label>
+                <input required type="text" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 text-sm" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Date</label>
-                  <input required type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm" />
+                  <label className="block text-xs font-mono text-slate-600 dark:text-slate-400 uppercase mb-1">Date</label>
+                  <input required type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm" />
                 </div>
                 <div>
-                  <label className="block text-xs font-mono text-slate-400 uppercase mb-1">Time</label>
-                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm" />
+                  <label className="block text-xs font-mono text-slate-600 dark:text-slate-400 uppercase mb-1">Time</label>
+                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-emerald-400 uppercase mb-1">Target Month</label>
-                <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-950 border border-emerald-800 rounded-xl p-3 text-white text-sm font-bold" />
+                <label className="block text-xs font-mono text-emerald-700 dark:text-emerald-400 uppercase mb-1">Target Month</label>
+                <input required type="month" value={formData.target_month} onChange={e => setFormData({...formData, target_month: e.target.value})} className="w-full bg-slate-50 dark:bg-slate-950 border border-emerald-300 dark:border-emerald-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm font-bold" />
               </div>
 
               <div>
-                <label className="block text-xs font-mono text-slate-400 uppercase mb-2">
+                <label className="block text-xs font-mono text-slate-600 dark:text-slate-400 uppercase mb-2">
                   Select Target Classes (අනිවාර්යයි)
                   {isLecturer && (
-                    <span className="text-indigo-400 text-[10px] ml-2 font-sans font-bold">
+                    <span className="text-indigo-600 dark:text-indigo-400 text-[10px] ml-2 font-sans font-bold">
                       (ඔබ ලියාපදිංචි වී ඇති පන්ති පමණි)
                     </span>
                   )}
                 </label>
-                <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-xl border border-slate-800 max-h-36 overflow-y-auto">
+                <div className="grid grid-cols-2 gap-2 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 max-h-36 overflow-y-auto">
                   {classConfigs
                     .filter((cfg) => {
                       if (!isLecturer) return true;
@@ -967,7 +967,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                       const actualClassType = cfg.class_types || cfg.class_type;
                       if (!actualClassType) return null; 
                       return (
-                        <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:text-white transition">
+                        <label key={cfg.id} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:text-slate-900 dark:hover:text-white transition">
                           <input 
                             type="checkbox" 
                             checked={formData.target_classes.includes(actualClassType)} 
@@ -983,35 +983,35 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
               {/* Zoom Meeting Links (Auto-generated in background, optional advanced edit) */}
               {formData.id && (formData.zoom_start_url || formData.zoom_join_url) && (
-                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold text-blue-400">Zoom Meeting Details</span>
+                    <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400">Zoom Meeting Details</span>
                     <button
                       type="button"
                       disabled={isGeneratingZoom}
                       onClick={handleRegenerateZoom}
-                      className="px-2.5 py-1 bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 rounded-lg text-xs flex items-center gap-1 transition font-sans cursor-pointer"
+                      className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 dark:bg-blue-600/30 dark:hover:bg-blue-600/50 text-blue-700 dark:text-blue-200 border border-blue-200 dark:border-blue-500/40 rounded-lg text-xs flex items-center gap-1 transition font-sans cursor-pointer shadow-xs"
                     >
                       <RotateCcw size={11} className={isGeneratingZoom ? "animate-spin" : ""} />
                       {isGeneratingZoom ? "Generating..." : "🔄 Re-generate Zoom"}
                     </button>
                   </div>
                   <div className="flex flex-col gap-1 text-[11px] font-mono">
-                    <div className="text-emerald-400 flex items-center justify-between">
+                    <div className="text-emerald-700 dark:text-emerald-400 flex items-center justify-between">
                       <span>Student Join Link:</span>
-                      <span className="text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_join_url || formData.link}</span>
+                      <span className="text-slate-600 dark:text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_join_url || formData.link}</span>
                     </div>
-                    <div className="text-amber-400 flex items-center justify-between">
+                    <div className="text-amber-700 dark:text-amber-400 flex items-center justify-between">
                       <span>Teacher Host Link:</span>
-                      <span className="text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_start_url}</span>
+                      <span className="text-slate-600 dark:text-slate-400 text-[10px] truncate max-w-xs">{formData.zoom_start_url}</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-4 mt-6">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-sm">Cancel</button>
-                <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl text-sm font-bold">
+              <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-slate-200 dark:border-slate-800">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer">Cancel</button>
+                <button type="submit" disabled={isLoading} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-md shadow-blue-900/30 transition cursor-pointer">
                   {formData.id ? 'Update Class' : 'Schedule Session'}
                 </button>
               </div>
@@ -1022,64 +1022,64 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
       {/* --- EXAM CREATION & EDIT MODAL --- */}
       {examModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="bg-slate-900 border border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl">
-            <h2 className="text-xl font-bold text-white mb-6 border-b border-slate-800 pb-2 flex items-center gap-2">
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/20 p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl text-slate-900 dark:text-white">
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 border-b border-slate-200 dark:border-slate-800 pb-2 flex items-center gap-2">
               <FileText className="text-amber-500" /> Create / Edit Online Exam
             </h2>
             
             <form onSubmit={handleSaveExam} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">Exam Title</label>
-                  <input required type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" />
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase mb-1">Exam Title</label>
+                  <input required type="text" value={examData.title} onChange={e => setExamData({...examData, title: e.target.value})} className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm" />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 uppercase mb-1">Google Drive PDF URL</label>
-                  <input required type="url" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/file/d/..." className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" />
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase mb-1">Google Drive PDF URL</label>
+                  <input required type="url" value={examData.pdf_url} onChange={e => setExamData({...examData, pdf_url: e.target.value})} placeholder="https://drive.google.com/file/d/..." className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm" />
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-4 border border-slate-800 rounded-xl">
-                <label className="block text-sm font-bold text-slate-300 mb-3">Exam Duration (කාලය තෝරන්න)</label>
+              <div className="bg-slate-50 dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-xl">
+                <label className="block text-sm font-bold text-slate-800 dark:text-slate-300 mb-3">Exam Duration (කාලය තෝරන්න)</label>
                 <div className="flex gap-4">
                   <div className="flex flex-col">
                     <label className="text-xs text-slate-500 mb-1">Hours</label>
-                    <input type="number" min="0" value={examData.durationHours} onChange={e => setExamData({...examData, durationHours: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                    <input type="number" min="0" value={examData.durationHours} onChange={e => setExamData({...examData, durationHours: Number(e.target.value)})} className="w-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-slate-900 dark:text-white text-center font-bold" />
                   </div>
                   <div className="flex flex-col">
                     <label className="text-xs text-slate-500 mb-1">Minutes</label>
-                    <input type="number" min="0" max="59" value={examData.durationMinutes} onChange={e => setExamData({...examData, durationMinutes: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                    <input type="number" min="0" max="59" value={examData.durationMinutes} onChange={e => setExamData({...examData, durationMinutes: Number(e.target.value)})} className="w-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-slate-900 dark:text-white text-center font-bold" />
                   </div>
                   <div className="flex flex-col">
                     <label className="text-xs text-slate-500 mb-1">Seconds</label>
-                    <input type="number" min="0" max="59" value={examData.durationSeconds} onChange={e => setExamData({...examData, durationSeconds: Number(e.target.value)})} className="w-20 bg-slate-900 border border-slate-700 rounded p-2 text-white text-center" />
+                    <input type="number" min="0" max="59" value={examData.durationSeconds} onChange={e => setExamData({...examData, durationSeconds: Number(e.target.value)})} className="w-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-2 text-slate-900 dark:text-white text-center font-bold" />
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-slate-300 mb-2">Total Questions Count</label>
+                <label className="block text-sm font-bold text-slate-800 dark:text-slate-300 mb-2">Total Questions Count</label>
                 <input 
                   type="number" 
                   min="1" 
                   max="100" 
                   value={examData.total_questions} 
                   onChange={e => setExamData({...examData, total_questions: Number(e.target.value)})} 
-                  className="w-32 bg-slate-950 border border-slate-800 rounded p-3 text-white text-sm" 
+                  className="w-32 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm font-bold" 
                 />
               </div>
 
-              <div className="bg-slate-950 p-4 border border-slate-800 rounded-xl">
-                <label className="block text-sm font-bold text-slate-300 mb-3">Answer Key (නිවැරදි පිළිතුරු)</label>
+              <div className="bg-slate-50 dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-xl">
+                <label className="block text-sm font-bold text-slate-800 dark:text-slate-300 mb-3">Answer Key (නිවැරදි පිළිතුරු)</label>
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 max-h-64 overflow-y-auto p-2">
                   {Array.from({ length: examData.total_questions }, (_, i) => i + 1).map(qNum => (
-                    <div key={qNum} className="flex items-center gap-2 bg-slate-900 p-2 rounded border border-slate-700">
-                      <span className="text-slate-400 font-mono w-6 text-right">{qNum}.</span>
+                    <div key={qNum} className="flex items-center gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                      <span className="text-slate-600 dark:text-slate-400 font-mono w-6 text-right font-bold">{qNum}.</span>
                       <select
                         value={examData.correct_answer[qNum] || ''}
                         onChange={(e) => handleAnswerChange(qNum, Number(e.target.value))}
-                        className="bg-slate-950 border border-slate-800 text-white rounded p-1 w-full text-sm"
+                        className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white rounded-lg p-1 w-full text-sm font-bold"
                         required
                       >
                         <option value="" disabled>-</option>
@@ -1092,9 +1092,9 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-slate-800">
-                <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm transition">Cancel</button>
-                <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-xl text-sm font-bold transition">
+              <div className="flex justify-end gap-3 pt-4 mt-6 border-t border-slate-200 dark:border-slate-800">
+                <button type="button" onClick={() => setExamModalOpen(false)} className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-4 py-2 rounded-xl text-sm font-semibold transition cursor-pointer">Cancel</button>
+                <button type="submit" disabled={isLoading} className="bg-amber-600 hover:bg-amber-500 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-md shadow-amber-900/30 transition cursor-pointer">
                   {examData.id ? 'Update Exam' : 'Save & Attach Exam'}
                 </button>
               </div>
@@ -1105,35 +1105,35 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
       {/* --- ATTENDANCE MODAL --- */}
       {attendanceModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl relative">
-            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl relative text-slate-900 dark:text-white">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Eye className="text-blue-500" /> Exam Results & Attendance
               </h2>
-              <button onClick={() => setAttendanceModalOpen(false)} className="text-slate-400 hover:text-white transition">
-                &times; Close
+              <button onClick={() => setAttendanceModalOpen(false)} className="text-slate-400 hover:text-slate-700 dark:hover:text-white transition cursor-pointer font-bold">
+                ✕ Close
               </button>
             </div>
             
-            <p className="text-slate-300 text-sm mb-4">Class: <span className="font-bold text-emerald-400">{attendanceLiveTitle}</span></p>
+            <p className="text-slate-600 dark:text-slate-300 text-sm mb-4">Class: <span className="font-bold text-emerald-600 dark:text-emerald-400">{attendanceLiveTitle}</span></p>
 
-            <div className="overflow-y-auto flex-1 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="overflow-y-auto flex-1 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
               <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-900 text-slate-400 text-xs uppercase font-mono sticky top-0 border-b border-slate-800">
+                <thead className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 text-xs uppercase font-mono sticky top-0 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="p-4">Student Name (Username)</th>
                     <th className="p-4">Submitted Time</th>
                     <th className="p-4">Score / Marks</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800 text-sm">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                   {attendanceList.length > 0 ? (
                     attendanceList.map((record, index) => (
-                      <tr key={index} className="hover:bg-slate-900/50 transition">
-                        <td className="p-4 font-medium text-slate-200">{record.username}</td>
-                        <td className="p-4 text-slate-400">{new Date(record.submitted_at).toLocaleString()}</td>
-                        <td className="p-4 font-bold text-emerald-400">{record.score}</td>
+                      <tr key={index} className="hover:bg-white dark:hover:bg-slate-900/50 transition">
+                        <td className="p-4 font-bold text-slate-900 dark:text-slate-200">{record.username}</td>
+                        <td className="p-4 text-slate-600 dark:text-slate-400 font-mono text-xs">{new Date(record.submitted_at).toLocaleString()}</td>
+                        <td className="p-4 font-bold text-emerald-600 dark:text-emerald-400 font-mono">{record.score}</td>
                       </tr>
                     ))
                   ) : (
@@ -1147,8 +1147,8 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               </table>
             </div>
 
-            <div className="flex justify-end pt-4 mt-4 border-t border-slate-800">
-              <button onClick={() => setAttendanceModalOpen(false)} className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2 rounded-xl text-sm transition">
+            <div className="flex justify-end pt-4 mt-4 border-t border-slate-200 dark:border-slate-800">
+              <button onClick={() => setAttendanceModalOpen(false)} className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-5 py-2 rounded-xl text-sm font-semibold transition cursor-pointer">
                 Close List
               </button>
             </div>
@@ -1158,21 +1158,21 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
       {/* Dedicated Confirmation Modal for Deleting Live Schedule */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-slate-900 border border-slate-750 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-750 rounded-3xl w-full max-w-md shadow-2xl overflow-hidden relative text-slate-900 dark:text-white">
             <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-rose-500 via-amber-500 to-rose-600" />
             
             {/* Modal Header */}
-            <div className="flex justify-between items-center p-5 border-b border-slate-800">
+            <div className="flex justify-between items-center p-5 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2.5">
-                <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                <div className="p-2.5 rounded-2xl bg-rose-50 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30">
                   <Trash2 size={20} />
                 </div>
                 <div>
-                  <h3 className="font-bold text-white text-base">
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
                     සජීවී පන්තිය මකා දැමීම
                   </h3>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     Delete Scheduled Live Class
                   </p>
                 </div>
@@ -1180,7 +1180,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               <button 
                 type="button"
                 onClick={() => setDeleteTarget(null)} 
-                className="text-slate-400 hover:text-white p-1.5 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
               >
                 ✕
               </button>
@@ -1188,19 +1188,19 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
             {/* Modal Body */}
             <div className="p-6 space-y-4">
-              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-2">
-                <div className="text-sm font-bold text-white flex items-center gap-2">
-                  <Video size={16} className="text-rose-400 shrink-0" />
+              <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
+                <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Video size={16} className="text-rose-500 shrink-0" />
                   <span className="truncate">{deleteTarget.title || 'Live Class'}</span>
                 </div>
-                <div className="flex flex-wrap gap-2 text-xs text-slate-400 pt-1 border-t border-slate-800/80 font-mono">
-                  <span>📅 දිනය: <strong className="text-slate-200">{deleteTarget.date || '-'}</strong></span>
-                  <span>⏰ වේලාව: <strong className="text-slate-200">{deleteTarget.time || '-'}</strong></span>
-                  <span>📚 <strong className="text-blue-300">{deleteTarget.target_class_type || deleteTarget.target_classes?.[0] || 'Class'}</strong></span>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-800/80 font-mono">
+                  <span>📅 දිනය: <strong className="text-slate-900 dark:text-slate-200">{deleteTarget.date || '-'}</strong></span>
+                  <span>⏰ වේලාව: <strong className="text-slate-900 dark:text-slate-200">{deleteTarget.time || '-'}</strong></span>
+                  <span>📚 <strong className="text-indigo-600 dark:text-blue-300">{deleteTarget.target_class_type || deleteTarget.target_classes?.[0] || 'Class'}</strong></span>
                 </div>
               </div>
 
-              <p className="text-xs text-slate-300 leading-relaxed bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl">
+              <p className="text-xs text-rose-700 dark:text-slate-300 leading-relaxed bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 p-3 rounded-xl">
                 ⚠️ මෙම සජීවී පන්තිය, ඊට අදාළ දින දර්ශන සටහන් (Calendar Events) සහ විභාග තොරතුරු දත්ත ගබඩාවෙන් ස්ථිරවම මකා දැමෙනු ඇත.
               </p>
 
@@ -1209,7 +1209,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                   type="button"
                   onClick={() => setDeleteTarget(null)}
                   disabled={isLoading}
-                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer"
+                  className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
                 >
                   අවලංගු කරන්න (Cancel)
                 </button>
@@ -1236,22 +1236,22 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
       {/* --- LIVE EXAM STUDENT COMPLETION STATUS MODAL (Completed vs Pending) --- */}
       {examStatusModalOpen && selectedExamForStatus && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[70] p-3 sm:p-6 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[70] p-3 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden text-slate-900 dark:text-white">
             
             {/* Header */}
-            <div className="p-5 sm:p-6 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-5 sm:p-6 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30">
                     Live Exam Real-time Analytics
                   </span>
-                  <span className="text-xs text-slate-400 font-mono">
+                  <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
                     {selectedLiveForStatus?.target_class_type || selectedLiveForStatus?.target_classes?.[0] || 'Class'}
                   </span>
                 </div>
-                <h3 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
-                  <FileText className="text-amber-400 shrink-0" size={20} />
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <FileText className="text-amber-500 shrink-0" size={20} />
                   <span>{selectedExamForStatus.title}</span>
                 </h3>
               </div>
@@ -1259,14 +1259,14 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               <button
                 type="button"
                 onClick={() => setExamStatusModalOpen(false)}
-                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
+                className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
             {/* Quick Action Re-Push Bar */}
-            <div className="p-4 bg-slate-850 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-4 bg-slate-100 dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -1293,7 +1293,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               <button
                 type="button"
                 onClick={() => handleOpenExamStatus(selectedLiveForStatus, selectedExamForStatus)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center gap-1 cursor-pointer"
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 flex items-center gap-1 cursor-pointer shadow-sm"
               >
                 <RotateCcw size={13} className={loadingExamStatus ? 'animate-spin' : ''} />
                 <span>Refresh</span>
@@ -1301,15 +1301,15 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
             </div>
 
             {/* Search and Tabs Header */}
-            <div className="p-4 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setExamStatusTab('uncompleted')}
                   className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer ${
                     examStatusTab === 'uncompleted'
-                      ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/40 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   <Clock size={14} />
@@ -1321,8 +1321,8 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                   onClick={() => setExamStatusTab('completed')}
                   className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 cursor-pointer ${
                     examStatusTab === 'completed'
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/40 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   <UserCheck size={14} />
@@ -1335,27 +1335,27 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                 placeholder="සිසුවාගේ නම හෝ Username සොයන්න..."
                 value={examStatusSearch}
                 onChange={(e) => setExamStatusSearch(e.target.value)}
-                className="bg-slate-950 text-white px-3 py-1.5 rounded-xl border border-slate-800 text-xs focus:outline-none focus:border-blue-500 w-full sm:w-60"
+                className="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs focus:outline-none focus:border-blue-500 w-full sm:w-60"
               />
             </div>
 
             {/* List Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {loadingExamStatus ? (
-                <div className="p-12 text-center text-slate-400 text-xs">
+                <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                   <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
                   දත්ත පූරණය වෙමින් පවතී...
                 </div>
               ) : examStatusTab === 'uncompleted' ? (
                 // TAB 1: UNCOMPLETED / PENDING STUDENTS
                 uncompletedExamStudents.length === 0 ? (
-                  <div className="p-12 text-center text-emerald-400 bg-emerald-950/20 border border-emerald-800/40 rounded-2xl text-xs font-bold">
+                  <div className="p-12 text-center text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl text-xs font-bold">
                     🎉 සියලුම සිසුන් මෙම විභාගය සම්පූර්ණ කර ඇත! (All enrolled students have completed this exam)
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-800">
-                    <table className="w-full text-left text-xs text-slate-300">
-                      <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                      <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 text-[11px] uppercase font-bold border-b border-slate-200 dark:border-slate-800">
                         <tr>
                           <th className="p-3">#</th>
                           <th className="p-3">සිසුවාගේ නම (Student)</th>
@@ -1365,7 +1365,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           <th className="p-3 text-center">තත්ත්වය (Status)</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-medium">
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-900/60 font-medium">
                         {uncompletedExamStudents
                           .filter(item => {
                             if (!examStatusSearch) return true;
@@ -1375,20 +1375,20 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                             return name.includes(q) || user.includes(q);
                           })
                           .map((item, idx) => (
-                            <tr key={item.student.id || idx} className="hover:bg-slate-800/40 transition">
+                            <tr key={item.student.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                               <td className="p-3 text-slate-500 font-mono">{idx + 1}</td>
-                              <td className="p-3 font-bold text-white">
+                              <td className="p-3 font-bold text-slate-900 dark:text-white">
                                 {item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`.trim() || item.student.username}
                               </td>
-                              <td className="p-3 font-mono text-amber-400">{item.student.username}</td>
-                              <td className="p-3 text-slate-400">
+                              <td className="p-3 font-mono text-amber-600 dark:text-amber-400 font-bold">{item.student.username}</td>
+                              <td className="p-3 text-slate-600 dark:text-slate-400">
                                 {Array.isArray(item.student.class_types) ? item.student.class_types.join(', ') : item.student.class_types || '-'}
                               </td>
-                              <td className="p-3 font-mono text-slate-400">
+                              <td className="p-3 font-mono text-slate-600 dark:text-slate-400">
                                 {item.student.whatsapp || item.student.WhatsApp || item.student.mobile || '-'}
                               </td>
                               <td className="p-3 text-center">
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30">
                                   තවමත් කර නොමැත (Pending)
                                 </span>
                               </td>
@@ -1401,13 +1401,13 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               ) : (
                 // TAB 2: COMPLETED STUDENTS
                 completedExamStudents.length === 0 ? (
-                  <div className="p-12 text-center text-slate-400 bg-slate-950 border border-slate-800 rounded-2xl text-xs">
+                  <div className="p-12 text-center text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs">
                     තවමත් කිසිදු සිසුවෙක් මෙම විභාගය Submit කර නොමැත.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-800">
-                    <table className="w-full text-left text-xs text-slate-300">
-                      <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+                      <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 text-[11px] uppercase font-bold border-b border-slate-200 dark:border-slate-800">
                         <tr>
                           <th className="p-3">#</th>
                           <th className="p-3">සිසුවාගේ නම (Student)</th>
@@ -1417,7 +1417,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                           <th className="p-3">දිනය සහ වේලාව</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-medium">
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-900/60 font-medium">
                         {completedExamStudents
                           .filter(item => {
                             if (!examStatusSearch) return true;
@@ -1427,27 +1427,27 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                             return name.includes(q) || user.includes(q);
                           })
                           .map((item, idx) => (
-                            <tr key={item.student.id || idx} className="hover:bg-slate-800/40 transition">
+                            <tr key={item.student.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                               <td className="p-3 text-slate-500 font-mono">{idx + 1}</td>
-                              <td className="p-3 font-bold text-white">
+                              <td className="p-3 font-bold text-slate-900 dark:text-white">
                                 {item.student.name || `${item.student.firstName || ''} ${item.student.lastName || ''}`.trim() || item.student.username}
                               </td>
-                              <td className="p-3 font-mono text-blue-400">{item.student.username}</td>
-                              <td className="p-3 text-center font-bold text-white font-mono">
-                                <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
+                              <td className="p-3 font-mono text-blue-600 dark:text-blue-400 font-bold">{item.student.username}</td>
+                              <td className="p-3 text-center font-bold text-slate-900 dark:text-white font-mono">
+                                <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                                   {item.score} / {selectedExamForStatus.total_questions || 50}
                                 </span>
                               </td>
                               <td className="p-3 text-center font-black font-mono">
                                 <span className={`px-2 py-0.5 rounded text-[11px] ${
-                                  item.percentage >= 75 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-                                  item.percentage >= 50 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
-                                  'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                  item.percentage >= 75 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30' :
+                                  item.percentage >= 50 ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30' :
+                                  'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30'
                                 }`}>
                                   {item.percentage}%
                                 </span>
                               </td>
-                              <td className="p-3 font-mono text-slate-400 text-[11px]">
+                              <td className="p-3 font-mono text-slate-500 dark:text-slate-400 text-[11px]">
                                 {item.submitted_at ? new Date(item.submitted_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '-'}
                               </td>
                             </tr>
@@ -1460,11 +1460,11 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-slate-950 border-t border-slate-800 text-right">
+            <div className="p-4 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 text-right">
               <button
                 type="button"
                 onClick={() => setExamStatusModalOpen(false)}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition cursor-pointer"
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition cursor-pointer shadow-sm"
               >
                 වසන්න (Close)
               </button>

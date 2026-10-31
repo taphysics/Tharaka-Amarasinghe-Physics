@@ -27,6 +27,7 @@ export type SyncEventType =
   | 'lecturer_shares_updated'
   | 'live_exam_updated'
   | 'exam_pushed'
+  | 'exam_updated'
   | 'ubt_exam_created'
   | 'ubt_exam_updated';
 

@@ -7,7 +7,7 @@ import {
   Edit, Trash2, Send, EyeOff, CheckCircle2, ChevronRight, 
   Calendar, Search, Filter, AlertCircle, Sparkles, MessageCircle,
   ExternalLink, UserCheck, ShieldAlert, RotateCcw, CheckSquare, Square as SquareIcon,
-  Globe, Sun, Moon
+  Globe, Sun, Moon, ArrowLeft, BarChart3, TrendingUp
 } from 'lucide-react';
 import AdminLiveControls from './AdminLiveControls';
 import AdminRecordingsManager from './AdminRecordingsManager';
@@ -90,9 +90,13 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
   const [batchSearch, setBatchSearch] = useState('');
   const [isBatchSaving, setIsBatchSaving] = useState(false);
 
-  // Exam Results View State
+  // Exam Results View State & ECODES LMS Style Analytics
   const [selectedExamId, setSelectedExamId] = useState<string>('');
+  const [selectedExamForAnalytics, setSelectedExamForAnalytics] = useState<any | null>(null);
   const [resultsSubTab, setResultsSubTab] = useState<'completed' | 'unattempted'>('completed');
+  const [resultsPassingThreshold, setResultsPassingThreshold] = useState<number>(50);
+  const [examAnalyticsSearch, setExamAnalyticsSearch] = useState<string>('');
+  const [examAnalyticsClassFilter, setExamAnalyticsClassFilter] = useState<string>('all');
 
   // Single Edit Assignment Mark Modal State
   const [editingMark, setEditingMark] = useState<any | null>(null);
@@ -135,30 +139,92 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
     return { hours, minutes, expired: false };
   };
 
+  // Default to Day Mode on load as requested
   useEffect(() => {
-    const rawClasses = currentStaff.assigned_classes || [];
-    setAssignedClasses(rawClasses);
-    loadAllLecturerData(rawClasses);
+    document.documentElement.classList.remove('dark');
+    setTheme('light');
+    localStorage.setItem('physics_hub_theme', 'light');
+  }, []);
 
-    // Live continuous 2s database polling
+  useEffect(() => {
+    let isMounted = true;
+    
+    // Fetch valid classes from class_types_config to guarantee no deleted/stale classes show
+    const initClassesAndData = async () => {
+      try {
+        const { data: configs } = await supabase.from('class_types_config').select('class_types, class_type');
+        const validClassSet = new Set<string>();
+        if (configs) {
+          configs.forEach((c: any) => {
+            if (c.class_types) validClassSet.add(c.class_types.trim().toLowerCase());
+            if (c.class_type) validClassSet.add(c.class_type.trim().toLowerCase());
+          });
+        }
+
+        const rawClasses: string[] = currentStaff.assigned_classes || [];
+        // Strictly filter out "2027 Revision" and "2027 Theory", and keep only active database classes
+        const cleanClasses = rawClasses.filter(c => {
+          const norm = c.trim().toLowerCase();
+          if (norm === '2027 revision' || norm === '2027 theory') return false;
+          if (validClassSet.size > 0) {
+            return validClassSet.has(norm);
+          }
+          return true;
+        });
+
+        if (isMounted) {
+          setAssignedClasses(cleanClasses);
+          loadAllLecturerData(cleanClasses);
+        }
+      } catch (e) {
+        const rawClasses = (currentStaff.assigned_classes || []).filter(c => {
+          const norm = c.trim().toLowerCase();
+          return norm !== '2027 revision' && norm !== '2027 theory';
+        });
+        if (isMounted) {
+          setAssignedClasses(rawClasses);
+          loadAllLecturerData(rawClasses);
+        }
+      }
+    };
+
+    initClassesAndData();
+
+    // Live continuous 3s database polling
     const timer = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      loadAllLecturerData(rawClasses);
-    }, 2000);
+      setAssignedClasses(current => {
+        loadAllLecturerData(current);
+        return current;
+      });
+    }, 3000);
 
     const unsub = subscribeRealtimeEvents((type) => {
       if (['recording_added', 'recording_deleted', 'tute_added', 'tute_deleted', 'assignment_marks_updated'].includes(type)) {
-        loadAllLecturerData(rawClasses);
+        setAssignedClasses(current => {
+          loadAllLecturerData(current);
+          return current;
+        });
       }
     });
 
     const channel = supabase.channel('lecturer-dashboard-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => loadAllLecturerData(rawClasses))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => loadAllLecturerData(rawClasses))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'assignment_marks' }, () => loadAllLecturerData(rawClasses))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => {
+        setAssignedClasses(c => { loadAllLecturerData(c); return c; });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ubt_exams' }, () => {
+        setAssignedClasses(c => { loadAllLecturerData(c); return c; });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'exam_results' }, () => {
+        setAssignedClasses(c => { loadAllLecturerData(c); return c; });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assignment_marks' }, () => {
+        setAssignedClasses(c => { loadAllLecturerData(c); return c; });
+      })
       .subscribe();
 
     return () => {
+      isMounted = false;
       clearInterval(timer);
       unsub();
       supabase.removeChannel(channel);
@@ -234,17 +300,49 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
         setTutesCount(myTutes.length);
       }
 
-      // 4. Fetch Exams (strictly scoped to lecturer's classes)
-      const { data: examsData } = await supabase.from('exams').select('*').order('created_at', { ascending: false });
-      if (examsData) {
-        const myExams = examsData.filter((e: any) => {
-          if (lecturerClasses.length === 0) return true;
-          return lecturerClasses.includes(norm(e.class_type)) || lecturerClasses.includes(norm(e.target_class_type));
+      // 4. Fetch Exams from BOTH ubt_exams (Admin UBT exams) AND exams table
+      const [examsRes, ubtRes] = await Promise.all([
+        supabase.from('exams').select('*').order('created_at', { ascending: false }),
+        supabase.from('ubt_exams').select('*').order('created_at', { ascending: false })
+      ]);
+
+      const examsData = examsRes?.data || [];
+      const ubtData = ubtRes?.data || [];
+
+      const combinedMap = new Map<string, any>();
+      examsData.forEach((e: any) => {
+        if (e && e.id) combinedMap.set(e.id, e);
+      });
+      ubtData.forEach((u: any) => {
+        if (!u || !u.id) return;
+        const existing = combinedMap.get(u.id);
+        combinedMap.set(u.id, {
+          ...u,
+          ...(existing || {}),
+          id: u.id,
+          title: u.title || existing?.title || 'Exam',
+          class_type: u.class_type || u.target_class_type || existing?.class_type || existing?.target_class_type || '',
+          target_class_type: u.target_class_type || u.class_type || existing?.target_class_type || existing?.class_type || '',
+          pdf_url: u.pdf_url || existing?.pdf_url || '',
+          total_questions: u.total_questions || existing?.total_questions || (Array.isArray(u.questions) ? u.questions.length : 50),
+          duration_minutes: u.duration_minutes || existing?.duration_minutes || 90,
+          status: u.status || existing?.status || 'pending',
+          created_at: u.created_at || existing?.created_at || new Date().toISOString()
         });
-        setExamsList(myExams);
-        if (myExams.length > 0 && !selectedExamId) {
-          setSelectedExamId(myExams[0].id);
-        }
+      });
+
+      const allMergedExams = Array.from(combinedMap.values());
+      const myExams = allMergedExams.filter((e: any) => {
+        if (lecturerClasses.length === 0) return true;
+        const examClass = norm(e.class_type || e.target_class_type);
+        return lecturerClasses.some(lc => lc === examClass || examClass.includes(lc) || lc.includes(examClass));
+      });
+
+      myExams.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+      setExamsList(myExams);
+
+      if (myExams.length > 0 && (!selectedExamId || !myExams.some(e => e.id === selectedExamId))) {
+        setSelectedExamId(myExams[0].id);
       }
 
       // 5. Fetch Exam Results from database
@@ -347,8 +445,10 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
     try {
       if (examFormData.id) {
         await supabase.from('exams').update(payload).eq('id', examFormData.id);
+        try { await supabase.from('ubt_exams').update(payload).eq('id', examFormData.id); } catch (e) {}
       } else {
         await supabase.from('exams').insert([{ ...payload, created_at: nowIso }]);
+        try { await supabase.from('ubt_exams').insert([{ ...payload, created_at: nowIso }]); } catch (e) {}
       }
       setIsExamModalOpen(false);
       await loadAllLecturerData(assignedClasses);
@@ -364,8 +464,18 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
       const isRetakeAll = mode === 'retake_all';
       const nowIso = new Date().toISOString();
 
-      // 1. Mark exam active in exams table
-      await supabase.from('exams').update({ status: 'active' }).eq('id', exam.id);
+      const pushPayload: any = { 
+        status: 'active',
+        exam_push_mode: isRetakeAll ? 'allow_retake' : 'pending_only',
+        exam_push_timestamp: nowIso
+      };
+      if (isRetakeAll) {
+        pushPayload.exam_retake_timestamp = nowIso;
+      }
+
+      // 1. Mark exam active in exams and ubt_exams tables
+      await supabase.from('exams').update(pushPayload).eq('id', exam.id);
+      try { await supabase.from('ubt_exams').update(pushPayload).eq('id', exam.id); } catch (e) {}
       
       // 2. Also ensure linked scheduled_lives session has active exam and proper flags
       const updatePayload: any = {
@@ -403,6 +513,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
   const handleRetractExam = async (exam: any) => {
     try {
       await supabase.from('exams').update({ status: 'pending' }).eq('id', exam.id);
+      try { await supabase.from('ubt_exams').update({ status: 'pending' }).eq('id', exam.id); } catch (e) {}
       await supabase.from('scheduled_lives')
         .update({ is_exam_active: false })
         .eq('active_exam_id', exam.id);
@@ -423,6 +534,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
 
     try {
       await supabase.from('exams').delete().eq('id', exam.id);
+      try { await supabase.from('ubt_exams').delete().eq('id', exam.id); } catch (e) {}
       await supabase.from('scheduled_lives').update({ active_exam_id: null, is_exam_active: false }).eq('active_exam_id', exam.id);
       await loadAllLecturerData(assignedClasses);
       alert('විභාගය සාර්ථකව මකා දමන ලදී.');
@@ -608,19 +720,569 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
     setIsBatchAssignModalOpen(true);
   };
 
-  // Evaluate Selected Exam Completed vs Unattempted Students
+  // Active Exam and Analytics Context
   const activeExamObj = examsList.find(e => e.id === selectedExamId) || examsList[0];
-  const activeExamClass = activeExamObj?.class_type || activeExamObj?.target_class_type || '';
+  const currentAnalyticsExam = selectedExamForAnalytics || activeExamObj;
+  const currentAnalyticsExamClass = currentAnalyticsExam?.class_type || currentAnalyticsExam?.target_class_type || '';
   
   const norm = (s?: string) => (s || '').trim().toLowerCase();
   const studentsInExamClass = enrolledStudents.filter(std => {
-    if (!activeExamClass) return true;
-    return std.class_types.some((c: string) => norm(c) === norm(activeExamClass));
+    if (!currentAnalyticsExamClass) return true;
+    return std.class_types.some((c: string) => norm(c) === norm(currentAnalyticsExamClass));
   });
 
-  const completedResults = examResults.filter(r => r.exam_id === activeExamObj?.id);
-  const completedUsernames = new Set(completedResults.map(r => r.username));
-  const unattemptedStudents = studentsInExamClass.filter(std => !completedUsernames.has(std.username));
+  const rawExamResults = examResults.filter(r => r.exam_id === currentAnalyticsExam?.id);
+  const examTotalQ = currentAnalyticsExam?.total_questions || 50;
+
+  // Enrich results with student details and percentage
+  const enrichedExamResults = rawExamResults.map(r => {
+    const matchedStd = enrolledStudents.find(s => norm(s.username) === norm(r.username));
+    const totalQ = r.meta_data?.total_questions || examTotalQ || 50;
+    const rawPct = r.meta_data?.percentage ?? (totalQ > 0 ? (r.score / totalQ) * 100 : 0);
+    const percentage = Math.round(Number(rawPct) * 10) / 10;
+    const attempt = r.meta_data?.attempt_count || r.meta_data?.attempt || 1;
+    const phone = matchedStd?.whatsapp || matchedStd?.mobile || r.meta_data?.whatsapp_phone || r.meta_data?.phone || '';
+    const studentName = r.full_name || r.meta_data?.full_name || r.meta_data?.student_name || matchedStd?.name || r.username;
+    const studentClass = matchedStd?.class_types?.join(', ') || currentAnalyticsExamClass || 'General';
+
+    return {
+      ...r,
+      studentName,
+      studentClass,
+      phone,
+      percentage,
+      attempt,
+      totalQ
+    };
+  });
+
+  // Strictly sort 100% to 0% descending!
+  enrichedExamResults.sort((a, b) => {
+    if (b.percentage !== a.percentage) return b.percentage - a.percentage;
+    return (b.score || 0) - (a.score || 0);
+  });
+
+  const completedUsernames = new Set(rawExamResults.map(r => norm(r.username)));
+  const unattemptedStudents = studentsInExamClass.filter(std => !completedUsernames.has(norm(std.username)));
+
+  // Analytics Metrics
+  const totalCandidates = enrichedExamResults.length;
+  const passedCount = enrichedExamResults.filter(r => r.percentage >= resultsPassingThreshold).length;
+  const failedCount = totalCandidates - passedCount;
+  const passRate = totalCandidates > 0 ? Math.round((passedCount / totalCandidates) * 1000) / 10 : 0;
+  const failRate = totalCandidates > 0 ? Math.round((100 - passRate) * 10) / 10 : 0;
+  const averageScore = totalCandidates > 0
+    ? Math.round((enrichedExamResults.reduce((acc, r) => acc + r.percentage, 0) / totalCandidates) * 10) / 10
+    : 0;
+  const highestScore = totalCandidates > 0
+    ? Math.max(...enrichedExamResults.map(r => r.percentage))
+    : 0;
+  const lowestScore = totalCandidates > 0
+    ? Math.min(...enrichedExamResults.map(r => r.percentage))
+    : 0;
+
+  // Filtered by Search & Class
+  const filteredExamResults = enrichedExamResults.filter(r => {
+    if (examAnalyticsClassFilter !== 'all' && norm(r.studentClass) !== norm(examAnalyticsClassFilter)) {
+      return false;
+    }
+    if (!examAnalyticsSearch) return true;
+    const q = examAnalyticsSearch.toLowerCase().trim();
+    const nameMatch = (r.studentName || '').toLowerCase().includes(q);
+    const userMatch = (r.username || '').toLowerCase().includes(q);
+    const phoneMatch = (r.phone || '').includes(q);
+    return nameMatch || userMatch || phoneMatch;
+  });
+
+  // For backward compatibility with existing tabs
+  const completedResults = enrichedExamResults;
+
+  // RENDER ECODES LMS STYLE ANALYTICS & LEADERBOARD (Exact match to reference design)
+  const renderExamAnalyticsView = (examObj: any, showBackButton: boolean = false) => {
+    if (!examObj) {
+      return (
+        <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
+          විභාගයක් තෝරාගෙන නොමැත.
+        </div>
+      );
+    }
+
+    const examClass = examObj.class_type || examObj.target_class_type || 'All Classes';
+    const examDuration = examObj.duration_minutes || 90;
+    const examQCount = examObj.total_questions || 50;
+
+    return (
+      <div className="space-y-6 animate-in fade-in duration-200">
+        
+        {/* Top Control Bar with Back Button (if opened from Exams Tab) */}
+        {showBackButton && (
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setSelectedExamForAnalytics(null)}
+              className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-white hover:bg-slate-100 dark:bg-slate-900 dark:hover:bg-slate-800 px-4 py-2.5 rounded-xl transition cursor-pointer border border-slate-200 dark:border-slate-800 shadow-sm"
+            >
+              <ArrowLeft size={16} />
+              <span>සියලු විභාග ලැයිස්තුවට ආපසු (Back to Exams List)</span>
+            </button>
+            <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">
+              Exam Analytics & Leaderboard View
+            </span>
+          </div>
+        )}
+
+        {/* Selected Exam Meta Header Card */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30">
+                UBT Exam Performance Report
+              </span>
+              <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                {examClass}
+              </span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <FileCheck className="text-amber-500 shrink-0" size={24} />
+              <span>{examObj.title}</span>
+            </h2>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-400 pt-1">
+              <span>පන්තිය: <strong className="text-slate-900 dark:text-white">{examClass}</strong></span>
+              <span>&bull;</span>
+              <span>ප්‍රශ්න ගණන: <strong className="text-slate-900 dark:text-white">{examQCount}</strong></span>
+              <span>&bull;</span>
+              <span>කාලය: <strong className="text-slate-900 dark:text-white">{examDuration} මිනිත්තු</strong></span>
+            </div>
+          </div>
+
+          {/* Quick Re-Push Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => handlePushExam(examObj, 'pending')}
+              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-900/20 transition flex items-center gap-1.5 cursor-pointer"
+              title="විභාගය තවමත් නොකළ සිසුන්ට පමණක් නැවත Push කරන්න"
+            >
+              <RotateCcw size={14} />
+              <span>නොකළ අයට Re-PUSH ({unattemptedStudents.length})</span>
+            </button>
+
+            <button
+              onClick={() => handlePushExam(examObj, 'retake_all')}
+              className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl shadow-md shadow-purple-900/20 transition flex items-center gap-1.5 cursor-pointer"
+              title="විභාගය කළ සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි සියලු දෙනාටම Re-push කරන්න"
+            >
+              <Send size={14} />
+              <span>සැමටම Re-PUSH (Retake for All)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Passing Threshold Setting Bar */}
+        <div className="bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                🎯 විභාග සමත් සීමාව (Passing Mark Threshold):
+              </span>
+              <span className="font-mono font-black text-base text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 px-2.5 py-0.5 rounded-lg border border-amber-200 dark:border-amber-500/30">
+                {resultsPassingThreshold}%
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+              මෙම ප්‍රතිශතය වෙනස් කළ විට විභාගයෙන් සමත් සහ අසමත් සිසුන් ගණන හා ප්‍රස්ථාරික ප්‍රතිශත ක්ෂණිකව ගණනය වේ.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={resultsPassingThreshold}
+              onChange={(e) => setResultsPassingThreshold(Number(e.target.value))}
+              className="w-32 sm:w-44 accent-amber-600 cursor-pointer"
+            />
+            <div className="flex items-center gap-1 bg-white dark:bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={resultsPassingThreshold}
+                onChange={(e) => setResultsPassingThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                className="w-12 bg-transparent text-amber-600 dark:text-amber-400 font-mono font-black text-sm text-center focus:outline-none"
+              />
+              <span className="text-amber-600 dark:text-amber-400 font-black text-xs">%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Top 4 Big Stat Cards (Exact match to reference ECODES LMS screenshot) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          
+          {/* Card 1: Total Students */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+            <div className="flex items-center justify-between">
+              <span className="text-3xl font-black font-mono tracking-tight">{totalCandidates}</span>
+              <Award size={26} className="opacity-80" />
+            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-indigo-100">
+              Total Students / Candidates
+            </span>
+          </div>
+
+          {/* Card 2: Students Passed */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-3xl font-black font-mono tracking-tight">{passedCount}</span>
+              <span className="text-base font-black font-mono bg-white/20 px-2 py-0.5 rounded-lg">
+                {passRate}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-100">
+              <span>Students Passed</span>
+              <span className="text-[10px] lowercase opacity-90">(&ge; {resultsPassingThreshold}%)</span>
+            </div>
+          </div>
+
+          {/* Card 3: Students Failed */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-rose-600 to-red-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-3xl font-black font-mono tracking-tight">{failedCount}</span>
+              <span className="text-base font-black font-mono bg-white/20 px-2 py-0.5 rounded-lg">
+                {failRate}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-100">
+              <span>Students Failed</span>
+              <span className="text-[10px] lowercase opacity-90">(&lt; {resultsPassingThreshold}%)</span>
+            </div>
+          </div>
+
+          {/* Card 4: Average Score */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-sky-600 to-blue-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+            <div className="flex items-center justify-between">
+              <span className="text-3xl font-black font-mono tracking-tight">{averageScore}%</span>
+              <Sparkles size={24} className="opacity-80" />
+            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-sky-100">
+              Average Score
+            </span>
+          </div>
+
+        </div>
+
+        {/* Second Row: 4 Metric Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-500/15 border border-amber-200 dark:border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <Award size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block uppercase">Highest Score</span>
+              <span className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono">{highestScore}%</span>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-500/15 border border-blue-200 dark:border-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+              <FileText size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block uppercase">Average Score</span>
+              <span className="text-lg font-black text-blue-600 dark:text-blue-400 font-mono">{averageScore}%</span>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-500/15 border border-rose-200 dark:border-rose-500/30 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+              <AlertCircle size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block uppercase">Lowest Score</span>
+              <span className="text-lg font-black text-rose-600 dark:text-rose-400 font-mono">{lowestScore}%</span>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-500/15 border border-purple-200 dark:border-purple-500/30 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+              <Clock size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 block uppercase">Allocated Time</span>
+              <span className="text-lg font-black text-purple-700 dark:text-purple-300 font-mono">{examDuration} Mins</span>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Pass / Fail Distribution Bar (Exact match to reference screenshot) */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 shadow-sm">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-300">
+            <span className="flex items-center gap-1.5">
+              <BarChart3 size={15} className="text-amber-500" />
+              <span>Pass / Fail Distribution (සමත් / අසමත් ප්‍රස්ථාරික අනුපාතය)</span>
+            </span>
+            <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">
+              Threshold: &ge; {resultsPassingThreshold}%
+            </span>
+          </div>
+
+          {/* Split Bar */}
+          <div className="w-full h-9 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex font-mono font-black text-xs text-white shadow-inner">
+            {passedCount > 0 && (
+              <div
+                style={{ width: `${passRate}%` }}
+                className="bg-emerald-600 hover:bg-emerald-500 transition-all flex items-center justify-center px-3 truncate"
+                title={`Passed: ${passedCount} (${passRate}%)`}
+              >
+                ✓ {passedCount} ({passRate}%)
+              </div>
+            )}
+            {failedCount > 0 && (
+              <div
+                style={{ width: `${failRate}%` }}
+                className="bg-rose-600 hover:bg-rose-500 transition-all flex items-center justify-center px-3 truncate"
+                title={`Failed: ${failedCount} (${failRate}%)`}
+              >
+                ✕ {failedCount} ({failRate}%)
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Tabs: Completed (Leaderboard) vs Unattempted Students */}
+        <div className="flex border-b border-slate-200 dark:border-slate-800 space-x-2">
+          <button
+            onClick={() => setResultsSubTab('completed')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer ${
+              resultsSubTab === 'completed'
+                ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-t-xl'
+                : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Award size={14} />
+            <span>විභාගය කළ සිසුන් (Leaderboard 100% - 0%) ({totalCandidates})</span>
+          </button>
+
+          <button
+            onClick={() => setResultsSubTab('unattempted')}
+            className={`px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-2 cursor-pointer ${
+              resultsSubTab === 'unattempted'
+                ? 'border-rose-500 text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 rounded-t-xl'
+                : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <AlertCircle size={14} />
+            <span>විභාගය නොකළ සිසුන් ({unattemptedStudents.length})</span>
+          </button>
+        </div>
+
+        {/* Search and Class Filter Row */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="සිසුවාගේ නම, WhatsApp හෝ Username මඟින් සොයන්න..."
+              value={examAnalyticsSearch}
+              onChange={(e) => setExamAnalyticsSearch(e.target.value)}
+              className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 text-xs pl-9 pr-8 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:border-amber-500 transition shadow-xs"
+            />
+            {examAnalyticsSearch && (
+              <button
+                type="button"
+                onClick={() => setExamAnalyticsSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-bold hidden sm:inline">පන්තිය:</span>
+            <select
+              value={examAnalyticsClassFilter}
+              onChange={(e) => setExamAnalyticsClassFilter(e.target.value)}
+              className="bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none shadow-xs font-semibold"
+            >
+              <option value="all">සියලු පන්ති (All Classes)</option>
+              {assignedClasses.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Tab 1: Leaderboard Table (Strictly 100% to 0% Descending) */}
+        {resultsSubTab === 'completed' && (
+          <div>
+            {filteredExamResults.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                {totalCandidates === 0 ? 'මෙම විභාගය සඳහා තවමත් කිසිදු ශිෂ්‍යයෙකු සහභාගී වී නොමැත.' : 'සෙවුමට ගැළපෙන සිසුන් හමු නොවීය.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="p-3.5 w-12 text-center">Rank</th>
+                      <th className="p-3.5">ශිෂ්‍යයාගේ නම (Student Name)</th>
+                      <th className="p-3.5">Username</th>
+                      <th className="p-3.5">පන්තිය (Class)</th>
+                      <th className="p-3.5">WhatsApp / දුරකථනය</th>
+                      <th className="p-3.5 text-center">Score</th>
+                      <th className="p-3.5 text-center">Percentage</th>
+                      <th className="p-3.5 text-center">තත්ත්වය (Status)</th>
+                      <th className="p-3.5 text-center">අවස්ථාව (Attempt)</th>
+                      <th className="p-3.5">Submitted At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                    {filteredExamResults.map((r, i) => {
+                      const isPassed = r.percentage >= resultsPassingThreshold;
+                      const cleanPhone = (r.phone || '').replace(/[^0-9]/g, '');
+
+                      return (
+                        <tr key={r.id || i} className="hover:bg-slate-50 dark:hover:bg-slate-850/50 transition">
+                          <td className="p-3.5 text-center font-mono font-black text-amber-600 dark:text-amber-400 text-sm">
+                            #{i + 1}
+                          </td>
+                          <td className="p-3.5 font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-indigo-50 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30 flex items-center justify-center text-xs font-black shrink-0">
+                              {(r.studentName || 'S').charAt(0).toUpperCase()}
+                            </div>
+                            <span className="truncate max-w-[180px]">{r.studentName}</span>
+                          </td>
+                          <td className="p-3.5 font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                            @{r.username}
+                          </td>
+                          <td className="p-3.5 text-slate-600 dark:text-slate-400 text-[11px]">
+                            {r.studentClass}
+                          </td>
+                          <td className="p-3.5 font-mono">
+                            {cleanPhone ? (
+                              <a
+                                href={`https://wa.me/${cleanPhone.startsWith('0') ? '94' + cleanPhone.slice(1) : cleanPhone}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/40 font-bold text-[11px]"
+                              >
+                                <span>💬 {r.phone}</span>
+                              </a>
+                            ) : (
+                              <span className="text-slate-400">{r.phone || '-'}</span>
+                            )}
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-bold text-slate-900 dark:text-white">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                              {r.score} / {r.totalQ}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center font-mono font-black">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              r.percentage >= 75 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/40' :
+                              r.percentage >= 50 ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300 border border-amber-200 dark:border-amber-500/40' :
+                              'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-200 dark:border-rose-500/40'
+                            }`}>
+                              {r.percentage}%
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              isPassed 
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
+                                : 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30'
+                            }`}>
+                              {isPassed ? '✓ සමත් (Pass)' : '✕ අසමත් (Fail)'}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              r.attempt > 1 
+                                ? 'bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300 border border-purple-200 dark:border-purple-500/30'
+                                : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                            }`}>
+                              {r.attempt > 1 ? `${r.attempt}nd Attempt` : '1st Attempt'}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-slate-500 dark:text-slate-400 font-mono text-[11px]">
+                            {r.submitted_at ? new Date(r.submitted_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Unattempted Students Table */}
+        {resultsSubTab === 'unattempted' && (
+          <div>
+            {unattemptedStudents.length === 0 ? (
+              <div className="p-12 text-center text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl text-xs font-bold">
+                🎉 විශිෂ්ටයි! පන්තියේ සියලුම සිසුන් මෙම විභාගයට පෙනී සිට ඇත. (All enrolled students have completed this exam)
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="p-3.5 w-12 text-center">#</th>
+                      <th className="p-3.5">ශිෂ්‍යයා (Student Name)</th>
+                      <th className="p-3.5">Username</th>
+                      <th className="p-3.5">පන්තිය (Class)</th>
+                      <th className="p-3.5">දුරකථන / WhatsApp</th>
+                      <th className="p-3.5 text-center">තත්ත්වය (Status)</th>
+                      <th className="p-3.5 text-center">නැවත පුෂ් කිරීම</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                    {unattemptedStudents.map((std, idx) => (
+                      <tr key={std.id || idx} className="hover:bg-slate-50 dark:hover:bg-slate-850/50 transition">
+                        <td className="p-3.5 text-center font-mono text-slate-500">
+                          {idx + 1}
+                        </td>
+                        <td className="p-3.5 font-bold text-slate-900 dark:text-white">
+                          {std.name}
+                        </td>
+                        <td className="p-3.5 font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                          @{std.username}
+                        </td>
+                        <td className="p-3.5 text-slate-600 dark:text-slate-400">
+                          {Array.isArray(std.class_types) ? std.class_types.join(', ') : std.class_types || '-'}
+                        </td>
+                        <td className="p-3.5 font-mono text-slate-600 dark:text-slate-400">
+                          {std.whatsapp || std.mobile || '-'}
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
+                            තවමත් විභාගයට පෙනී සිට නැත
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <button
+                            onClick={() => handlePushExam(examObj, 'pending')}
+                            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 dark:bg-amber-600/20 dark:hover:bg-amber-600/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer shadow-xs"
+                          >
+                            <Send size={12} /> Re-Push
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-16 transition-colors">
@@ -801,28 +1463,30 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           <div className="space-y-6">
             
             {/* Lecturer Welcome Banner */}
-            <div className="bg-gradient-to-r from-indigo-900/60 via-purple-900/40 to-slate-900 border border-indigo-500/30 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-indigo-500/30 rounded-3xl p-6 sm:p-8 shadow-sm relative overflow-hidden text-slate-900 dark:text-white transition-colors">
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600" />
+              
               <div className="relative z-10">
-                <span className="px-3 py-1 rounded-full text-xs font-black bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 mb-3 inline-block">
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-blue-50 dark:bg-indigo-500/20 text-blue-700 dark:text-indigo-300 border border-blue-200 dark:border-indigo-500/30 mb-3 inline-block">
                   👨‍🏫 Academic Lecturer Cockpit
                 </span>
-                <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
                   ආයුබෝවන්, {currentStaff.first_name} {currentStaff.last_name}!
                 </h1>
-                <p className="text-slate-300 text-xs sm:text-sm mt-2 max-w-2xl leading-relaxed">
+                <p className="text-slate-600 dark:text-slate-300 text-xs sm:text-sm mt-2 max-w-2xl leading-relaxed font-medium">
                   මෙය ඔබගේ ඉගැන්වීම් කටයුතු පහසුවෙන් මෙහෙයවිය හැකි ප්‍රධාන දළ විශ්ලේෂණ පිටුවයි. සජීවී සූම් පන්ති පැවැත්වීම, ප්‍රශ්න පත්‍ර ලබා දීම හා සිසුන්ගේ ඇගයීම් මෙතැනින් කළමනාකරණය කරන්න.
                 </p>
 
                 {/* Assigned Courses / Classes summary row */}
-                <div className="mt-5 flex flex-wrap items-center gap-2 pt-4 border-t border-indigo-500/20">
-                  <span className="text-xs font-bold text-slate-300">ඔබට පවරා ඇති පන්ති කාණ්ඩ:</span>
+                <div className="mt-5 flex flex-wrap items-center gap-2 pt-4 border-t border-slate-200 dark:border-slate-800">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">ඔබට පවරා ඇති පන්ති කාණ්ඩ:</span>
                   {assignedClasses.length === 0 ? (
-                    <span className="text-xs font-bold bg-amber-500/20 text-amber-300 px-3 py-1 rounded-lg border border-amber-500/30">
+                    <span className="text-xs font-bold bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 px-3 py-1 rounded-lg border border-amber-200 dark:border-amber-500/30">
                       සියලු පන්ති සඳහා අවසර ඇත (All Classes)
                     </span>
                   ) : (
                     assignedClasses.map(c => (
-                      <span key={c} className="text-xs font-bold bg-indigo-500/20 text-indigo-200 px-3 py-1 rounded-lg border border-indigo-500/40">
+                      <span key={c} className="text-xs font-bold bg-slate-50 dark:bg-slate-800 text-indigo-900 dark:text-indigo-200 px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 shadow-xs">
                         📚 {c} ({studentsByClass[c] || 0} සිසුන්)
                       </span>
                     ))
@@ -834,48 +1498,48 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             {/* Quick Metrics Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <div className="flex items-center justify-between text-indigo-400 mb-2">
-                  <span className="text-xs font-bold text-slate-400">ලියාපදිංචි සිසුන්</span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400 mb-2">
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">ලියාපදිංචි සිසුන්</span>
                   <Users size={18} />
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-white">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
                   {enrolledStudents.length}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">ඔබේ පන්තිවල සම්පූර්ණ සිසුන්</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ඔබේ පන්තිවල සම්පූර්ණ සිසුන්</div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <div className="flex items-center justify-between text-purple-400 mb-2">
-                  <span className="text-xs font-bold text-slate-400">පාඩම් හා රෙකෝඩින්</span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-purple-600 dark:text-purple-400 mb-2">
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">පාඩම් හා රෙකෝඩින්</span>
                   <BookOpen size={18} />
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-white">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
                   {recordingsCount}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">ඔබේ පන්තියේ වීඩියෝ</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ඔබේ පන්තියේ වීඩියෝ</div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <div className="flex items-center justify-between text-teal-400 mb-2">
-                  <span className="text-xs font-bold text-slate-400">ටියුට් හා පේපර්ස්</span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-teal-600 dark:text-teal-400 mb-2">
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">ටියුට් හා පේපර්ස්</span>
                   <FileText size={18} />
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-white">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
                   {tutesCount}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">ඔබේ පන්තියේ ලේඛන</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ඔබේ පන්තියේ ලේඛන</div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <div className="flex items-center justify-between text-amber-400 mb-2">
-                  <span className="text-xs font-bold text-slate-400">ලයිව් එක්සෑම්ස්</span>
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
+                <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-2">
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">ලයිව් එක්සෑම්ස්</span>
                   <FileCheck size={18} />
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-white">
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
                   {examsList.length}
                 </div>
-                <div className="text-[11px] text-slate-400 mt-1">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                   {examsList.filter(e => e.status === 'active').length} ක් සක්‍රීයව PUSH කර ඇත
                 </div>
               </div>
@@ -883,72 +1547,72 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             </div>
 
             {/* Quick Actions Shortcuts */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-              <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-                <Sparkles className="text-amber-400" size={18} /> ඉක්මන් මෙහෙයුම් (Quick Actions)
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
+              <h2 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <Sparkles className="text-amber-500" size={18} /> ඉක්මන් මෙහෙයුම් (Quick Actions)
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 
                 <button
                   onClick={() => setActiveTab('live_classes')}
-                  className="p-4 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-red-500/40 rounded-2xl text-left transition group cursor-pointer"
+                  className="p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 hover:border-red-500/40 rounded-2xl text-left transition group cursor-pointer shadow-sm"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-red-500/10 text-red-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
+                  <div className="w-9 h-9 rounded-xl bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
                     <Video size={18} />
                   </div>
-                  <h3 className="font-bold text-sm text-white group-hover:text-red-400 transition">
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-red-600 dark:group-hover:text-red-400 transition">
                     සූම් පන්තියක් Schedule කිරීම
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">ලයිව් පන්ති වේලාව සකසා සිසුන්ට PUSH කරන්න</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ලයිව් පන්ති වේලාව සකසා සිසුන්ට PUSH කරන්න</p>
                 </button>
 
                 <button
                   onClick={() => { handleOpenExamModal(); setActiveTab('exams'); }}
-                  className="p-4 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 rounded-2xl text-left transition group cursor-pointer"
+                  className="p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 hover:border-amber-500/40 rounded-2xl text-left transition group cursor-pointer shadow-sm"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
+                  <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
                     <FileCheck size={18} />
                   </div>
-                  <h3 className="font-bold text-sm text-white group-hover:text-amber-400 transition">
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-amber-600 dark:group-hover:text-amber-400 transition">
                     නව ලයිව් එක්සෑම් එකක් සෑදීම
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">PDF හා පිළිතුරු ඇතුළත් කර ඔබේ පන්තියට පුෂ් කරන්න</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">PDF හා පිළිතුරු ඇතුළත් කර ඔබේ පන්තියට පුෂ් කරන්න</p>
                 </button>
 
                 <button
                   onClick={() => { handleOpenBatchAssignModal(); setActiveTab('grades'); }}
-                  className="p-4 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 rounded-2xl text-left transition group cursor-pointer"
+                  className="p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/40 rounded-2xl text-left transition group cursor-pointer shadow-sm"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
                     <Award size={18} />
                   </div>
-                  <h3 className="font-bold text-sm text-white group-hover:text-emerald-400 transition">
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition">
                     එසයිමන්ට් ලකුණු එකවර ඇතුළත් කිරීම
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">පන්තියේ සියලු සිසුන්ට එකවර ලකුණු ඇතුළත් කරන්න</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">පන්තියේ සියලු සිසුන්ට එකවර ලකුණු ඇතුළත් කරන්න</p>
                 </button>
 
                 <button
                   onClick={() => setActiveTab('recordings')}
-                  className="p-4 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-purple-500/40 rounded-2xl text-left transition group cursor-pointer"
+                  className="p-4 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-800 hover:border-purple-500/40 rounded-2xl text-left transition group cursor-pointer shadow-sm"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-purple-500/10 text-purple-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
+                  <div className="w-9 h-9 rounded-xl bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center mb-2 group-hover:scale-105 transition">
                     <BookOpen size={18} />
                   </div>
-                  <h3 className="font-bold text-sm text-white group-hover:text-purple-400 transition">
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition">
                     පාඩම් වීඩියෝ / ටියුට් එක් කිරීම
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">ඔබේ පන්තිය සඳහා පමණක් අධ්‍යයන ද්‍රව්‍ය එක් කරන්න</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">ඔබේ පන්තිය සඳහා පමණක් අධ්‍යයන ද්‍රව්‍ය එක් කරන්න</p>
                 </button>
 
               </div>
             </div>
 
             {/* 1-Hour Rule Notice Banner */}
-            <div className="bg-slate-900/60 border border-blue-500/20 rounded-2xl p-4 flex items-start gap-3">
-              <Clock className="text-blue-400 shrink-0 mt-0.5" size={18} />
-              <div className="text-xs text-slate-300 leading-relaxed">
-                <span className="font-bold text-white">පැයක සංස්කරණ රීතිය (1-Hour Edit Window): </span>
+            <div className="bg-blue-50/80 dark:bg-slate-900/60 border border-blue-200 dark:border-blue-500/20 rounded-2xl p-4 flex items-start gap-3">
+              <Clock className="text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" size={18} />
+              <div className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                <span className="font-bold text-slate-900 dark:text-white">පැයක සංස්කරණ රීතිය (1-Hour Edit Window): </span>
                 ඔබ විසින් පද්ධතියට එක් කරන ලද ඕනෑම සූම් පන්තියක්, ලෙසන්, ටියුට් හෝ පේපර් එය ඇතුළත් කළ මොහොතේ සිට පැය 1ක් (මිනිත්තු 60ක්) ඇතුළත ඔබට සංස්කරණය කිරීමට හෝ මකා දැමීමට හැකිය. පැය 1 ඉක්මවූ පසු එම දත්ත සුරක්ෂිතභාවය උදෙසා අගුළු වැටෙන අතර අවශ්‍ය නම් Super Admin / Admin / Manager හරහා වෙනස්කම් සිදු කළ හැකිය.
               </div>
             </div>
@@ -969,15 +1633,18 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             TAB 3: STANDALONE LIVE EXAMS & AUTO PUSH
             ======================================================================= */}
         {activeTab === 'exams' && (
+          selectedExamForAnalytics ? (
+            renderExamAnalyticsView(selectedExamForAnalytics, true)
+          ) : (
           <div className="space-y-6">
             
             {/* Header with New Exam button */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <FileCheck className="text-amber-500" size={24} /> ලයිව් එක්සෑම් කළමනාකරණය හා සිසුන්ට පුෂ් කිරීම
                 </h2>
-                <p className="text-slate-400 text-xs mt-1">
+                <p className="text-slate-600 dark:text-slate-400 text-xs mt-1">
                   ඔබේ පන්තියට අදාළ ප්‍රශ්න පත්‍ර සාදා, ක්ෂණිකව සිසුන්ගේ Dashboard එකට PUSH කරන්න හෝ වේලාවක් Schedule කරන්න.
                 </p>
               </div>
@@ -991,40 +1658,40 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             </div>
 
             {/* List of Created Exams */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-              <div className="p-4 border-b border-slate-800 flex justify-between items-center">
-                <span className="font-bold text-sm text-slate-200">ඔබගේ විභාග ලැයිස්තුව ({examsList.length})</span>
-                <span className="text-[11px] text-slate-400">අදාළ පන්ති: {assignedClasses.join(', ') || 'සියල්ල'}</span>
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
+                <span className="font-bold text-sm text-slate-800 dark:text-slate-200">ඔබගේ විභාග ලැයිස්තුව ({examsList.length})</span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">අදාළ පන්ති: {assignedClasses.join(', ') || 'සියල්ල'}</span>
               </div>
 
               {examsList.length === 0 ? (
-                <div className="p-8 text-center text-slate-500 text-xs">
+                <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                   තවමත් විභාග නිර්මාණය කර නොමැත. නව විභාගයක් සෑදීමට ඉහත බොත්තම ඔබන්න.
                 </div>
               ) : (
-                <div className="divide-y divide-slate-800">
+                <div className="divide-y divide-slate-200 dark:divide-slate-800">
                   {examsList.map((exam) => {
                     const isPushed = exam.status === 'active';
                     const canEdit = canLecturerEdit(exam.created_at);
                     const remainingMins = getRemainingMinutes(exam.created_at);
 
                     return (
-                      <div key={exam.id} className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-slate-850/50 transition">
+                      <div key={exam.id} className="p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-850/50 transition">
                         
                         <div className="space-y-1.5 max-w-xl">
                           <div className="flex items-center gap-2">
-                            <span className="font-bold text-white text-base">{exam.title}</span>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            <span className="font-bold text-slate-900 dark:text-white text-base">{exam.title}</span>
+                            <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
                               isPushed 
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse' 
-                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 animate-pulse' 
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
                             }`}>
                               {isPushed ? '🔴 PUSHED TO STUDENTS' : '⏸️ PENDING'}
                             </span>
                           </div>
                           
-                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                            <span className="bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded border border-indigo-800 text-[11px] font-semibold">
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-400">
+                            <span className="bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 text-[11px] font-semibold">
                               පන්තිය: {exam.class_type || exam.target_class_type || 'All'}
                             </span>
                             <span>ප්‍රශ්න: {exam.total_questions || 50}</span>
@@ -1036,7 +1703,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                               href={exam.pdf_url}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-[11px] text-blue-400 hover:underline flex items-center gap-1 mt-1 inline-block"
+                              className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 mt-1 inline-block"
                             >
                               <ExternalLink size={12} /> Google Drive Paper Preview
                             </a>
@@ -1046,6 +1713,19 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                         {/* Push Controls & Edit Buttons */}
                         <div className="flex flex-wrap items-center gap-2 shrink-0">
                           
+                          {/* View Full ECODES LMS Analytics & Leaderboard Button */}
+                          <button
+                            onClick={() => {
+                              setSelectedExamForAnalytics(exam);
+                              setSelectedExamId(exam.id);
+                            }}
+                            className="px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                            title="විභාගයේ සම්පූර්ණ සංඛ්‍යාත්මක විශ්ලේෂණය, Leaderboard එක හා සිසුන්ගේ තත්ත්වය බලන්න"
+                          >
+                            <BarChart3 size={14} />
+                            <span>විශ්ලේෂණය හා ලකුණු</span>
+                          </button>
+
                           {/* Push / Unpush Button */}
                           {isPushed ? (
                             <button
@@ -1070,14 +1750,14 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                             <>
                               <button
                                 onClick={() => handleOpenExamModal(exam)}
-                                className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 rounded-xl transition cursor-pointer"
+                                className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-600 dark:text-amber-400 border border-slate-200 dark:border-slate-700 rounded-xl transition cursor-pointer"
                                 title={`Edit Exam (${remainingMins} mins left in 1-hr window)`}
                               >
                                 <Edit size={16} />
                               </button>
                               <button
                                 onClick={() => handleDeleteExam(exam)}
-                                className="p-2 bg-slate-800 hover:bg-rose-950 text-rose-400 border border-slate-700 hover:border-rose-700 rounded-xl transition cursor-pointer"
+                                className="p-2 bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950 text-rose-600 dark:text-rose-400 border border-slate-200 dark:border-slate-700 hover:border-rose-400 rounded-xl transition cursor-pointer"
                                 title={`Delete Exam (${remainingMins} mins left in 1-hr window)`}
                               >
                                 <Trash2 size={16} />
@@ -1085,7 +1765,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                             </>
                           ) : (
                             <span 
-                              className="text-[10px] bg-slate-950 border border-slate-800 text-slate-500 px-2 py-1.5 rounded"
+                              className="text-[10px] bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-500 px-2 py-1.5 rounded"
                               title="පැය 1 ඉක්මවා ඇති බැවින් සංස්කරණය/මැකීම කළ හැක්කේ ප්‍රධාන පරිපාලක මඟින් පමණි."
                             >
                               🔒 Locked (&gt;1h)
@@ -1102,6 +1782,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             </div>
 
           </div>
+          )
         )}
 
         {/* =======================================================================
@@ -1111,15 +1792,15 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           <div className="space-y-8">
             
             {/* Header */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
               <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Award className="text-emerald-400" size={24} /> ලකුණු හා ඇගයීම් කළමනාකරණය
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Award className="text-emerald-500" size={24} /> ලකුණු හා ඇගයීම් කළමනාකරණය
                 </h2>
-                <p className="text-slate-400 text-xs mt-1">
+                <p className="text-slate-600 dark:text-slate-400 text-xs mt-1">
                   සජීවී විභාග ලකුණු, විභාගය නොකළ සිසුන් නැවත පුෂ් කිරීම සහ එකවර එසයිමන්ට් ලකුණු ඇතුළත් කිරීම.
                 </p>
-                <p className="text-[11px] text-amber-400/90 font-semibold mt-1">
+                <p className="text-[11px] text-amber-600 dark:text-amber-400/90 font-semibold mt-1">
                   🔒 රහස්‍යතා රීතිය: සිසුන්ගේ නම සහ Username පමණක් ප්‍රදර්ශනය කෙරේ.
                 </p>
               </div>
@@ -1136,25 +1817,25 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                 SECTION 1: LIVE EXAM EVALUATION (Completed vs Unattempted Students)
                 Requirement: විභාගය නොකල සිසුන් වෙනම පෙන්වා නැවත පුෂ් කිරීමේ හැකියාව
                 =================================================================== */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
               
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
                 <div>
-                  <h3 className="font-bold text-base text-white flex items-center gap-2">
-                    <FileCheck className="text-amber-400" size={20} /> ලයිව් එක්සෑම් ලකුණු සහ සිසුන්ගේ තත්ත්වය (Exam Tracker)
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                    <FileCheck className="text-amber-500" size={20} /> ලයිව් එක්සෑම් ලකුණු සහ සිසුන්ගේ තත්ත්වය (Exam Tracker)
                   </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
                     විභාගය අනුව සම්පූර්ණ කළ සිසුන්ගේ ලකුණු සහ තවමත් නොකළ සිසුන් වෙන වෙනම නිරීක්ෂණය කරන්න.
                   </p>
                 </div>
 
                 {/* Exam Selector */}
                 <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <label className="text-xs font-bold text-slate-400 whitespace-nowrap">විභාගය තෝරන්න:</label>
+                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">විභාගය තෝරන්න:</label>
                   <select
                     value={selectedExamId}
                     onChange={e => setSelectedExamId(e.target.value)}
-                    className="bg-slate-950 border border-slate-800 text-amber-300 font-bold text-xs px-3.5 py-2 rounded-xl focus:outline-none focus:border-amber-500 w-full sm:w-64 truncate"
+                    className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-amber-600 dark:text-amber-300 font-bold text-xs px-3.5 py-2 rounded-xl focus:outline-none focus:border-amber-500 w-full sm:w-64 truncate"
                   >
                     {examsList.map(ex => (
                       <option key={ex.id} value={ex.id}>
@@ -1166,191 +1847,9 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               </div>
 
               {activeExamObj ? (
-                <div className="space-y-4">
-                  
-                  {/* Selected Exam Meta Banner */}
-                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                    <div>
-                      <span className="text-xs font-bold text-amber-400 block">{activeExamObj.title}</span>
-                      <div className="text-[11px] text-slate-400 flex flex-wrap gap-3 mt-1">
-                        <span>අදාළ පන්තිය: <strong className="text-white">{activeExamClass || 'All'}</strong></span>
-                        <span>පන්තියේ සම්පූර්ණ සිසුන්: <strong className="text-white">{studentsInExamClass.length}</strong></span>
-                        <span>සම්පූර්ණ කළ: <strong className="text-emerald-400">{completedResults.length}</strong></span>
-                        <span>නොකළ: <strong className="text-rose-400">{unattemptedStudents.length}</strong></span>
-                      </div>
-                    </div>
-
-                    {/* Re-push Buttons: To Unattempted Students AND To Completed Students (Allow Retake) */}
-                    <div className="flex flex-wrap gap-2">
-                      {unattemptedStudents.length > 0 && (
-                        <button
-                          onClick={() => handlePushExam(activeExamObj, 'pending')}
-                          className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-amber-900/30 transition flex items-center gap-1.5 cursor-pointer"
-                          title="නොකළ සිසුන්ට මෙම විභාගය නැවත push කරන්න"
-                        >
-                          <RotateCcw size={14} />
-                          <span>නොකළ සිසුන්ට ({unattemptedStudents.length}) Re-PUSH</span>
-                        </button>
-                      )}
-
-                      {completedResults.length > 0 && (
-                        <button
-                          onClick={() => handlePushExam(activeExamObj, 'retake_all')}
-                          className="px-3.5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-purple-900/30 transition flex items-center gap-1.5 cursor-pointer"
-                          title="විභාගය දැනටමත් කර ඇති සිසුන්ටද නැවත කිරීමට අවසර ලැබෙන පරිදි Re-PUSH කරන්න"
-                        >
-                          <RotateCcw size={14} />
-                          <span>කළ සිසුන්ට නැවත කිරීමට (Retake for All) Re-PUSH</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Sub-Tabs: Completed vs Unattempted */}
-                  <div className="flex border-b border-slate-800 space-x-2">
-                    <button
-                      onClick={() => setResultsSubTab('completed')}
-                      className={`px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-2 ${
-                        resultsSubTab === 'completed'
-                          ? 'border-emerald-500 text-emerald-400 bg-emerald-500/10 rounded-t-xl'
-                          : 'border-transparent text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <CheckCircle2 size={14} />
-                      <span>විභාගය කළ සිසුන් ({completedResults.length})</span>
-                    </button>
-
-                    <button
-                      onClick={() => setResultsSubTab('unattempted')}
-                      className={`px-4 py-2.5 text-xs font-bold border-b-2 transition flex items-center gap-2 ${
-                        resultsSubTab === 'unattempted'
-                          ? 'border-rose-500 text-rose-400 bg-rose-500/10 rounded-t-xl'
-                          : 'border-transparent text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <AlertCircle size={14} />
-                      <span>විභාගය නොකළ සිසුන් ({unattemptedStudents.length})</span>
-                    </button>
-                  </div>
-
-                  {/* Sub-Tab 1: Completed Students Table */}
-                  {resultsSubTab === 'completed' && (
-                    <div>
-                      {completedResults.length === 0 ? (
-                        <div className="p-8 text-center text-slate-500 text-xs">
-                          මෙම විභාගය සඳහා තවමත් කිසිදු ශිෂ්‍යයෙකු පිළිතුරු ලබා දී නොමැත.
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
-                              <tr>
-                                <th className="p-3.5">ශිෂ්‍යයා (Student Name)</th>
-                                <th className="p-3.5">Username</th>
-                                <th className="p-3.5 text-center">ලබාගත් ලකුණු</th>
-                                <th className="p-3.5 text-center">ප්‍රතිශතය (%)</th>
-                                <th className="p-3.5">වේලාව (Submitted At)</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800">
-                              {completedResults.map(res => {
-                                const matchedStudent = enrolledStudents.find(s => s.username === res.username);
-                                const displayName = matchedStudent?.name || res.username;
-                                const percentage = res.meta_data?.percentage ?? (res.meta_data?.total_questions ? Math.round((res.score / res.meta_data.total_questions) * 100) : null);
-
-                                return (
-                                  <tr key={res.id} className="hover:bg-slate-850/50 transition">
-                                    <td className="p-3.5 font-bold text-white">
-                                      {displayName}
-                                    </td>
-                                    <td className="p-3.5 font-mono text-indigo-400">
-                                      @{res.username}
-                                    </td>
-                                    <td className="p-3.5 text-center">
-                                      <span className="font-extrabold text-sm text-amber-400">
-                                        {res.score} / {res.meta_data?.total_questions || '-'}
-                                      </span>
-                                    </td>
-                                    <td className="p-3.5 text-center">
-                                      {percentage !== null ? (
-                                        <span className={`px-2 py-0.5 rounded-full font-bold ${
-                                          percentage >= 75 ? 'bg-emerald-500/20 text-emerald-300' :
-                                          percentage >= 50 ? 'bg-amber-500/20 text-amber-300' :
-                                          'bg-rose-500/20 text-rose-300'
-                                        }`}>
-                                          {percentage}%
-                                        </span>
-                                      ) : '-'}
-                                    </td>
-                                    <td className="p-3.5 text-slate-400 font-mono text-[11px]">
-                                      {res.submitted_at ? new Date(res.submitted_at).toLocaleString() : 'N/A'}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Sub-Tab 2: Unattempted Students Table */}
-                  {resultsSubTab === 'unattempted' && (
-                    <div>
-                      {unattemptedStudents.length === 0 ? (
-                        <div className="p-8 text-center text-emerald-400 text-xs font-bold">
-                          🎉 විශිෂ්ටයි! පන්තියේ සියලුම සිසුන් මෙම විභාගයට පෙනී සිට ඇත.
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
-                              <tr>
-                                <th className="p-3.5 w-12 text-center">#</th>
-                                <th className="p-3.5">ශිෂ්‍යයා (Student Name)</th>
-                                <th className="p-3.5">Username</th>
-                                <th className="p-3.5">තත්ත්වය (Status)</th>
-                                <th className="p-3.5 text-center">නැවත පුෂ් කිරීම</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800">
-                              {unattemptedStudents.map((std, idx) => (
-                                <tr key={std.id} className="hover:bg-slate-850/50 transition">
-                                  <td className="p-3.5 text-center font-mono text-slate-500">
-                                    {idx + 1}
-                                  </td>
-                                  <td className="p-3.5 font-bold text-white">
-                                    {std.name}
-                                  </td>
-                                  <td className="p-3.5 font-mono text-indigo-400 font-bold">
-                                    @{std.username}
-                                  </td>
-                                  <td className="p-3.5">
-                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                                      තවමත් විභාගයට පෙනී සිට නැත
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 text-center">
-                                    <button
-                                      onClick={() => handlePushExam(activeExamObj, true)}
-                                      className="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer"
-                                    >
-                                      <Send size={12} /> Re-Push
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                </div>
+                renderExamAnalyticsView(activeExamObj, false)
               ) : (
-                <div className="p-8 text-center text-slate-500 text-xs">
+                <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                   තවමත් ලයිව් විභාග සකසා නොමැත. "ලයිව් එක්සෑම් හා පුෂ්" ටැබ් එක වෙතින් නව විභාගයක් සාදන්න.
                 </div>
               )}
@@ -1361,32 +1860,32 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                 SECTION 2: ASSIGNMENT MARKS LEDGER (පැවරුම් ලකුණු ලේඛනය)
                 Requirement: පෙන්විය යුතුයි + පැය 24ක් තුළ මුළු ලැයිස්තුවම හෝ තනි තනිව Edit/Delete පහසුකම
                 =================================================================== */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl space-y-4 p-5 md:p-6">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl overflow-hidden shadow-sm space-y-4 p-5 md:p-6">
               
               {/* Header Bar */}
-              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-800 pb-5">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
                 <div>
-                  <h3 className="font-extrabold text-base md:text-lg text-emerald-400 flex items-center gap-2">
+                  <h3 className="font-extrabold text-base md:text-lg text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
                     <FileText size={20} />
                     <span>එසයිමන්ට් ලකුණු ලැයිස්තුව (Assignment Marks Ledger)</span>
-                    <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                    <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/15 border border-emerald-200 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300">
                       {assignmentMarksList.length} ලකුණු
                     </span>
                   </h3>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                     දේශකවරයා විසින් ඇතුළත් කරන ලද ලකුණු පැය 24ක් තුළ මුළු ලැයිස්තුවම හෝ තනි තනි සිසුන් වෙන වෙනම සංස්කරණය (Edit) හා මකාදැමීම (Delete) කළ හැක.
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
                   {/* View Mode Switcher */}
-                  <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex items-center gap-1">
+                  <div className="bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-1">
                     <button
                       onClick={() => setLedgerViewMode('batches')}
                       className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                         ledgerViewMode === 'batches'
                           ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-white'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       📋 පැවරුම් අනුව (Batches)
@@ -1396,7 +1895,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                         ledgerViewMode === 'students'
                           ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-white'
+                          : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                       }`}
                     >
                       👥 ශිෂ්‍ය ලකුණු (All Students)
@@ -1406,7 +1905,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                   {/* Add New Batch Marks Button */}
                   <button
                     onClick={() => handleOpenBatchAssignModal()}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-950/40 transition cursor-pointer shrink-0"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-900/30 transition cursor-pointer shrink-0"
                   >
                     <Plus size={15} /> නව ලකුණු එකවර ඇතුළත් කරන්න
                   </button>
@@ -1416,18 +1915,18 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               {/* Filter and Search Bar */}
               <div className="flex flex-col sm:flex-row gap-3 pt-1">
                 <div className="relative flex-1">
-                  <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={ledgerSearch}
                     onChange={e => setLedgerSearch(e.target.value)}
                     placeholder="ශිෂ්‍ය නම, Username හෝ පැවරුම් නාමය අනුව සොයන්න..."
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
                   />
                   {ledgerSearch && (
                     <button
                       onClick={() => setLedgerSearch('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs"
                     >
                       ✕
                     </button>
@@ -1438,7 +1937,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                   <select
                     value={ledgerClassFilter}
                     onChange={e => setLedgerClassFilter(e.target.value)}
-                    className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                    className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-200 focus:outline-none focus:border-emerald-500 font-medium"
                   >
                     <option value="all">සියලු පන්ති (All Classes)</option>
                     {assignedClasses.map(c => (
@@ -1469,12 +1968,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
 
                 if (assignmentMarksList.length === 0) {
                   return (
-                    <div className="py-12 text-center text-slate-500 text-xs space-y-3 bg-slate-950/40 rounded-2xl border border-slate-800/80 p-8">
-                      <FileText size={36} className="mx-auto text-slate-600" />
-                      <p className="font-semibold text-slate-400">තවමත් එසයිමන්ට් ලකුණු ඇතුළත් කර නොමැත.</p>
+                    <div className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs space-y-3 bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-slate-200 dark:border-slate-800/80 p-8">
+                      <FileText size={36} className="mx-auto text-slate-400" />
+                      <p className="font-semibold text-slate-600 dark:text-slate-400">තවමත් එසයිමන්ට් ලකුණු ඇතුළත් කර නොමැත.</p>
                       <button
                         onClick={() => handleOpenBatchAssignModal()}
-                        className="px-4 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-bold transition cursor-pointer inline-flex items-center gap-1.5"
+                        className="px-4 py-2 bg-emerald-50 dark:bg-emerald-600/20 hover:bg-emerald-100 dark:hover:bg-emerald-600/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 rounded-xl text-xs font-bold transition cursor-pointer inline-flex items-center gap-1.5"
                       >
                         <Plus size={14} /> නව එසයිමන්ට් ලකුණු එකවර ඇතුළත් කරන්න
                       </button>
@@ -1484,7 +1983,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
 
                 if (filteredMarks.length === 0) {
                   return (
-                    <div className="py-10 text-center text-slate-500 text-xs bg-slate-950/40 rounded-2xl border border-slate-800/80">
+                    <div className="py-10 text-center text-slate-500 dark:text-slate-400 text-xs bg-slate-50 dark:bg-slate-950/40 rounded-2xl border border-slate-200 dark:border-slate-800/80">
                       සොයන ලද නිර්ණායකවලට ගැලපෙන ලකුණු සටහන් හමු නොවීය.
                     </div>
                   );
@@ -1494,7 +1993,6 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                 // VIEW 1: BATCHES OVERVIEW (Grouped by assignment_name + class_type)
                 // ==========================================================
                 if (ledgerViewMode === 'batches') {
-                  // Group marks by assignment_name + class_type
                   const batchMap = new Map<string, {
                     assignment_name: string;
                     class_type: string;
@@ -1530,59 +2028,59 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                         return (
                           <div
                             key={`batch-${bIdx}`}
-                            className="p-5 bg-slate-950 rounded-2xl border border-slate-800/90 hover:border-slate-700 transition flex flex-col justify-between gap-4 shadow-lg group"
+                            className="p-5 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-200 dark:border-slate-800/90 hover:border-slate-300 dark:hover:border-slate-700 transition flex flex-col justify-between gap-4 shadow-sm group"
                           >
                             <div className="space-y-2.5">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-800 font-mono">
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-mono">
                                     {batch.class_type}
                                   </span>
-                                  <h4 className="text-sm font-extrabold text-white mt-1.5 leading-snug">
+                                  <h4 className="text-sm font-extrabold text-slate-900 dark:text-white mt-1.5 leading-snug">
                                     {batch.assignment_name}
                                   </h4>
                                 </div>
-                                <span className="text-xs font-mono text-slate-400 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 whitespace-nowrap">
+                                <span className="text-xs font-mono text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 whitespace-nowrap">
                                   📅 {batch.assignment_date || 'N/A'}
                                 </span>
                               </div>
 
                               {/* Stats Row */}
                               <div className="grid grid-cols-2 gap-2 pt-1 text-center">
-                                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800">
-                                  <p className="text-[10px] text-slate-400 uppercase font-semibold">ශිෂ්‍ය සංඛ්‍යාව</p>
-                                  <p className="text-base font-extrabold text-white font-mono">{totalStudents}</p>
+                                <div className="p-2.5 bg-white dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
+                                  <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">ශිෂ්‍ය සංඛ්‍යාව</p>
+                                  <p className="text-base font-extrabold text-slate-900 dark:text-white font-mono">{totalStudents}</p>
                                 </div>
-                                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800">
-                                  <p className="text-[10px] text-slate-400 uppercase font-semibold">සාමාන්‍ය ලකුණු (Avg)</p>
-                                  <p className="text-base font-extrabold text-emerald-400 font-mono">{avgMarks}%</p>
+                                <div className="p-2.5 bg-white dark:bg-slate-900/80 rounded-xl border border-slate-200 dark:border-slate-800">
+                                  <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">සාමාන්‍ය ලකුණු (Avg)</p>
+                                  <p className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">{avgMarks}%</p>
                                 </div>
                               </div>
 
                               {/* 24-Hour Edit Window Status Pill */}
                               <div className="pt-1">
                                 {isEditable ? (
-                                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-xl">
-                                    <Clock size={13} className="text-emerald-400 animate-spin" />
+                                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-3 py-1.5 rounded-xl">
+                                    <Clock size={13} className="text-emerald-600 dark:text-emerald-400 animate-spin" />
                                     <span>පැය 24 න් පැය {remTime.hours} මිනිත්තු {remTime.minutes} ඉතිරියි (Edit/Delete හැක)</span>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl">
-                                    <ShieldAlert size={13} className="text-slate-500" />
+                                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-xl">
+                                    <ShieldAlert size={13} className="text-slate-400 dark:text-slate-500" />
                                     <span>පැය 24 ඉක්මවා ඇත (සංස්කරණය ලොක් කර ඇත)</span>
                                   </div>
                                 )}
                               </div>
                             </div>
 
-                            {/* Action Buttons: Edit entire batch, Delete entire batch, View students */}
-                            <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-800/80">
+                            {/* Action Buttons */}
+                            <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-200 dark:border-slate-800/80">
                               <button
                                 onClick={() => {
                                   setLedgerViewMode('students');
                                   setLedgerSearch(batch.assignment_name);
                                 }}
-                                className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                className="flex-1 py-2 px-3 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                               >
                                 <Users size={13} /> ශිෂ්‍ය ලකුණු ({totalStudents})
                               </button>
@@ -1592,8 +2090,8 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                 disabled={!isEditable}
                                 className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                                   isEditable
-                                    ? 'bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30'
-                                    : 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed opacity-60'
+                                    ? 'bg-amber-50 dark:bg-amber-600/20 hover:bg-amber-100 dark:hover:bg-amber-600/30 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30'
+                                    : 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 border border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60'
                                 }`}
                                 title={isEditable ? 'මුළු ලැයිස්තුවම එකවර සංස්කරණය කරන්න' : 'පැය 24 ඉක්මවා ඇති බැවින් සංස්කරණය කළ නොහැක'}
                               >
@@ -1605,8 +2103,8 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                 disabled={!isEditable}
                                 className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                                   isEditable
-                                    ? 'bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30'
-                                    : 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed opacity-60'
+                                    ? 'bg-rose-50 dark:bg-rose-600/20 hover:bg-rose-100 dark:hover:bg-rose-600/30 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-500/30'
+                                    : 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 border border-slate-200 dark:border-slate-800 cursor-not-allowed opacity-60'
                                 }`}
                                 title={isEditable ? 'මුළු පැවරුම් ලැයිස්තුවම මකන්න' : 'පැය 24 ඉක්මවා ඇති බැවින් මකා දැමිය නොහැක'}
                               >
@@ -1624,9 +2122,9 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                 // VIEW 2: INDIVIDUAL STUDENTS TABLE (වෙන වෙනම Edit / Delete)
                 // ==========================================================
                 return (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-800/80">
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800/80">
                     <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+                      <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase border-b border-slate-200 dark:border-slate-800">
                         <tr>
                           <th className="p-3.5">ශිෂ්‍යයා (Student Name)</th>
                           <th className="p-3.5">Username</th>
@@ -1638,42 +2136,42 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                           <th className="p-3.5 text-center">ක්‍රියාකාරකම්</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800 bg-slate-950/40">
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950/40">
                         {filteredMarks.map((mark) => {
                           const rem = getAssignmentRemainingTime(mark.created_at);
                           const isEditable = !rem.expired;
 
                           return (
-                            <tr key={mark.id} className="hover:bg-slate-850/50 transition">
-                              <td className="p-3.5 font-bold text-white">
+                            <tr key={mark.id} className="hover:bg-slate-50 dark:hover:bg-slate-850/50 transition">
+                              <td className="p-3.5 font-bold text-slate-900 dark:text-white">
                                 {mark.student_name || mark.student_username}
                               </td>
-                              <td className="p-3.5 font-mono text-indigo-400">
+                              <td className="p-3.5 font-mono text-indigo-600 dark:text-indigo-400 font-bold">
                                 @{mark.student_username}
                               </td>
-                              <td className="p-3.5 text-slate-200 font-medium">
+                              <td className="p-3.5 text-slate-700 dark:text-slate-200 font-medium">
                                 {mark.assignment_name}
                               </td>
                               <td className="p-3.5">
-                                <span className="bg-slate-950 px-2 py-0.5 rounded text-[10px] border border-slate-800 font-semibold text-slate-300">
+                                <span className="bg-slate-100 dark:bg-slate-950 px-2 py-0.5 rounded text-[10px] border border-slate-200 dark:border-slate-800 font-semibold text-slate-700 dark:text-slate-300">
                                   {mark.class_type || 'General'}
                                 </span>
                               </td>
                               <td className="p-3.5 text-center">
-                                <span className="font-extrabold text-sm px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
+                                <span className="font-extrabold text-sm px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 font-mono">
                                   {mark.marks}
                                 </span>
                               </td>
-                              <td className="p-3.5 text-slate-400 font-mono">
+                              <td className="p-3.5 text-slate-500 dark:text-slate-400 font-mono">
                                 {mark.assignment_date || 'N/A'}
                               </td>
                               <td className="p-3.5 text-center">
                                 {isEditable ? (
-                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1 font-mono">
+                                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded-full inline-flex items-center gap-1 font-mono">
                                     <Clock size={10} /> පැය {rem.hours} ඉතිරියි
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] font-bold text-slate-500 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                  <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                                     🔒 ලොක්
                                   </span>
                                 )}
@@ -1691,8 +2189,8 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                     disabled={!isEditable}
                                     className={`p-1.5 rounded-lg transition ${
                                       isEditable 
-                                        ? 'bg-slate-800 hover:bg-slate-700 text-amber-400 cursor-pointer' 
-                                        : 'bg-slate-900 text-slate-600 cursor-not-allowed opacity-50'
+                                        ? 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-600 dark:text-amber-400 cursor-pointer' 
+                                        : 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                     title={isEditable ? 'තනිව සංස්කරණය (Edit)' : 'පැය 24 ඉක්මවා ඇති බැවින් ලොක් කර ඇත'}
                                   >
@@ -1703,8 +2201,8 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                     disabled={!isEditable}
                                     className={`p-1.5 rounded-lg transition ${
                                       isEditable 
-                                        ? 'bg-slate-800 hover:bg-rose-950 text-rose-400 cursor-pointer' 
-                                        : 'bg-slate-900 text-slate-600 cursor-not-allowed opacity-50'
+                                        ? 'bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950 text-rose-600 dark:text-rose-400 cursor-pointer' 
+                                        : 'bg-slate-100 dark:bg-slate-900 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
                                     }`}
                                     title={isEditable ? 'තනිව මකාදමන්න (Delete)' : 'පැය 24 ඉක්මවා ඇති බැවින් ලොක් කර ඇත'}
                                   >
@@ -1720,7 +2218,6 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                   </div>
                 );
               })()}
-
             </div>
 
           </div>
@@ -1751,15 +2248,15 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           <div className="space-y-6">
             
             {/* Header with Total Students & Search */}
-            <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-xl">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-sm">
               <div className="space-y-1">
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Users className="text-indigo-400" size={24} /> මගේ පන්තිවල ලියාපදිංචි සිසුන් (My Students by Class)
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Users className="text-indigo-600 dark:text-indigo-400" size={24} /> මගේ පන්තිවල ලියාපදිංචි සිසුන් (My Students by Class)
                 </h2>
-                <p className="text-slate-400 text-xs">
+                <p className="text-slate-600 dark:text-slate-400 text-xs">
                   ඔබට පවරා ඇති පන්ති කාණ්ඩ ({assignedClasses.join(', ') || 'සියල්ල'}) අනුව සිසුන් වෙන් වෙන් වශයෙන් මෙහි පෙන්වයි.
                 </p>
-                <div className="mt-2 text-[11px] bg-slate-950 border border-slate-800 text-slate-400 px-3 py-1.5 rounded-xl inline-block">
+                <div className="mt-2 text-[11px] bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 px-3 py-1.5 rounded-xl inline-block">
                   🔒 රහස්‍යතා ප්‍රතිපත්තිය: මෙම ලැයිස්තුවේ ශිෂ්‍යයාගේ නම සහ Username පමණක් ප්‍රදර්ශනය කෙරේ.
                 </div>
               </div>
@@ -1767,27 +2264,27 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
                 {/* Search Bar */}
                 <div className="relative w-full sm:w-64">
-                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     placeholder="ශිෂ්‍යයාගේ නම / @username සොයන්න..."
                     value={studentSearchQuery}
                     onChange={(e) => setStudentSearchQuery(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
                   />
                   {studentSearchQuery && (
                     <button
                       onClick={() => setStudentSearchQuery('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs"
                     >
                       ✕
                     </button>
                   )}
                 </div>
 
-                <div className="text-right sm:text-right shrink-0 bg-slate-950 px-4 py-2 rounded-xl border border-slate-800">
-                  <span className="text-xl font-black text-indigo-400">{enrolledStudents.length}</span>
-                  <span className="text-[10px] text-slate-400 block font-bold">මුළු සිසුන් ගණන</span>
+                <div className="text-right sm:text-right shrink-0 bg-slate-50 dark:bg-slate-950 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-xl font-black text-indigo-600 dark:text-indigo-400">{enrolledStudents.length}</span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 block font-bold">මුළු සිසුන් ගණන</span>
                 </div>
               </div>
             </div>
@@ -1801,7 +2298,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
                     studentClassFilter === 'all'
                       ? 'bg-indigo-600 text-white shadow-md'
-                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800'
                   }`}
                 >
                   <BookOpen size={14} />
@@ -1821,11 +2318,11 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
                         studentClassFilter === cls
                           ? 'bg-indigo-600 text-white shadow-md'
-                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                          : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800'
                       }`}
                     >
                       <span>🏛️ {cls}</span>
-                      <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-800 text-indigo-300 font-mono">
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 font-mono">
                         {countInClass}
                       </span>
                     </button>
@@ -1855,22 +2352,22 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                     });
 
                     return (
-                      <div key={clsName} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                      <div key={clsName} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm">
                         
                         {/* Class Header Bar */}
-                        <div className="p-4 bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950/30 border-b border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                        <div className="p-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">
+                            <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">
                               <BookOpen size={18} />
                             </div>
                             <div>
-                              <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                              <h3 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                                 <span>{isAll ? 'සියලුම පන්තිවල සිසුන්' : clsName}</span>
-                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30">
                                   {classStudents.length} Students
                                 </span>
                               </h3>
-                              <p className="text-[11px] text-slate-400">
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400">
                                 {isAll ? 'ලියාපදිංචි සියලුම සිසුන්ගේ නාමාවලිය' : `මෙම පන්තිය සඳහා පමණක් ලියාපදිංචි වී ඇති සිසුන්`}
                               </p>
                             </div>
@@ -1883,7 +2380,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                 handleOpenBatchAssignModal(clsName);
                                 setActiveTab('grades');
                               }}
-                              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                             >
                               <Plus size={13} />
                               <span>පැවරුම් ලකුණු ලබාදීම (Batch Assign)</span>
@@ -1894,12 +2391,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                         {/* Students Table for this Class */}
                         <div className="overflow-x-auto">
                           {classStudents.length === 0 ? (
-                            <div className="p-8 text-center text-slate-500 text-xs">
+                            <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs">
                               {studentSearchQuery ? 'සෙවුමට ගැළපෙන සිසුන් හමු නොවීය.' : 'මෙම පන්තිය සඳහා මෙතෙක් කිසිදු ශිෂ්‍යයෙකු ලියාපදිංචි වී නොමැත.'}
                             </div>
                           ) : (
                             <table className="w-full text-left border-collapse text-xs">
-                              <thead className="bg-slate-950 text-slate-400 font-mono uppercase border-b border-slate-800">
+                              <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase border-b border-slate-200 dark:border-slate-800">
                                 <tr>
                                   <th className="p-3.5 w-12 text-center">#</th>
                                   <th className="p-3.5">ශිෂ්‍යයාගේ සම්පූර්ණ නම (Student Full Name)</th>
@@ -1908,16 +2405,16 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                   <th className="p-3.5 text-center">එසයිමන්ට් ලකුණු</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-800">
+                              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                                 {classStudents.map((std, idx) => (
-                                  <tr key={`${clsName}_${std.id || std.username}_${idx}`} className="hover:bg-slate-850/50 transition">
+                                  <tr key={`${clsName}_${std.id || std.username}_${idx}`} className="hover:bg-slate-50 dark:hover:bg-slate-850/50 transition">
                                     <td className="p-3.5 text-center font-mono text-slate-500">
                                       {idx + 1}
                                     </td>
-                                    <td className="p-3.5 font-bold text-white text-sm">
+                                    <td className="p-3.5 font-bold text-slate-900 dark:text-white text-sm">
                                       {std.name}
                                     </td>
-                                    <td className="p-3.5 font-mono text-indigo-400 font-semibold">
+                                    <td className="p-3.5 font-mono text-indigo-600 dark:text-indigo-400 font-semibold">
                                       @{std.username}
                                     </td>
                                     <td className="p-3.5">
@@ -1929,8 +2426,8 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                               key={c}
                                               className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
                                                 isCurrentClass
-                                                  ? 'bg-indigo-950/80 text-indigo-300 border-indigo-500/40 font-bold'
-                                                  : 'bg-slate-950 text-slate-400 border-slate-800'
+                                                  ? 'bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-500/40 font-bold'
+                                                  : 'bg-slate-100 dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
                                               }`}
                                             >
                                               {c}
@@ -1945,7 +2442,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                           handleOpenBatchAssignModal(clsName !== 'All Students' ? clsName : (std.class_types?.[0] || ''));
                                           setActiveTab('grades');
                                         }}
-                                        className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                                        className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-600/20 hover:bg-emerald-100 dark:hover:bg-emerald-600/30 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/30 rounded-xl font-bold transition flex items-center justify-center gap-1 mx-auto cursor-pointer"
                                       >
                                         <Plus size={12} /> Add Marks
                                       </button>
@@ -1973,17 +2470,17 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           MODAL 1: STANDALONE LIVE EXAM CREATION / EDITING
           ========================================================================= */}
       {isExamModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="bg-slate-900 border border-amber-500/30 p-6 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 p-6 rounded-3xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl text-slate-900 dark:text-white">
             
-            <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-3">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <FileCheck className="text-amber-500" /> 
                 {examFormData.id ? 'විභාගය සංස්කරණය කරන්න' : 'නව ලයිව් එක්සෑම් එකක් නිර්මාණය කරන්න'}
               </h2>
               <button 
                 onClick={() => setIsExamModalOpen(false)} 
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg"
               >
                 ✕
               </button>
@@ -1993,24 +2490,24 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-slate-400 uppercase font-mono mb-1">Exam Title (විභාග මාතෘකාව)</label>
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">Exam Title (විභාග මාතෘකාව)</label>
                   <input
                     required
                     type="text"
                     value={examFormData.title}
                     onChange={e => setExamFormData({ ...examFormData, title: e.target.value })}
-                    placeholder="උදා: 2026 Revision - Unit 01 Live Exam"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-amber-500"
+                    placeholder="උදා: Science Academy - Unit 01 Live Exam"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm focus:outline-none focus:border-amber-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs text-slate-400 uppercase font-mono mb-1">Target Class (ඔබට අයත් පන්ති පමණි)</label>
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">Target Class (ඔබට අයත් පන්ති පමණි)</label>
                   <select
                     required
                     value={examFormData.class_type}
                     onChange={e => setExamFormData({ ...examFormData, class_type: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-amber-500 font-semibold"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm focus:outline-none focus:border-amber-500 font-semibold"
                   >
                     <option value="" disabled>පන්තියක් තෝරන්න</option>
                     {assignedClasses.length > 0 ? (
@@ -2018,27 +2515,27 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                         <option key={c} value={c}>{c}</option>
                       ))
                     ) : (
-                      <option value="2026 Revision">2026 Revision</option>
+                      <option value="Grade 11 - TnS Science Academy">Grade 11 - TnS Science Academy</option>
                     )}
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs text-slate-400 uppercase font-mono mb-1">Google Drive PDF URL (ප්‍රශ්න පත්‍ර Link එක)</label>
+                <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">Google Drive PDF URL (ප්‍රශ්න පත්‍ර Link එක)</label>
                 <input
                   required
                   type="url"
                   value={examFormData.pdf_url}
                   onChange={e => setExamFormData({ ...examFormData, pdf_url: e.target.value })}
                   placeholder="https://drive.google.com/file/d/.../view?usp=sharing"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm focus:outline-none focus:border-amber-500"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm focus:outline-none focus:border-amber-500"
                 />
               </div>
 
               {/* Exam Duration */}
-              <div className="bg-slate-950 p-4 border border-slate-800 rounded-2xl">
-                <label className="block text-sm font-bold text-slate-300 mb-2">Exam Duration (කාල සීමාව)</label>
+              <div className="bg-slate-50 dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl">
+                <label className="block text-sm font-bold text-slate-800 dark:text-slate-300 mb-2">Exam Duration (කාල සීමාව)</label>
                 <div className="flex gap-4">
                   <div className="flex flex-col">
                     <label className="text-[11px] text-slate-500 mb-1">Hours (පැය)</label>
@@ -2047,7 +2544,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       min="0"
                       value={examFormData.durationHours}
                       onChange={e => setExamFormData({ ...examFormData, durationHours: Number(e.target.value) })}
-                      className="w-20 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-center font-bold"
+                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-slate-900 dark:text-white text-center font-bold"
                     />
                   </div>
                   <div className="flex flex-col">
@@ -2058,7 +2555,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       max="59"
                       value={examFormData.durationMinutes}
                       onChange={e => setExamFormData({ ...examFormData, durationMinutes: Number(e.target.value) })}
-                      className="w-20 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-center font-bold"
+                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-slate-900 dark:text-white text-center font-bold"
                     />
                   </div>
                   <div className="flex flex-col">
@@ -2069,7 +2566,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       max="59"
                       value={examFormData.durationSeconds}
                       onChange={e => setExamFormData({ ...examFormData, durationSeconds: Number(e.target.value) })}
-                      className="w-20 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-center font-bold"
+                      className="w-20 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-slate-900 dark:text-white text-center font-bold"
                     />
                   </div>
                 </div>
@@ -2077,31 +2574,31 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
 
               {/* Total Questions Count */}
               <div>
-                <label className="block text-xs text-slate-400 uppercase font-mono mb-1">Total Questions Count (ප්‍රශ්න ගණන)</label>
+                <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">Total Questions Count (ප්‍රශ්න ගණන)</label>
                 <input
                   type="number"
                   min="1"
                   max="100"
                   value={examFormData.total_questions}
                   onChange={e => setExamFormData({ ...examFormData, total_questions: Number(e.target.value) })}
-                  className="w-32 bg-slate-950 border border-slate-800 rounded-xl p-3 text-white text-sm font-bold"
+                  className="w-32 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-3 text-slate-900 dark:text-white text-sm font-bold"
                 />
               </div>
 
               {/* Answer Key Grid */}
-              <div className="bg-slate-950 p-4 border border-slate-800 rounded-2xl">
-                <label className="block text-sm font-bold text-slate-300 mb-2">Answer Key (නිවැරදි පිළිතුරු 1 සිට 5 දක්වා)</label>
+              <div className="bg-slate-50 dark:bg-slate-950 p-4 border border-slate-200 dark:border-slate-800 rounded-2xl">
+                <label className="block text-sm font-bold text-slate-800 dark:text-slate-300 mb-2">Answer Key (නිවැරදි පිළිතුරු 1 සිට 5 දක්වා)</label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 max-h-56 overflow-y-auto p-2">
                   {Array.from({ length: examFormData.total_questions }, (_, i) => i + 1).map(qNum => (
-                    <div key={qNum} className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
-                      <span className="text-slate-400 font-mono text-xs w-6 text-right font-bold">{qNum}.</span>
+                    <div key={qNum} className="flex items-center gap-2 bg-white dark:bg-slate-900 p-2 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <span className="text-slate-500 dark:text-slate-400 font-mono text-xs w-6 text-right font-bold">{qNum}.</span>
                       <select
                         value={examFormData.correct_answer[qNum] || ''}
                         onChange={e => setExamFormData({
                           ...examFormData,
                           correct_answer: { ...examFormData.correct_answer, [qNum]: Number(e.target.value) }
                         })}
-                        className="bg-slate-950 border border-slate-800 text-white rounded-lg p-1.5 w-full text-xs font-bold"
+                        className="bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-white rounded-lg p-1.5 w-full text-xs font-bold"
                         required
                       >
                         <option value="" disabled>-</option>
@@ -2115,11 +2612,11 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               </div>
 
               {/* Submit Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsExamModalOpen(false)}
-                  className="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition"
+                  className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-5 py-2.5 rounded-xl text-xs font-bold transition"
                 >
                   අවලංගු කරන්න
                 </button>
@@ -2142,22 +2639,22 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           Requirement: එකම පොරමය තුල එකවර සිසුන් කිහිපදෙනෙක් එකවර ඇඩ් කර සබ්මිට් කිරීම
           ========================================================================= */}
       {isBatchAssignModalOpen && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-3 sm:p-4">
-          <div className="bg-slate-900 border border-emerald-500/30 p-6 rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[60] p-3 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-emerald-500/30 p-6 rounded-3xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden text-slate-900 dark:text-white">
             
-            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-3">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-slate-800 pb-3">
               <div>
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Award className="text-emerald-400" />
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Award className="text-emerald-500" />
                   පැවරුම් ලකුණු එකවර ඇතුළත් කිරීම (Batch Assignment Grading)
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   පන්තිය තෝරා, සියලු සිසුන්ට හෝ තෝරාගත් සිසුන්ට එකවර ලකුණු ලබා දී සබ්මිට් කරන්න.
                 </p>
               </div>
               <button 
                 onClick={() => setIsBatchAssignModalOpen(false)} 
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg"
               >
                 ✕
               </button>
@@ -2168,27 +2665,27 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               {/* Form Controls */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-1">
-                  <label className="block text-xs text-slate-400 uppercase font-mono mb-1">
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">
                     පන්තිය (ඔබට අයත් පන්ති) *
                   </label>
                   <select
                     required
                     value={batchAssignForm.class_type}
                     onChange={e => handleBatchClassChange(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-xs font-bold focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:border-emerald-500"
                   >
                     {assignedClasses.length > 0 ? (
                       assignedClasses.map(c => (
                         <option key={c} value={c}>{c}</option>
                       ))
                     ) : (
-                      <option value="2026 Revision">2026 Revision</option>
+                      <option value="Grade 11 - TnS Science Academy">Grade 11 - TnS Science Academy</option>
                     )}
                   </select>
                 </div>
 
                 <div className="sm:col-span-1">
-                  <label className="block text-xs text-slate-400 uppercase font-mono mb-1">
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">
                     Assignment Name (පැවරුම් නාමය) *
                   </label>
                   <input
@@ -2197,12 +2694,12 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                     value={batchAssignForm.assignment_name}
                     onChange={e => setBatchAssignForm({ ...batchAssignForm, assignment_name: e.target.value })}
                     placeholder="උදා: Mechanics Sheet 01"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-white text-xs focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
                 <div className="sm:col-span-1">
-                  <label className="block text-xs text-slate-400 uppercase font-mono mb-1">
+                  <label className="block text-xs text-slate-600 dark:text-slate-400 uppercase font-mono mb-1">
                     දිනය (Date) *
                   </label>
                   <input
@@ -2210,13 +2707,13 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                     type="date"
                     value={batchAssignForm.assignment_date}
                     onChange={e => setBatchAssignForm({ ...batchAssignForm, assignment_date: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white text-xs font-mono"
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-slate-900 dark:text-white text-xs font-mono"
                   />
                 </div>
               </div>
 
               {/* Student Filter & Bulk Actions Bar */}
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-950 p-3 rounded-2xl border border-slate-800">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-50 dark:bg-slate-950 p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
                 <div className="relative w-full sm:w-64">
                   <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
                   <input
@@ -2224,7 +2721,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                     placeholder="ශිෂ්‍ය නම හෝ Username සොයන්න..."
                     value={batchSearch}
                     onChange={e => setBatchSearch(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 text-xs text-white pl-8 pr-3 py-1.5 rounded-xl focus:outline-none focus:border-emerald-500"
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white pl-8 pr-3 py-1.5 rounded-xl focus:outline-none focus:border-emerald-500"
                   />
                 </div>
 
@@ -2234,17 +2731,17 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                     onClick={() => {
                       setBatchStudentRows(prev => prev.map(r => ({ ...r, selected: true })));
                     }}
-                    className="text-[11px] font-bold text-emerald-400 hover:underline cursor-pointer"
+                    className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
                   >
                     සියල්ල තෝරන්න
                   </button>
-                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-300 dark:text-slate-600">|</span>
                   <button
                     type="button"
                     onClick={() => {
                       setBatchStudentRows(prev => prev.map(r => ({ ...r, marks: 100 })));
                     }}
-                    className="text-[11px] font-bold text-blue-400 hover:underline cursor-pointer"
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
                   >
                     සියල්ලන්ටම 100 යොදන්න
                   </button>
@@ -2252,9 +2749,9 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               </div>
 
               {/* Batch Student List Table */}
-              <div className="flex-1 overflow-y-auto border border-slate-800 rounded-2xl">
+              <div className="flex-1 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-2xl">
                 <table className="w-full text-left border-collapse text-xs">
-                  <thead className="bg-slate-950 text-slate-400 font-mono uppercase sticky top-0 border-b border-slate-800">
+                  <thead className="bg-slate-50 dark:bg-slate-950 text-slate-600 dark:text-slate-400 font-mono uppercase sticky top-0 border-b border-slate-200 dark:border-slate-800">
                     <tr>
                       <th className="p-3 w-10 text-center">තෝරන්න</th>
                       <th className="p-3">ශිෂ්‍යයාගේ නම</th>
@@ -2262,11 +2759,11 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                       <th className="p-3 text-center w-36">ලකුණු (Marks)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800">
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {batchStudentRows
                       .filter(r => !batchSearch || r.username.toLowerCase().includes(batchSearch.toLowerCase()) || r.name.toLowerCase().includes(batchSearch.toLowerCase()))
                       .map((row, idx) => (
-                        <tr key={row.username} className={`hover:bg-slate-850/50 transition ${row.selected ? 'bg-slate-900/40' : 'opacity-60'}`}>
+                        <tr key={row.username} className={`hover:bg-slate-50 dark:hover:bg-slate-850/50 transition ${row.selected ? 'bg-slate-100/50 dark:bg-slate-900/40' : 'opacity-60'}`}>
                           <td className="p-3 text-center">
                             <input
                               type="checkbox"
@@ -2278,10 +2775,10 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                               className="accent-emerald-500 w-4 h-4 rounded cursor-pointer"
                             />
                           </td>
-                          <td className="p-3 font-bold text-white">
+                          <td className="p-3 font-bold text-slate-900 dark:text-white">
                             {row.name}
                           </td>
-                          <td className="p-3 font-mono text-indigo-400">
+                          <td className="p-3 font-mono text-indigo-600 dark:text-indigo-400">
                             @{row.username}
                           </td>
                           <td className="p-3 text-center">
@@ -2295,7 +2792,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                                 const val = Number(e.target.value);
                                 setBatchStudentRows(prev => prev.map(r => r.username === row.username ? { ...r, marks: val } : r));
                               }}
-                              className="w-24 bg-slate-950 border border-slate-700 rounded-lg p-1.5 text-center text-xs font-black text-white focus:outline-none focus:border-emerald-500 disabled:opacity-40"
+                              className="w-24 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg p-1.5 text-center text-xs font-black text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 disabled:opacity-40"
                             />
                           </td>
                         </tr>
@@ -2305,23 +2802,23 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
               </div>
 
               {/* Form Submit Footer */}
-              <div className="flex justify-between items-center pt-3 border-t border-slate-800">
-                <span className="text-xs text-slate-400">
-                  තෝරාගත් සිසුන් ගණන: <strong className="text-emerald-400">{batchStudentRows.filter(r => r.selected).length}</strong>
+              <div className="flex justify-between items-center pt-3 border-t border-slate-200 dark:border-slate-800">
+                <span className="text-xs text-slate-600 dark:text-slate-400">
+                  තෝරාගත් සිසුන් ගණන: <strong className="text-emerald-600 dark:text-emerald-400">{batchStudentRows.filter(r => r.selected).length}</strong>
                 </span>
 
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setIsBatchAssignModalOpen(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold"
+                    className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white px-4 py-2 rounded-xl text-xs font-bold"
                   >
                     අවලංගු කරන්න
                   </button>
                   <button
                     type="submit"
                     disabled={isBatchSaving}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-emerald-900/30 transition cursor-pointer disabled:opacity-50"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-md shadow-emerald-900/30 transition cursor-pointer disabled:opacity-50"
                   >
                     {isBatchSaving ? 'සුරැකෙමින් පවතී...' : 'ලකුණු සියල්ල එකවර සුරකින්න (Save All Marks)'}
                   </button>
@@ -2338,14 +2835,14 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           MODAL 3: SINGLE EDIT ASSIGNMENT MARK MODAL
           ========================================================================= */}
       {editingMark && (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-          <div className="bg-slate-900 border border-amber-500/30 p-6 rounded-3xl w-full max-w-md shadow-2xl">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-amber-500/30 p-6 rounded-3xl w-full max-w-md shadow-2xl text-slate-900 dark:text-white">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-base text-white">පැවරුම් ලකුණු සංස්කරණය (Single Edit)</h3>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">පැවරුම් ලකුණු සංස්කරණය (Single Edit)</h3>
               {(() => {
                 const rem = getAssignmentRemainingTime(editingMark.created_at);
                 return (
-                  <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
                     <Clock size={10} className="inline mr-1" />
                     පැය {rem.hours} ඉතිරියි
                   </span>
@@ -2354,23 +2851,23 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
             </div>
             <form onSubmit={handleSaveSingleEdit} className="space-y-4">
               <div>
-                <label className="text-xs text-slate-400 block mb-1">ශිෂ්‍යයා</label>
-                <div className="p-2.5 bg-slate-950 rounded-xl text-xs font-bold text-white font-mono">
+                <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">ශිෂ්‍යයා</label>
+                <div className="p-2.5 bg-slate-50 dark:bg-slate-950 rounded-xl text-xs font-bold text-slate-900 dark:text-white font-mono border border-slate-200 dark:border-slate-800">
                   {editingMark.student_name} (@{editingMark.student_username})
                 </div>
               </div>
               <div>
-                <label className="text-xs text-slate-400 block mb-1">පැවරුම් නාමය</label>
+                <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">පැවරුම් නාමය</label>
                 <input
                   type="text"
                   required
                   value={editingMark.assignment_name}
                   onChange={e => setEditingMark({ ...editingMark, assignment_name: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 block mb-1">ලකුණු (Marks)</label>
+                <label className="text-xs text-slate-600 dark:text-slate-400 block mb-1">ලකුණු (Marks)</label>
                 <input
                   type="number"
                   required
@@ -2378,14 +2875,14 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
                   max="1000"
                   value={editingMark.marks}
                   onChange={e => setEditingMark({ ...editingMark, marks: Number(e.target.value) })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white font-black text-center"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white font-black text-center"
                 />
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setEditingMark(null)}
-                  className="px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-white rounded-xl text-xs font-bold"
                 >
                   අවලංගු කරන්න
                 </button>
@@ -2400,7 +2897,7 @@ export default function LecturerDashboard({ currentStaff, handleLogout, lang = '
           </div>
         </div>
       )}
-
     </div>
   );
 }
+

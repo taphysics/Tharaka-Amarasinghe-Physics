@@ -24,7 +24,14 @@ import {
   ChevronRight,
   UserCheck,
   Copy,
-  Loader2
+  Loader2,
+  Sparkles,
+  ArrowLeft,
+  BarChart3,
+  TrendingUp,
+  Users,
+  Target,
+  BookOpen
 } from 'lucide-react';
 
 export interface UbtQuestion {
@@ -53,8 +60,10 @@ export interface UbtExamRecord {
   scheduled_date?: string;
   scheduled_time?: string;
   status: 'draft' | 'scheduled' | 'active' | 'ended';
+  is_public?: boolean;
   created_at?: string;
   created_by?: string;
+  [key: string]: any;
 }
 
 interface AdminUbtExamManagerProps {
@@ -303,7 +312,17 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
   const [scheduledDate, setScheduledDate] = useState<string>('');
   const [scheduledTime, setScheduledTime] = useState<string>('');
 
-  // Results View Modal
+  // View Page routing: 'exams' (Exams List & Scheduler), 'analytics' (LMS Analytics Overview Dashboard), 'leaderboard' (Exam Leaderboard Full Page)
+  const [viewPage, setViewPage] = useState<'exams' | 'analytics' | 'leaderboard'>('exams');
+
+  // Analytics Dashboard specific state
+  const [analyticsClassFilter, setAnalyticsClassFilter] = useState<string>('all');
+  const [analyticsPassThreshold, setAnalyticsPassThreshold] = useState<number>(50);
+  const [allExamResults, setAllExamResults] = useState<any[]>([]);
+  const [allStudentsRegistry, setAllStudentsRegistry] = useState<any[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState<boolean>(false);
+
+  // Results View State
   const [resultsModalOpen, setResultsModalOpen] = useState<boolean>(false);
   const [selectedExamForResults, setSelectedExamForResults] = useState<UbtExamRecord | null>(null);
   const [selectedExamResults, setSelectedExamResults] = useState<any[]>([]);
@@ -315,6 +334,8 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
   const [repushSuccessMessage, setRepushSuccessMessage] = useState<string | null>(null);
   const [repushErrorMessage, setRepushErrorMessage] = useState<string | null>(null);
   const [selectedExamTitle, setSelectedExamTitle] = useState<string>('');
+  const [resultsPassingThreshold, setResultsPassingThreshold] = useState<number>(50);
+  const [resultsSearchQuery, setResultsSearchQuery] = useState<string>('');
 
   const fetchDbClasses = async () => {
     try {
@@ -344,10 +365,12 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
   useEffect(() => {
     fetchDbClasses();
     fetchExams();
+    fetchAnalyticsData();
 
     const unsub = subscribeRealtimeEvents((type) => {
-      if (type === 'ubt_exam_created' || type === 'ubt_exam_updated' || type === 'exam_created') {
+      if (type === 'ubt_exam_created' || type === 'ubt_exam_updated' || type === 'exam_created' || type === 'exam_submitted') {
         fetchExams();
+        fetchAnalyticsData();
       }
       if (type === 'class_types_updated') {
         fetchDbClasses();
@@ -462,6 +485,40 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
       console.error('Failed to fetch UBT exams:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAnalyticsData = async () => {
+    setAnalyticsLoading(true);
+    try {
+      const [{ data: resData }, { data: stuData }] = await Promise.all([
+        supabase.from('exam_results').select('*'),
+        supabase.from('students').select('id, username, full_name, name, mobile, phone, whatsapp, class_types, classTypes')
+      ]);
+
+      const studentMap = new Map<string, any>();
+      (stuData || []).forEach(st => {
+        if (st.username) studentMap.set(st.username.toLowerCase().trim(), st);
+        if (st.id) studentMap.set(st.id, st);
+      });
+
+      const normalized = (resData || []).map(r => {
+        const matched = studentMap.get((r.username || '').toLowerCase().trim()) || studentMap.get(r.student_id);
+        const resolvedName = r.full_name || r.name || r.meta_data?.full_name || r.meta_data?.student_name || matched?.full_name || matched?.name || (r.username && !r.username.startsWith('guest_') ? r.username : 'Candidate');
+        const resolvedPhone = r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone || matched?.whatsapp || matched?.phone || matched?.mobile || '';
+        return {
+          ...r,
+          resolved_student_name: resolvedName,
+          resolved_phone: resolvedPhone
+        };
+      });
+
+      setAllExamResults(normalized);
+      setAllStudentsRegistry(stuData || []);
+    } catch (e) {
+      console.warn('Analytics fetch note:', e);
+    } finally {
+      setAnalyticsLoading(false);
     }
   };
 
@@ -737,6 +794,8 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
 
       emitRealtimeEvent('ubt_exam_created', { id: examId, title: cleanTitle });
       emitRealtimeEvent('exam_created', { id: examId, title: cleanTitle });
+      emitRealtimeEvent('ubt_exam_updated', { id: examId, title: cleanTitle, exam: ubtPayload });
+      emitRealtimeEvent('exam_updated', { id: examId, title: cleanTitle, exam: stdPayload });
 
       alert(isScheduled 
         ? `📅 UBT විභාගය සාර්ථකව Schedule කරන ලදී! (${scheduledDate} ${scheduledTime})`
@@ -914,29 +973,55 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
   const handleViewResults = async (exam: UbtExamRecord) => {
     setSelectedExamForResults(exam);
     setSelectedExamTitle(exam.title);
-    setResultsModalOpen(true);
+    setViewPage('leaderboard');
+    setResultsModalOpen(false);
     setResultsLoading(true);
     setResultsTab('attempted');
+    setResultsSearchQuery('');
     try {
       // 1. Fetch completed results for this exam
       const { data: resData } = await supabase
         .from('exam_results')
         .select('*')
-        .eq('exam_id', exam.id)
-        .order('score', { ascending: false });
+        .eq('exam_id', exam.id);
 
-      const results = resData || [];
-      setSelectedExamResults(results);
+      // 2. Fetch enrolled & registered students to resolve real student names and phones
+      const { data: stuData } = await supabase
+        .from('students')
+        .select('id, username, full_name, name, mobile, phone, whatsapp, class_types, classTypes');
 
-      // 2. Fetch enrolled students matching this exam's class_type from students table
+      const studentMap = new Map<string, any>();
+      (stuData || []).forEach(st => {
+        if (st.username) studentMap.set(st.username.toLowerCase().trim(), st);
+        if (st.id) studentMap.set(st.id, st);
+      });
+
+      const totalQ = exam.total_questions || 1;
+      const rawResults = (resData || []).map(r => {
+        const matched = studentMap.get((r.username || '').toLowerCase().trim()) || studentMap.get(r.student_id);
+        const resolvedName = r.full_name || r.name || r.meta_data?.full_name || r.meta_data?.student_name || matched?.full_name || matched?.name || (r.username && !r.username.startsWith('guest_') ? r.username : 'Candidate');
+        const resolvedPhone = r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone || matched?.whatsapp || matched?.phone || matched?.mobile || '';
+        return {
+          ...r,
+          resolved_student_name: resolvedName,
+          resolved_phone: resolvedPhone
+        };
+      });
+
+      const sortedResults = [...rawResults].sort((a, b) => {
+        const percA = Number(a.percentage ?? a.meta_data?.percentage ?? ((a.score / (a.total_questions || totalQ)) * 100) ?? 0);
+        const percB = Number(b.percentage ?? b.meta_data?.percentage ?? ((b.score / (b.total_questions || totalQ)) * 100) ?? 0);
+        if (percB !== percA) return percB - percA;
+        return Number(b.score || 0) - Number(a.score || 0);
+      });
+
+      setSelectedExamResults(sortedResults);
+
+      // 3. Fetch enrolled students matching this exam's class_type from students table
       let unattempted: any[] = [];
-      if (exam.class_type && exam.class_type !== 'Public Exam') {
-        const { data: stuData } = await supabase
-          .from('students')
-          .select('id, username, full_name, name, mobile, phone, class_types, classTypes');
-
+      if (exam.class_type && exam.class_type !== 'Public Exam' && !(exam as any).is_public) {
         if (stuData && stuData.length > 0) {
-          const attemptedUsernames = new Set(results.map(r => (r.username || '').toLowerCase().trim()));
+          const attemptedUsernames = new Set(sortedResults.map(r => (r.username || '').toLowerCase().trim()));
           const targetClassLower = exam.class_type.toLowerCase().trim();
 
           unattempted = stuData.filter(s => {
@@ -978,7 +1063,7 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
   return (
     <div className="space-y-6 text-white animate-in fade-in duration-200">
       
-      {/* Top Banner & Header */}
+      {/* Top Banner & Header with View Navigation */}
       <div className="p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-amber-950/30 to-slate-900 border-2 border-amber-500/40 shadow-xl flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -999,15 +1084,37 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setSqlModalOpen(true)}
-            className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-amber-500/30 transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 shrink-0"
-            title="Supabase Database SQL Script එක බලන්න හා Copy කරගන්න"
-          >
-            <Copy size={16} />
-            <span>⚙️ Supabase SQL Setup (Copy Script)</span>
-          </button>
+          {/* View Mode Tabs */}
+          <div className="flex items-center bg-slate-950 p-1.5 rounded-2xl border border-slate-800 gap-1.5 shadow-inner">
+            <button
+              type="button"
+              onClick={() => setViewPage('exams')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                viewPage === 'exams'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <FileText size={14} />
+              <span>📋 විභාග කළමනාකරණය</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setViewPage('analytics');
+                fetchAnalyticsData();
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                viewPage === 'analytics'
+                  ? 'bg-indigo-600 text-white font-black shadow-md'
+                  : 'text-indigo-300 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <BarChart3 size={14} />
+              <span>📊 විශ්ලේෂණ පුවරුව (Reports)</span>
+            </button>
+          </div>
 
           <button
             type="button"
@@ -1020,8 +1127,13 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+      {/* =========================================================================
+          VIEW 1: EXAMS LIST & SCHEDULER TABLE
+         ========================================================================= */}
+      {viewPage === 'exams' && (
+        <>
+          {/* Filter and Search Bar */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {/* Class Filter */}
           <select
@@ -1268,6 +1380,364 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
           </tbody>
         </table>
       </div>
+      </>
+      )}
+
+      {/* =========================================================================
+          VIEW 2: DEDICATED LMS ANALYTICS OVERVIEW DASHBOARD (Screenshot Layout)
+         ========================================================================= */}
+      {viewPage === 'analytics' && (() => {
+        // Filter exams based on lecturer assignment and class selector
+        const lecturerAllowedExams = isLecturer
+          ? exams.filter(ex => {
+              if (ex.is_public || ex.class_type === 'Public Exam') return true;
+              return effectiveClasses.some(ec => ec.trim().toLowerCase() === (ex.class_type || '').trim().toLowerCase());
+            })
+          : exams;
+
+        const filteredAnalyticsExams = lecturerAllowedExams.filter(ex => {
+          if (analyticsClassFilter === 'all') return true;
+          if (analyticsClassFilter === 'Public Exam') return ex.class_type === 'Public Exam' || ex.is_public;
+          return ex.class_type === analyticsClassFilter;
+        });
+
+        const examIds = new Set(filteredAnalyticsExams.map(e => String(e.id)));
+        const relevantResults = allExamResults.filter(r => examIds.has(String(r.exam_id)));
+        const totalCandidates = relevantResults.length;
+
+        const percentages = relevantResults.map(r => {
+          const totalQ = r.total_questions || r.meta_data?.total_questions || 10;
+          return Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / totalQ) * 100) ?? 0);
+        });
+
+        const passedList = relevantResults.filter(r => {
+          const totalQ = r.total_questions || r.meta_data?.total_questions || 10;
+          const p = Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / totalQ) * 100) ?? 0);
+          return p >= analyticsPassThreshold;
+        });
+
+        const passedCount = passedList.length;
+        const failedCount = totalCandidates - passedCount;
+        const passRate = totalCandidates > 0 ? ((passedCount / totalCandidates) * 100).toFixed(1) : '0.0';
+        const failRate = totalCandidates > 0 ? ((failedCount / totalCandidates) * 100).toFixed(1) : '0.0';
+
+        const avgScore = percentages.length > 0 ? (percentages.reduce((a, b) => a + b, 0) / percentages.length).toFixed(1) : '0.0';
+        const highestScore = percentages.length > 0 ? Math.max(...percentages).toFixed(2) : '0.00';
+        const lowestScore = percentages.length > 0 ? Math.min(...percentages).toFixed(2) : '0.00';
+
+        return (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Top Navigation & LMS Bar (matching screenshot layout) */}
+            <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 border-2 border-indigo-500/40 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30">
+                    <BarChart3 size={24} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-indigo-400 font-mono">
+                        ECODES / SMART PHYSICS LMS
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                        {isLecturer ? '👨‍🏫 Lecturer Analytics' : '🛡️ Admin Master Reports'}
+                      </span>
+                    </div>
+                    <h2 className="text-xl sm:text-2xl font-black text-white">
+                      Quiz &amp; Exam Performance Analytics Overview
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Showing latest attempt and cumulative metrics for each student (Public + Registered Classes)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setViewPage('exams')}
+                    className="px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95"
+                  >
+                    <ArrowLeft size={15} />
+                    <span>ආපසු විභාග ලැයිස්තුවට (Exams List)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={fetchAnalyticsData}
+                    disabled={analyticsLoading}
+                    className="px-4 py-2.5 rounded-2xl bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white font-bold text-xs border border-indigo-500/40 transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95 disabled:opacity-50"
+                  >
+                    <RotateCcw size={15} className={analyticsLoading ? 'animate-spin' : ''} />
+                    <span>Refresh Data</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Class Filter & Pass Mark Threshold Selectors */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <BookOpen size={15} className="text-amber-400" />
+                    <span>පන්තිය තෝරන්න (Select Class):</span>
+                  </label>
+                  <select
+                    value={analyticsClassFilter}
+                    onChange={(e) => setAnalyticsClassFilter(e.target.value)}
+                    className="bg-slate-950 text-white px-4 py-2.5 rounded-2xl border-2 border-indigo-500/40 text-xs font-bold focus:outline-none focus:border-amber-400"
+                  >
+                    {!isLecturer && <option value="all">සියලුම පන්ති හා විභාග (All Classes &amp; Exams)</option>}
+                    {!isLecturer && <option value="Public Exam">🌐 Public Exams (ප්‍රසිද්ධ විභාග)</option>}
+                    {effectiveClasses.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Pass Mark Threshold Input */}
+                <div className="flex items-center gap-3 bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 shadow-inner">
+                  <label className="text-xs font-bold text-indigo-300">
+                    සමත් වීමේ ලකුණු සීමාව (Pass Mark %):
+                  </label>
+                  <div className="flex items-center gap-1 bg-slate-900 px-3 py-1 rounded-xl border border-slate-700">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={analyticsPassThreshold}
+                      onChange={(e) => setAnalyticsPassThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                      className="w-12 bg-transparent text-amber-400 font-mono font-black text-sm text-center focus:outline-none"
+                    />
+                    <span className="text-amber-400 font-bold text-xs">%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Top 4 Big Stat Cards (Exact UI match to screenshot) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Total Students */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-lg flex flex-col justify-between min-h-[115px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-3xl font-black font-mono tracking-tight">{totalCandidates}</span>
+                  <Award size={24} className="opacity-80" />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-100">
+                  Total Students
+                </span>
+              </div>
+
+              {/* Card 2: Students Passed */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-lg flex flex-col justify-between min-h-[115px]">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-3xl font-black font-mono tracking-tight">{passedCount}</span>
+                  <span className="text-base font-black font-mono bg-white/20 px-2.5 py-0.5 rounded-lg">
+                    {passRate}%
+                  </span>
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-100">
+                  Students Passed
+                </span>
+              </div>
+
+              {/* Card 3: Students Failed */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-rose-600 to-red-700 text-white shadow-lg flex flex-col justify-between min-h-[115px]">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-3xl font-black font-mono tracking-tight">{failedCount}</span>
+                  <span className="text-base font-black font-mono bg-white/20 px-2.5 py-0.5 rounded-lg">
+                    {failRate}%
+                  </span>
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-rose-100">
+                  Students Failed
+                </span>
+              </div>
+
+              {/* Card 4: Average Score */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-sky-600 to-blue-700 text-white shadow-lg flex flex-col justify-between min-h-[115px]">
+                <div className="flex items-center justify-between">
+                  <span className="text-3xl font-black font-mono tracking-tight">{avgScore}%</span>
+                  <Sparkles size={24} className="opacity-80" />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-wider text-sky-100">
+                  Average Score
+                </span>
+              </div>
+            </div>
+
+            {/* Second Row 4 Metric Cards (Clean Light-bordered cards with emojis matching screenshot) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-md flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 block uppercase">Highest Score</span>
+                  <span className="text-xl font-black font-mono text-emerald-400">{highestScore}%</span>
+                </div>
+                <span className="text-2xl">🏆</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-md flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 block uppercase">Average Score</span>
+                  <span className="text-xl font-black font-mono text-sky-400">{avgScore}%</span>
+                </div>
+                <span className="text-2xl">📊</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-md flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 block uppercase">Lowest Score</span>
+                  <span className="text-xl font-black font-mono text-rose-400">{lowestScore}%</span>
+                </div>
+                <span className="text-2xl">📉</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 shadow-md flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 block uppercase">Total Exams</span>
+                  <span className="text-xl font-black font-mono text-amber-400">{filteredAnalyticsExams.length}</span>
+                </div>
+                <span className="text-2xl">⏰</span>
+              </div>
+            </div>
+
+            {/* Pass/Fail Distribution Bar (Screenshot Layout) */}
+            <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <span>📈 Pass/Fail Distribution Bar</span>
+                  <span className="text-[10px] text-slate-400 font-normal">
+                    (Threshold: &ge; {analyticsPassThreshold}%)
+                  </span>
+                </h4>
+                <div className="flex items-center gap-4 text-xs font-mono font-bold">
+                  <span className="text-emerald-400 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                    Passed: {passedCount} ({passRate}%)
+                  </span>
+                  <span className="text-rose-400 flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block" />
+                    Failed: {failedCount} ({failRate}%)
+                  </span>
+                </div>
+              </div>
+
+              <div className="w-full h-8 rounded-xl bg-slate-950 overflow-hidden flex font-mono font-bold text-xs text-white shadow-inner border border-slate-800">
+                {passedCount > 0 && (
+                  <div
+                    style={{ width: `${passRate}%` }}
+                    className="bg-emerald-600 hover:bg-emerald-500 transition-all flex items-center justify-center px-3 truncate"
+                    title={`Passed: ${passedCount} (${passRate}%)`}
+                  >
+                    ✓ {passedCount} ({passRate}%)
+                  </div>
+                )}
+                {failedCount > 0 && (
+                  <div
+                    style={{ width: `${failRate}%` }}
+                    className="bg-rose-600 hover:bg-rose-500 transition-all flex items-center justify-center px-3 truncate"
+                    title={`Failed: ${failedCount} (${failRate}%)`}
+                  >
+                    ✕ {failedCount} ({failRate}%)
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Exam-by-Exam Detailed Analytics Breakdown Table */}
+            <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-base font-black text-white flex items-center gap-2">
+                    <FileText size={18} className="text-amber-400" />
+                    <span>විභාග මට්ටමේ විශ්ලේෂණ ලැයිස්තුව (Exam-by-Exam Performance)</span>
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    තෝරාගත් පන්තියේ එක් එක් විභාගය සඳහා සිසුන්ගේ ලකුණු සහ සාමාර්ථ ප්‍රතිශත
+                  </p>
+                </div>
+                <span className="text-xs font-mono text-amber-400 font-bold bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/30">
+                  {filteredAnalyticsExams.length} Exams
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                <table className="w-full text-left text-xs text-slate-300">
+                  <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                    <tr>
+                      <th className="p-3">#</th>
+                      <th className="p-3">විභාගය (Exam Title &amp; Code)</th>
+                      <th className="p-3">පන්තිය (Class)</th>
+                      <th className="p-3 text-center">පෙනී සිටි සිසුන්</th>
+                      <th className="p-3 text-center">සමත් (Passed)</th>
+                      <th className="p-3 text-center">අසමත් (Failed)</th>
+                      <th className="p-3 text-center">සාමාන්‍ය ලකුණ</th>
+                      <th className="p-3 text-center">ක්‍රියාමාර්ග (Action)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {filteredAnalyticsExams.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-8 text-center text-slate-400">
+                          මෙම පන්තිය සඳහා කිසිදු විභාගයක් හමු නොවීය.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredAnalyticsExams.map((ex, i) => {
+                        const exResults = allExamResults.filter(r => String(r.exam_id) === String(ex.id));
+                        const exTotal = exResults.length;
+                        const exPercentages = exResults.map(r => {
+                          const tQ = ex.total_questions || 10;
+                          return Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / tQ) * 100) ?? 0);
+                        });
+                        const exPassed = exPercentages.filter(p => p >= analyticsPassThreshold).length;
+                        const exFailed = exTotal - exPassed;
+                        const exAvg = exPercentages.length > 0 ? (exPercentages.reduce((a, b) => a + b, 0) / exPercentages.length).toFixed(1) : '0.0';
+
+                        return (
+                          <tr key={ex.id || i} className="hover:bg-slate-800/40 transition">
+                            <td className="p-3 font-mono text-slate-500">{i + 1}</td>
+                            <td className="p-3">
+                              <div className="font-bold text-white text-xs">{ex.title}</div>
+                              <div className="font-mono text-[10px] text-amber-400">{ex.exam_code}</div>
+                            </td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-slate-950 border border-slate-800 text-slate-300">
+                                {ex.class_type}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-white">
+                              {exTotal}
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-emerald-400">
+                              {exPassed} {exTotal > 0 && `(${((exPassed / exTotal) * 100).toFixed(0)}%)`}
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold text-rose-400">
+                              {exFailed} {exTotal > 0 && `(${((exFailed / exTotal) * 100).toFixed(0)}%)`}
+                            </td>
+                            <td className="p-3 text-center font-mono font-black text-amber-300">
+                              {exAvg}%
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleViewResults(ex)}
+                                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] shadow-md transition flex items-center gap-1.5 mx-auto cursor-pointer"
+                              >
+                                <Award size={13} />
+                                <span>වාර්තාව බලන්න (View Leaderboard)</span>
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* =========================================================================
           CREATE / EDIT UBT EXAM MODAL
@@ -1729,150 +2199,551 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
       )}
 
       {/* =========================================================================
-          RESULTS LEADERBOARD MODAL (Attempted vs Unattempted + Re-Push Actions)
+          VIEW 3: DEDICATED FULL-PAGE LEADERBOARD & STUDENT STATUS VIEW
          ========================================================================= */}
-      {resultsModalOpen && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[80] p-3 sm:p-6 animate-in fade-in duration-200">
-          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-            
-            {/* Modal Header */}
-            <div className="p-5 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider font-mono">
-                  UBT Exam Marks Leaderboard &amp; Student Status
-                </span>
-                <h3 className="text-lg font-black text-white">{selectedExamTitle}</h3>
-              </div>
+      {viewPage === 'leaderboard' && selectedExamForResults && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          
+          {/* Top Navigation Bar with Back Button */}
+          <div className="p-5 rounded-3xl bg-slate-900 border-2 border-amber-500/40 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setResultsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                onClick={() => setViewPage('exams')}
+                className="px-4 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs border border-slate-700 transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95"
               >
-                ✕
+                <ArrowLeft size={16} />
+                <span>ආපසු විභාග ලැයිස්තුවට (Back to Exams)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setViewPage('analytics');
+                  fetchAnalyticsData();
+                }}
+                className="px-4 py-2.5 rounded-2xl bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white font-bold text-xs border border-indigo-500/40 transition flex items-center gap-2 cursor-pointer shadow-md active:scale-95"
+              >
+                <BarChart3 size={16} />
+                <span>වාර්තා පුවරුව (Analytics)</span>
               </button>
             </div>
 
-            {/* Quick Actions Bar */}
-            <div className="px-5 py-3 bg-slate-950/80 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setResultsTab('attempted')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    resultsTab === 'attempted'
-                      ? 'bg-amber-500 text-slate-950 shadow-md font-black'
-                      : 'bg-slate-800 hover:bg-slate-750 text-slate-300'
-                  }`}
-                >
-                  <Award size={14} />
-                  <span>🏆 විභාගයට පෙනී සිටි සිසුන් ({selectedExamResults.length})</span>
-                </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 font-mono">
+                🏆 LEADERBOARD FULL PAGE
+              </span>
+              <span className="text-xs font-mono text-slate-400">
+                {selectedExamResults.length} Completed &bull; {unattemptedStudents.length} Pending
+              </span>
+            </div>
+          </div>
 
-                <button
-                  type="button"
-                  onClick={() => setResultsTab('unattempted')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                    resultsTab === 'unattempted'
-                      ? 'bg-rose-500 text-white shadow-md font-black'
-                      : 'bg-slate-800 hover:bg-slate-750 text-slate-300'
-                  }`}
-                >
-                  <Clock size={14} />
-                  <span>⏳ තවමත් නොකළ සිසුන් ({unattemptedStudents.length})</span>
-                </button>
-              </div>
-
-              {/* Re-Push Action Buttons */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {unattemptedStudents.length > 0 && (
-                  <button
-                    type="button"
-                    disabled={repushLoading}
-                    onClick={handleRepushToUnattempted}
-                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    title="විභාගය තවමත් නොකළ සිසුන්ගේ ඩෑෂ්බෝඩ් වෙත විශේෂ Push දැනුම්දීමක් යවන්න"
-                  >
-                    <Send size={13} />
-                    <span>🚀 නොකළ සිසුන්ට පමණක් Re-push කරන්න</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  disabled={repushLoading}
-                  onClick={handleAllowRetakeForAll}
-                  className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-900/60 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  title="සියලුම සිසුන්ගේ පෙර ලකුණු ඉවත් කර නැවත විභාගය ලිවීමට විවෘත කරන්න"
-                >
-                  <RotateCcw size={13} />
-                  <span>🔄 සියලුම සිසුන්ට නැවත විභාගය විවෘත කරන්න (Allow Retake)</span>
-                </button>
+          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full shadow-2xl flex flex-col overflow-hidden">
+            
+            {/* Header */}
+            <div className="p-6 bg-slate-950 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider font-mono">
+                  UBT Exam Marks Leaderboard &amp; Student Status
+                </span>
+                <h3 className="text-2xl font-black text-white">{selectedExamTitle}</h3>
               </div>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-4 flex-1 overflow-y-auto">
-              {resultsLoading ? (
-                <div className="p-10 text-center text-slate-400 text-xs">ප්‍රතිඵල ලබා ගනිමින් පවතී...</div>
-              ) : resultsTab === 'attempted' ? (
-                /* Tab 1: Attempted / Completed Students */
-                selectedExamResults.length === 0 ? (
-                  <div className="p-10 text-center text-slate-400 text-xs">
-                    තවමත් කිසිදු සිසුවෙක් මෙම විභාගයට පෙනී සිට නොමැත.
+            {/* Quick Actions Bar */}
+            {(() => {
+              const isPublicExam = selectedExamForResults?.class_type === 'Public Exam' || selectedExamForResults?.is_public || selectedExamForResults?.target_class_type === 'Public Exam';
+
+              return (
+                <>
+                  <div className="px-5 py-3 bg-slate-950/80 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setResultsTab('attempted')}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                          resultsTab === 'attempted'
+                            ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                            : 'bg-slate-800 hover:bg-slate-750 text-slate-300'
+                        }`}
+                      >
+                        <Award size={14} />
+                        <span>🏆 {isPublicExam ? 'විභාගය සම්පූර්ණ කළ අපේක්ෂකයින්' : 'විභාගයට පෙනී සිටි සිසුන්'} ({selectedExamResults.length})</span>
+                      </button>
+
+                      {!isPublicExam && (
+                        <button
+                          type="button"
+                          onClick={() => setResultsTab('unattempted')}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                            resultsTab === 'unattempted'
+                              ? 'bg-rose-500 text-white shadow-md font-black'
+                              : 'bg-slate-800 hover:bg-slate-750 text-slate-300'
+                          }`}
+                        >
+                          <Clock size={14} />
+                          <span>⏳ තවමත් නොකළ සිසුන් ({unattemptedStudents.length})</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Re-Push Action Buttons for Registered Class Exams */}
+                    {!isPublicExam && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {unattemptedStudents.length > 0 && (
+                          <button
+                            type="button"
+                            disabled={repushLoading}
+                            onClick={handleRepushToUnattempted}
+                            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                            title="විභාගය තවමත් නොකළ සිසුන්ගේ ඩෑෂ්බෝඩ් වෙත විශේෂ Push දැනුම්දීමක් යවන්න"
+                          >
+                            <Send size={13} />
+                            <span>🚀 නොකළ සිසුන්ට පමණක් Re-push කරන්න</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={repushLoading}
+                          onClick={handleAllowRetakeForAll}
+                          className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-900/60 text-rose-300 hover:text-white border border-rose-500/30 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          title="සියලුම සිසුන්ගේ පෙර ලකුණු ඉවත් නොකර නැවත විභාගය ලිවීමට විවෘත කරන්න"
+                        >
+                          <RotateCcw size={13} />
+                          <span>🔄 සියලුම සිසුන්ට නැවත විභාගය විවෘත කරන්න (Allow Retake)</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {isPublicExam && (
+                      <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-xl flex items-center gap-2">
+                        <span>🌐 Public Link විවෘත විභාගයකි. සම්පූර්ණ කළ බාහිර අපේක්ෂකයින් පමණක් මෙහි ලැයිස්තුගත වේ.</span>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="overflow-x-auto rounded-2xl border border-slate-800">
-                    <table className="w-full text-left text-xs text-slate-300">
-                      <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
-                        <tr>
-                          <th className="p-3">Rank</th>
-                          <th className="p-3">Username</th>
-                          <th className="p-3">නම (Student Name)</th>
-                          <th className="p-3 text-center">Score</th>
-                          <th className="p-3 text-center">Percentage</th>
-                          <th className="p-3 text-center">Attempt (අවස්ථාව)</th>
-                          <th className="p-3">Submitted At</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800">
-                        {selectedExamResults.map((r, i) => (
-                          <tr key={r.id || i} className="hover:bg-slate-800/40">
-                            <td className="p-3 font-mono font-bold text-amber-400">#{i + 1}</td>
-                            <td className="p-3 font-mono font-bold text-white">{r.username}</td>
-                            <td className="p-3 font-medium text-slate-300">
-                              {r.meta_data?.student_name || r.name || '-'}
-                            </td>
-                            <td className="p-3 text-center font-mono font-black text-white text-sm">
-                              {r.score}
-                            </td>
-                            <td className="p-3 text-center font-mono font-bold">
-                              <span className={`px-2 py-0.5 rounded-lg border text-[11px] ${
-                                (r.meta_data?.percentage ?? 0) >= 75 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
-                                (r.meta_data?.percentage ?? 0) >= 50 ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
-                                'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                              }`}>
-                                {r.meta_data?.percentage ?? 0}%
-                              </span>
-                            </td>
-                            <td className="p-3 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black font-mono border ${
-                                (r.meta_data?.attempt_number || 1) > 1 
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
-                                  : 'bg-slate-800 text-slate-300 border-slate-700'
-                              }`}>
-                                {r.meta_data?.attempt_label || `${r.meta_data?.attempt_number || 1} වන අවස්ථාව`}
-                              </span>
-                            </td>
-                            <td className="p-3 text-[11px] text-slate-400 font-mono">
-                              {r.submitted_at ? new Date(r.submitted_at).toLocaleString() : '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              ) : (
+
+                  {/* Modal Body */}
+                  <div className="p-4 sm:p-6 flex-1 overflow-y-auto space-y-6">
+                    {resultsLoading ? (
+                      <div className="p-12 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-3">
+                        <Loader2 className="animate-spin text-amber-400" size={28} />
+                        <span>ප්‍රතිඵල විශ්ලේෂණ දත්ත ලබා ගනිමින් පවතී...</span>
+                      </div>
+                    ) : resultsTab === 'attempted' ? (
+                      /* Tab 1: Attempted / Completed Students + Analytics Overview */
+                      selectedExamResults.length === 0 ? (
+                        <div className="p-12 text-center text-slate-400 text-xs bg-slate-950/60 rounded-3xl border border-slate-800">
+                          {isPublicExam 
+                            ? 'තවමත් කිසිදු බාහිර අපේක්ෂකයෙක් මෙම Public විභාගයට පෙනී සිට නොමැත.' 
+                            : 'තවමත් කිසිදු සිසුවෙක් මෙම විභාගයට පෙනී සිට නොමැත.'}
+                        </div>
+                      ) : (() => {
+                        const totalCandidates = selectedExamResults.length;
+                        const totalQ = selectedExamForResults?.total_questions || 1;
+
+                        // Compute percentages and stats
+                        const percentages = selectedExamResults.map(r => {
+                          return Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / (r.total_questions || totalQ)) * 100) ?? 0);
+                        });
+
+                        const passedCandidates = selectedExamResults.filter(r => {
+                          const p = Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / (r.total_questions || totalQ)) * 100) ?? 0);
+                          return p >= resultsPassingThreshold;
+                        });
+
+                        const passedCount = passedCandidates.length;
+                        const failedCount = totalCandidates - passedCount;
+                        const passRate = totalCandidates > 0 ? ((passedCount / totalCandidates) * 100).toFixed(1) : '0.0';
+                        const failRate = totalCandidates > 0 ? ((failedCount / totalCandidates) * 100).toFixed(1) : '0.0';
+
+                        const highestScore = percentages.length > 0 ? Math.max(...percentages).toFixed(2) : '0.00';
+                        const lowestScore = percentages.length > 0 ? Math.min(...percentages).toFixed(2) : '0.00';
+                        const averageScore = percentages.length > 0 ? (percentages.reduce((a, b) => a + b, 0) / percentages.length).toFixed(2) : '0.00';
+
+                        // Filter by search query
+                        const filteredAttempted = selectedExamResults.filter(r => {
+                          if (!resultsSearchQuery.trim()) return true;
+                          const q = resultsSearchQuery.toLowerCase().trim();
+                          const candidateName = (r.full_name || r.meta_data?.full_name || r.meta_data?.student_name || r.name || r.username || '').toLowerCase();
+                          const phoneNum = (r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone || r.username || '').toLowerCase();
+                          const school = (r.meta_data?.school || r.meta_data?.district || '').toLowerCase();
+                          return candidateName.includes(q) || phoneNum.includes(q) || school.includes(q);
+                        });
+
+                        return (
+                          <div className="space-y-6">
+                            
+                            {/* Analytics Header & Passing Mark Threshold Filter */}
+                            <div className="p-4 sm:p-5 rounded-3xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+                              <div className="space-y-1">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 font-mono">
+                                  📊 Performance Analytics &amp; Statistical Overview
+                                </span>
+                                <h4 className="text-base font-black text-white flex items-center gap-2">
+                                  <span>{selectedExamTitle}</span>
+                                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+                                    {isPublicExam ? 'Public Exam' : selectedExamForResults?.class_type}
+                                  </span>
+                                </h4>
+                                <p className="text-xs text-slate-400">
+                                  Showing latest attempt for each candidate ({isPublicExam ? 'Public Portal Candidates' : 'Registered Class Students'})
+                                </p>
+                              </div>
+
+                              {/* Interactive Passing Mark Threshold Filter */}
+                              <div className="flex items-center gap-3 bg-slate-900 border-2 border-indigo-500/40 p-2.5 rounded-2xl shadow-inner self-start md:self-auto">
+                                <div className="space-y-0.5">
+                                  <label className="text-[10px] font-black uppercase text-indigo-300 block">
+                                    සමත් වීමේ සීමාව (Pass Mark %):
+                                  </label>
+                                  <span className="text-[11px] text-slate-400">අගය වෙනස් කර විශ්ලේෂණය බලන්න</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={resultsPassingThreshold}
+                                    onChange={(e) => setResultsPassingThreshold(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                                    className="w-12 bg-transparent text-amber-400 font-mono font-black text-sm text-center focus:outline-none"
+                                  />
+                                  <span className="text-amber-400 font-black text-xs">%</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Top 4 Big Stat Cards (Exact UI match to reference screenshot) */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                              
+                              {/* Card 1: Total Students */}
+                              <div className="p-5 rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-3xl font-black font-mono tracking-tight">{totalCandidates}</span>
+                                  <Award size={24} className="opacity-80" />
+                                </div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-indigo-100">
+                                  Total Students / Candidates
+                                </span>
+                              </div>
+
+                              {/* Card 2: Students Passed */}
+                              <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="text-3xl font-black font-mono tracking-tight">{passedCount}</span>
+                                  <span className="text-base font-black font-mono bg-white/20 px-2 py-0.5 rounded-lg">
+                                    {passRate}%
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-100">
+                                  <span>Students Passed</span>
+                                  <span className="text-[10px] lowercase opacity-90">(&ge; {resultsPassingThreshold}%)</span>
+                                </div>
+                              </div>
+
+                              {/* Card 3: Students Failed */}
+                              <div className="p-5 rounded-2xl bg-gradient-to-br from-rose-600 to-red-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="text-3xl font-black font-mono tracking-tight">{failedCount}</span>
+                                  <span className="text-base font-black font-mono bg-white/20 px-2 py-0.5 rounded-lg">
+                                    {failRate}%
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-100">
+                                  <span>Students Failed</span>
+                                  <span className="text-[10px] lowercase opacity-90">(&lt; {resultsPassingThreshold}%)</span>
+                                </div>
+                              </div>
+
+                              {/* Card 4: Average Score */}
+                              <div className="p-5 rounded-2xl bg-gradient-to-br from-sky-600 to-blue-700 text-white shadow-lg flex flex-col justify-between min-h-[110px]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-3xl font-black font-mono tracking-tight">{averageScore}%</span>
+                                  <Sparkles size={22} className="opacity-80" />
+                                </div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-sky-100">
+                                  Average Score
+                                </span>
+                              </div>
+
+                            </div>
+
+                            {/* Second Row: 4 Metric Cards */}
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                              
+                              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 shadow-sm flex items-center gap-3.5">
+                                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+                                  <Award size={20} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Highest Score</span>
+                                  <span className="text-lg font-black text-emerald-400 font-mono">{highestScore}%</span>
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 shadow-sm flex items-center gap-3.5">
+                                <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center shrink-0">
+                                  <FileText size={20} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Average Score</span>
+                                  <span className="text-lg font-black text-blue-400 font-mono">{averageScore}%</span>
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 shadow-sm flex items-center gap-3.5">
+                                <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
+                                  <AlertCircle size={20} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Lowest Score</span>
+                                  <span className="text-lg font-black text-rose-400 font-mono">{lowestScore}%</span>
+                                </div>
+                              </div>
+
+                              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 shadow-sm flex items-center gap-3.5">
+                                <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-400 flex items-center justify-center shrink-0">
+                                  <Clock size={20} />
+                                </div>
+                                <div>
+                                  <span className="text-[10px] font-bold text-slate-400 block uppercase">Allocated Time</span>
+                                  <span className="text-lg font-black text-purple-300 font-mono">
+                                    {selectedExamForResults?.duration_minutes || 90} Mins
+                                  </span>
+                                </div>
+                              </div>
+
+                            </div>
+
+                            {/* Pass / Fail Distribution Bar (Exact match to screenshot) */}
+                            <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                              <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                                <span className="flex items-center gap-1.5">
+                                  <FileText size={14} className="text-amber-400" />
+                                  <span>Pass / Fail Distribution (සමත් / අසමත් ප්‍රස්ථාරික අනුපාතය)</span>
+                                </span>
+                                <span className="font-mono text-slate-400 text-[11px]">
+                                  Threshold: &ge; {resultsPassingThreshold}%
+                                </span>
+                              </div>
+
+                              {/* Split Bar */}
+                              <div className="w-full h-9 rounded-xl overflow-hidden bg-slate-900 border border-slate-800 flex font-mono font-black text-xs text-white shadow-inner">
+                                {passedCount > 0 && (
+                                  <div
+                                    style={{ width: `${passRate}%` }}
+                                    className="bg-emerald-600 hover:bg-emerald-500 transition-all flex items-center justify-center px-3 truncate"
+                                    title={`Passed: ${passedCount} (${passRate}%)`}
+                                  >
+                                    ✓ {passedCount} ({passRate}%)
+                                  </div>
+                                )}
+                                {failedCount > 0 && (
+                                  <div
+                                    style={{ width: `${failRate}%` }}
+                                    className="bg-rose-600 hover:bg-rose-500 transition-all flex items-center justify-center px-3 truncate"
+                                    title={`Failed: ${failedCount} (${failRate}%)`}
+                                  >
+                                    ✕ {failedCount} ({failRate}%)
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Search & Filter Bar */}
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+                              <div className="relative flex-1 max-w-md">
+                                <input
+                                  type="text"
+                                  placeholder="සිසුවාගේ නම, WhatsApp හෝ Username මඟින් සොයන්න..."
+                                  value={resultsSearchQuery}
+                                  onChange={(e) => setResultsSearchQuery(e.target.value)}
+                                  className="w-full bg-slate-950 text-white placeholder-slate-500 text-xs px-3.5 py-2.5 rounded-xl border border-slate-800 focus:outline-none focus:border-amber-400 transition"
+                                />
+                                {resultsSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setResultsSearchQuery('')}
+                                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xs cursor-pointer"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="text-xs text-slate-400 flex items-center gap-2">
+                                <span className="font-mono font-bold text-amber-400">{filteredAttempted.length}</span>
+                                <span>/ {totalCandidates} Candidates</span>
+                                <span className="text-slate-600">&bull;</span>
+                                <span className="text-emerald-400 font-bold">100% සිට පහළට පෙළගස්වා ඇත</span>
+                              </div>
+                            </div>
+
+                            {/* Attempted Candidates Table (Strictly Sorted 100% to 0%) */}
+                            <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                              <table className="w-full text-left text-xs text-slate-300">
+                                <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase font-bold border-b border-slate-800">
+                                  {isPublicExam ? (
+                                    <tr>
+                                      <th className="p-3">Rank</th>
+                                      <th className="p-3">අපේක්ෂකයාගේ නම (Candidate Name)</th>
+                                      <th className="p-3">WhatsApp / දුරකථන අංකය</th>
+                                      <th className="p-3">පාසල / දිස්ත්‍රික්කය (School/District)</th>
+                                      <th className="p-3 text-center">Score (ලකුණු)</th>
+                                      <th className="p-3 text-center">Percentage</th>
+                                      <th className="p-3 text-center">Status</th>
+                                      <th className="p-3">Submitted At</th>
+                                    </tr>
+                                  ) : (
+                                    <tr>
+                                      <th className="p-3">Rank</th>
+                                      <th className="p-3">Username</th>
+                                      <th className="p-3">නම (Student Name)</th>
+                                      <th className="p-3 text-center">Score</th>
+                                      <th className="p-3 text-center">Percentage</th>
+                                      <th className="p-3 text-center">Status</th>
+                                      <th className="p-3 text-center">Attempt (අවස්ථාව)</th>
+                                      <th className="p-3">Submitted At</th>
+                                    </tr>
+                                  )}
+                                </thead>
+                                <tbody className="divide-y divide-slate-800">
+                                  {filteredAttempted.map((r, i) => {
+                                    const phoneNum = r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone || (r.username && r.username.startsWith('guest_') ? r.username.replace('guest_', '') : r.username) || '';
+                                    const cleanPhone = phoneNum.replace(/[^0-9]/g, '');
+                                    const candidateName = r.full_name || r.meta_data?.full_name || r.meta_data?.student_name || r.name || r.username || 'Candidate';
+                                    const schoolOrDistrict = r.meta_data?.school || r.meta_data?.district || '-';
+                                    const percentageVal = Number(r.percentage ?? r.meta_data?.percentage ?? ((r.score / (r.total_questions || totalQ)) * 100) ?? 0);
+                                    const isPassed = percentageVal >= resultsPassingThreshold;
+
+                                    if (isPublicExam) {
+                                      return (
+                                        <tr key={r.id || i} className="hover:bg-slate-800/40">
+                                          <td className="p-3 font-mono font-bold text-amber-400">#{i + 1}</td>
+                                          <td className="p-3 font-bold text-white flex items-center gap-2">
+                                            <div className="w-7 h-7 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/30 flex items-center justify-center text-xs font-black">
+                                              {candidateName.charAt(0).toUpperCase()}
+                                            </div>
+                                            <span>{candidateName}</span>
+                                          </td>
+                                          <td className="p-3 font-mono text-slate-300">
+                                            {cleanPhone ? (
+                                              <a
+                                                href={`https://wa.me/${cleanPhone.startsWith('0') ? '94' + cleanPhone.slice(1) : cleanPhone}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold text-[11px]"
+                                              >
+                                                <span>💬 {phoneNum}</span>
+                                              </a>
+                                            ) : (
+                                              <span>{phoneNum || '-'}</span>
+                                            )}
+                                          </td>
+                                          <td className="p-3 text-slate-300 font-medium">{schoolOrDistrict}</td>
+                                          <td className="p-3 text-center font-mono font-black text-white text-sm">
+                                            {r.score}
+                                          </td>
+                                          <td className="p-3 text-center font-mono font-bold">
+                                            <span className={`px-2 py-0.5 rounded-lg border text-[11px] ${
+                                              percentageVal >= 75 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                                              percentageVal >= 50 ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
+                                              'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                            }`}>
+                                              {percentageVal}%
+                                            </span>
+                                          </td>
+                                          <td className="p-3 text-center">
+                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                              isPassed
+                                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                                : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                            }`}>
+                                              {isPassed ? '✓ Pass' : '✕ Fail'}
+                                            </span>
+                                          </td>
+                                          <td className="p-3 text-[11px] text-slate-400 font-mono">
+                                            {r.submitted_at ? new Date(r.submitted_at).toLocaleString() : '-'}
+                                          </td>
+                                        </tr>
+                                      );
+                                    }
+
+                                    return (
+                                      <tr key={r.id || i} className="hover:bg-slate-800/40">
+                                        <td className="p-3 font-mono font-bold text-amber-400">#{i + 1}</td>
+                                        <td className="p-3 font-mono text-slate-400 font-bold">
+                                          <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-amber-300">
+                                            @{r.username}
+                                          </span>
+                                        </td>
+                                        <td className="p-3">
+                                          <div className="flex items-center gap-2.5">
+                                            <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center justify-center text-xs font-black shrink-0">
+                                              {(r.resolved_student_name || r.meta_data?.student_name || r.name || r.full_name || r.username || 'S').charAt(0).toUpperCase()}
+                                            </div>
+                                            <div>
+                                              <div className="font-bold text-white text-xs">
+                                                {r.resolved_student_name || r.meta_data?.student_name || r.name || r.full_name || r.username}
+                                              </div>
+                                              {(r.resolved_phone || r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone) && (
+                                                <a
+                                                  href={`https://wa.me/${(r.resolved_phone || r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone || '').replace(/[^0-9]/g, '')}`}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="text-[10px] text-emerald-400 hover:underline inline-flex items-center gap-1 font-mono mt-0.5"
+                                                >
+                                                  <span>💬 {r.resolved_phone || r.whatsapp_phone || r.meta_data?.whatsapp_phone || r.meta_data?.phone}</span>
+                                                </a>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="p-3 text-center font-mono font-black text-white text-sm">
+                                          {r.score}
+                                        </td>
+                                        <td className="p-3 text-center font-mono font-bold">
+                                          <span className={`px-2 py-0.5 rounded-lg border text-[11px] ${
+                                            percentageVal >= 75 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                                            percentageVal >= 50 ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
+                                            'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                          }`}>
+                                            {percentageVal}%
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                            isPassed
+                                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                              : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                          }`}>
+                                            {isPassed ? '✓ Pass' : '✕ Fail'}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black font-mono border ${
+                                            (r.meta_data?.attempt_number || 1) > 1 
+                                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' 
+                                              : 'bg-slate-800 text-slate-300 border-slate-700'
+                                          }`}>
+                                            {r.meta_data?.attempt_label || `${r.meta_data?.attempt_number || 1} වන අවස්ථාව`}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-[11px] text-slate-400 font-mono">
+                                          {r.submitted_at ? new Date(r.submitted_at).toLocaleString() : '-'}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+
+                          </div>
+                        );
+                      })()
+                    ) : (
                 /* Tab 2: Unattempted Enrolled Students */
                 unattemptedStudents.length === 0 ? (
                   <div className="p-10 text-center text-emerald-400 text-xs font-bold">
@@ -1926,18 +2797,22 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
                 )
               )}
             </div>
+          </>
+        );
+      })()}
 
-            {/* Modal Footer */}
-            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-[11px] text-slate-500 font-mono">
+            {/* Page Footer Navigation */}
+            <div className="p-5 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-mono">
                 {selectedExamResults.length} Attempted &bull; {unattemptedStudents.length} Pending
               </span>
               <button
                 type="button"
-                onClick={() => setResultsModalOpen(false)}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                onClick={() => setViewPage('exams')}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 cursor-pointer flex items-center gap-2 shadow-md transition font-black active:scale-95"
               >
-                Close
+                <ArrowLeft size={14} />
+                <span>ආපසු විභාග ලැයිස්තුවට (Back to Exams)</span>
               </button>
             </div>
 
