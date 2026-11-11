@@ -25,6 +25,7 @@ export interface ScheduledLive {
   classType: string;
   scheduledAt: string; // ISO datetime
   videoType?: 'youtube' | 'zoom'; // ⚡ අලුතින් එක් කළා: වීඩියෝ වර්ගය හඳුනා ගැනීමට
+  youtube_live_url?: string;       // ⚡ YouTube Live Link (විකල්ප / Optional)
   isExamActive?: boolean;          // ⚡ අලුතින් එක් කළා: මේ මොහොතේ පේපර් එකක් පුෂ් කර ඇත්නම් true වේ
   activeExamId?: string;           // ⚡ අලුතින් එක් කළා: පුෂ් කර ඇති විභාගයේ ID එක
   attentionTrigger?: boolean;      // ⚡ අලුතින් එක් කළා: ඇටෙන්ෂන් බටන් එක සිසුන්ට පෙන්වීමට true වේ

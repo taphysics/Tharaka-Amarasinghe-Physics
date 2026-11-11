@@ -1,28 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Search, X, Plus, MessageCircle, Bell, LayoutDashboard } from 'lucide-react';
-import { subscribeRealtimeEvents, emitRealtimeEvent } from '../realtimeSync';
+import { subscribeRealtimeEvents, emitRealtimeEvent, sendSupabaseBroadcast } from '../realtimeSync';
 
 const dispatchBroadcast = async (channelName: string, event: string, payload: any) => {
-  try {
-    const channel = supabase.channel(channelName);
-    if (typeof (channel as any).httpSend === 'function') {
-      await (channel as any).httpSend({
-        type: 'broadcast',
-        event,
-        payload
-      });
-    } else {
-      await channel.send({
-        type: 'broadcast',
-        event,
-        payload
-      });
-    }
-    supabase.removeChannel(channel);
-  } catch (err) {
-    console.warn('Realtime broadcast error:', err);
-  }
+  await sendSupabaseBroadcast(channelName, event, payload);
 };
 
 const parseStudentClasses = (classTypes: any): string[] => {
@@ -58,13 +40,14 @@ export default function PaymentManager() {
     }, 2000);
 
     const unsub = subscribeRealtimeEvents((type) => {
-      if (['student_updated', 'payment_approved', 'payment_rejected', 'payment_status_changed'].includes(type)) {
+      if (['student_updated', 'payment_approved', 'payment_rejected', 'payment_status_changed', 'payments_updated', 'pending_payment_submitted', 'pending_payment_deleted'].includes(type)) {
         fetchData();
       }
     });
 
     const channel = supabase.channel('admin-payments-sync')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_payments' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => fetchData())
       .subscribe();
 
@@ -95,7 +78,7 @@ export default function PaymentManager() {
     // 3. Fetch Classes from class_types_config table (Fixed Column Name)
     const { data: classesData, error: classesError } = await supabase
       .from('class_types_config')
-      .select('class_type') // Changed from class_types to class_type
+      .select('class_type')
       .eq('is_active', true)
       .order('class_type', { ascending: true }); 
 
@@ -106,11 +89,53 @@ export default function PaymentManager() {
     }
   };
 
+  // Helper to reliably find payment info by record_id, or student_id/username + month + class, or student active_months
+  const getStudentPaymentInfo = (student: any, monthKey: string, cName: string) => {
+    if (!student) return null;
+    const recordId = `${student.id}_${monthKey}_${cName}`;
+    
+    // 1. Direct record_id match
+    const direct = payments.find((p: any) => p.record_id === recordId);
+    if (direct) return direct;
+
+    // 2. Flexible match by student_id or username, and month, and class_type
+    const cClean = (cName || '').trim().toLowerCase();
+    const flexible = payments.find((p: any) => {
+      const isStudent = String(p.student_id) === String(student.id) ||
+        (p.username && student.username && String(p.username).trim().toLowerCase() === String(student.username).trim().toLowerCase());
+      if (!isStudent) return false;
+
+      const pMonth = String(p.month || p.target_month || '').trim();
+      if (pMonth !== monthKey) return false;
+
+      const pClass = String(p.class_type || p.class_name || '').trim().toLowerCase();
+      return !pClass || !cClean || pClass === cClean || pClass.includes(cClean) || cClean.includes(pClass);
+    });
+    if (flexible) return flexible;
+
+    // 3. Check student's active_months from DB
+    const activeMonths: string[] = Array.isArray(student.active_months) ? student.active_months : [];
+    if (activeMonths.some((m: string) => m === monthKey || m === `${cName}:${monthKey}` || m.includes(monthKey))) {
+      return { status: 'paid', record_id: recordId, reminder_sent: false, whatsapp_sent: false };
+    }
+
+    // 4. Check scholarship / free
+    if (student.plan_type === 'free') {
+      return { status: 'free', record_id: recordId, reminder_sent: false, whatsapp_sent: false };
+    }
+    const freeMonths: string[] = Array.isArray(student.free_months) ? student.free_months : [];
+    if (freeMonths.some((m: string) => m === monthKey || m === `${cName}:${monthKey}` || m.includes(monthKey))) {
+      return { status: 'free', record_id: recordId, reminder_sent: false, whatsapp_sent: false };
+    }
+
+    return null;
+  };
+
   const handlePaymentStatusChange = async (studentId: string, monthKey: string, className: string, status: string) => {
     const recordId = `${studentId}_${monthKey}_${className}`;
     const student = students.find((s: any) => s.id === studentId);
     
-    const existingPayment = payments.find((p: any) => p.record_id === recordId);
+    const existingPayment = getStudentPaymentInfo(student, monthKey, className);
     let reminderStatus = existingPayment ? existingPayment.reminder_sent : false;
     let whatsappStatus = existingPayment ? existingPayment.whatsapp_sent : false;
 
@@ -129,28 +154,69 @@ export default function PaymentManager() {
       }
     }
 
+    // Update active_months on student object directly
+    if (student) {
+      let activeMonths: string[] = Array.isArray(student.active_months) ? [...student.active_months] : [];
+      if (status === 'paid') {
+        if (!activeMonths.includes(monthKey)) activeMonths.push(monthKey);
+        if (!activeMonths.includes(`${className}:${monthKey}`)) activeMonths.push(`${className}:${monthKey}`);
+      } else if (status === 'unpaid') {
+        activeMonths = activeMonths.filter(m => m !== monthKey && m !== `${className}:${monthKey}`);
+      }
+      try {
+        await supabase.from('students').update({
+          active_months: activeMonths,
+          is_paid: status === 'paid'
+        }).eq('id', studentId);
+      } catch (e) {}
+    }
+
     setPayments(prev => {
       const exists = prev.find((p: any) => p.record_id === recordId);
       if (exists) return prev.map((p: any) => p.record_id === recordId ? { ...p, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus } : p);
       return [...prev, { record_id: recordId, student_id: studentId, month: monthKey, class_type: className, status, reminder_sent: reminderStatus, whatsapp_sent: whatsappStatus }];
     });
 
-    const { error } = await supabase.from('payments').upsert({
-      record_id: recordId,
-      student_id: studentId,
-      month: monthKey,
-      class_type: className, 
-      status: status,
-      reminder_sent: reminderStatus,
-      whatsapp_sent: whatsappStatus
-    }, { onConflict: 'record_id' });
+    // Check if record exists in payments table
+    const { data: existingRec } = await supabase
+      .from('payments')
+      .select('id')
+      .eq('record_id', recordId)
+      .maybeSingle();
+
+    let error = null;
+    if (existingRec?.id) {
+      const { error: updErr } = await supabase.from('payments').update({
+        status: status,
+        reminder_sent: reminderStatus,
+        whatsapp_sent: whatsappStatus,
+        month: monthKey,
+        class_type: className,
+        class_name: className
+      }).eq('id', existingRec.id);
+      error = updErr;
+    } else {
+      const { error: insErr } = await supabase.from('payments').insert([{
+        id: crypto.randomUUID(),
+        record_id: recordId,
+        student_id: studentId,
+        month: monthKey,
+        target_month: monthKey,
+        class_type: className,
+        class_name: className,
+        status: status,
+        reminder_sent: reminderStatus,
+        whatsapp_sent: whatsappStatus
+      }]);
+      error = insErr;
+    }
 
     if (error) {
       console.error("Payment status save failed:", error);
-      alert("දත්ත සුරැකීමේදී දෝෂයක් මතු විය. කරුණාකර නැවත උත්සාහ කරන්න.");
     } else {
       await dispatchBroadcast(`student_dashboard_${studentId}`, 'payment_updated', { studentId, monthKey, className, status });
       emitRealtimeEvent('payment_status_changed', { studentId, monthKey, className, status });
+      emitRealtimeEvent('payments_updated', { studentId, monthKey });
     }
   };
 
@@ -287,7 +353,7 @@ export default function PaymentManager() {
     if (studentClasses.length === 0) return { backgroundColor: '#1e293b' }; 
     
     const colors = studentClasses.map((cName: string) => {
-      const status = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`)?.status || 'unpaid';
+      const status = getStudentPaymentInfo(student, monthKey, cName)?.status || 'unpaid';
       if (status === 'paid') return '#10b981'; 
       if (status === 'free') return '#3b82f6'; 
       if (status === 'absent') return '#64748b'; // Absent status color (Slate Grey)
@@ -398,7 +464,7 @@ export default function PaymentManager() {
                 let unpaidCount = 0;
 
                 studentClasses.forEach((cName: string) => {
-                  const paymentInfo = payments.find((p: any) => p.record_id === `${student.id}_${monthKey}_${cName}`);
+                  const paymentInfo = getStudentPaymentInfo(student, monthKey, cName);
                   const status = paymentInfo?.status || 'unpaid';
                   
                   if (status !== 'paid' && status !== 'free' && status !== 'absent') {
@@ -460,8 +526,7 @@ export default function PaymentManager() {
 
             <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
               {(activeModal.student.class_types || []).map((className: string) => {
-                const recordId = `${activeModal.student.id}_${activeModal.month}_${className}`;
-                const paymentInfo = payments.find((p: any) => p.record_id === recordId);
+                const paymentInfo = getStudentPaymentInfo(activeModal.student, activeModal.month, className);
                 const status = paymentInfo?.status || 'unpaid';
                 const isReminderSent = paymentInfo?.reminder_sent;
                 const isWhatsAppSent = paymentInfo?.whatsapp_sent;

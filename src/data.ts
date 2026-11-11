@@ -1,16 +1,17 @@
 import { Student, CalendarEvent, Announcement, SiteConfig } from './types';
+import { SITE_BRAND_CONFIG } from './config/siteBrandConfig';
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
-  heroTitle: "තාරක අමරසිංහ",
-  heroSubtitle: "දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පන්ති",
-  logoUrl: "/logo.png",
-  heroImage1: "https://images.unsplash.com/photo-1614064641938-3bbee52942c7?q=80&w=1200&auto=format&fit=crop",
-  heroImage2: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=1200&auto=format&fit=crop",
-  heroImage3: "https://images.unsplash.com/photo-1507668077129-56e32842fceb?q=80&w=1200&auto=format&fit=crop",
-  heroImage4: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop",
-  contactPhone: "071 915 2128",
-  directorImage: "/teacher.png",
-  directorTitle: "B.Sc (Hon's) University of Peradeniya | Physics Teacher",
+  heroTitle: SITE_BRAND_CONFIG.heroTitle.si,
+  heroSubtitle: SITE_BRAND_CONFIG.heroSubtitle.si,
+  logoUrl: SITE_BRAND_CONFIG.logoUrl,
+  heroImage1: SITE_BRAND_CONFIG.heroSlides[0]?.url || "https://images.unsplash.com/photo-1614064641938-3bbee52942c7?q=80&w=1200&auto=format&fit=crop",
+  heroImage2: SITE_BRAND_CONFIG.heroSlides[1]?.url || "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=1200&auto=format&fit=crop",
+  heroImage3: SITE_BRAND_CONFIG.heroSlides[2]?.url || "https://images.unsplash.com/photo-1507668077129-56e32842fceb?q=80&w=1200&auto=format&fit=crop",
+  heroImage4: SITE_BRAND_CONFIG.heroSlides[3]?.url || "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop",
+  contactPhone: SITE_BRAND_CONFIG.supportCallingPhone,
+  directorImage: SITE_BRAND_CONFIG.directorImage,
+  directorTitle: SITE_BRAND_CONFIG.directorTitle.si,
 };
 
 export const DEFAULT_STUDENTS: Student[] = [

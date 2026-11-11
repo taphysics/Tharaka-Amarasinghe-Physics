@@ -67,6 +67,8 @@ import AdminDeviceSecurityManager from './components/AdminDeviceSecurityManager'
 import AdminClassDirectory from './components/AdminClassDirectory';
 import AdminUbtExamManager from './components/AdminUbtExamManager';
 import PublicExamPortal from './components/PublicExamPortal';
+import HomePageView from './components/HomePageView';
+import { SITE_BRAND_CONFIG, getMergedSiteConfig } from './config/siteBrandConfig';
 import { registerDeviceLogin, confirmDualDeviceSwitch } from './deviceSecurityService';
 import { fetchAllPendingPayments } from './pendingPaymentsService';
 import { subscribeRealtimeEvents } from './realtimeSync';
@@ -165,6 +167,14 @@ export default function App() {
   const [siteConfigRaw, setSiteConfigRaw] = useSupabaseConfig();
   const siteConfig = siteConfigRaw || DEFAULT_SITE_CONFIG;
 
+  // Dynamic White-Label Brand Configuration
+  const brandConfig = getMergedSiteConfig(siteConfig, lang);
+
+  // Sync document title and meta with brand configuration
+  useEffect(() => {
+    document.title = `${brandConfig.brandName} - ${brandConfig.directorName} | Online Learning Hub`;
+  }, [brandConfig.brandName, brandConfig.directorName]);
+
   const globalClasses: { id: string, name: string, fee: number }[] = (() => {
     try {
       if (siteConfig?.classRatesText) {
@@ -246,46 +256,7 @@ export default function App() {
     };
   }, []);
   
-  // Fallback high-resolution physics photos (never disappear on page switch or re-render)
-  const DEFAULT_HERO_PHOTOS = [
-    "https://images.unsplash.com/photo-1614064641938-3bbee52942c7?q=80&w=1200&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?q=80&w=1200&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1507668077129-56e32842fceb?q=80&w=1200&auto=format&fit=crop",
-    "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1200&auto=format&fit=crop"
-  ];
 
-  // Slide index
-  const [activeSlide, setActiveSlide] = useState(0);
-  const slideImages = [
-    {
-      url: (siteConfig.heroImage1 && siteConfig.heroImage1.trim() !== '') ? siteConfig.heroImage1 : DEFAULT_HERO_PHOTOS[0],
-      title: siteConfig.slide1Title || "Interactive Live Feed",
-      desc: siteConfig.slide1Desc || "Weekly real-time streams paired with live quiz features."
-    },
-    {
-      url: (siteConfig.heroImage2 && siteConfig.heroImage2.trim() !== '') ? siteConfig.heroImage2 : DEFAULT_HERO_PHOTOS[1],
-      title: siteConfig.slide2Title || "Particle & Quantum Models",
-      desc: siteConfig.slide2Desc || "Deconstructing core theories using high-end simulated models."
-    },
-    {
-      url: (siteConfig.heroImage3 && siteConfig.heroImage3.trim() !== '') ? siteConfig.heroImage3 : DEFAULT_HERO_PHOTOS[2],
-      title: siteConfig.slide3Title || "Practical Laboratory Sessions",
-      desc: siteConfig.slide3Desc || "Comprehensive guides on practical apparatus and physics methodologies."
-    },
-    {
-      url: (siteConfig.heroImage4 && siteConfig.heroImage4.trim() !== '') ? siteConfig.heroImage4 : DEFAULT_HERO_PHOTOS[3],
-      title: siteConfig.slide4Title || "Astrophysics & Solar Systems",
-      desc: siteConfig.slide4Desc || "Special seminars investigating gravitation, fields, and mechanics."
-    }
-  ];
-
-  // Global Slide Timer (5 seconds)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setActiveSlide(p => (p + 1) % slideImages.length);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [slideImages.length]);
 
   // Ensure current password matches to handle cross-device password refresh without falsely logging out on reload
   useEffect(() => {
@@ -1488,19 +1459,19 @@ if (isLoading) {
             }
           }}
         >
-          {siteConfig.logoUrl && siteConfig.logoUrl.trim() !== '' ? (
-            <img src={siteConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm group-hover:scale-105 transition-transform" />
+          {brandConfig.logoUrl && brandConfig.logoUrl.trim() !== '' ? (
+            <img src={brandConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center font-bold text-white shadow-md font-display text-base group-hover:scale-105 transition-transform">
-              Ω
+              {brandConfig.brandSymbol}
             </div>
           )}
           <div>
             <h1 className="text-base md:text-lg font-bold font-sans tracking-tight leading-tight group-hover:text-blue-500 transition-colors">
-              Smart Physics
+              {brandConfig.brandName}
             </h1>
             <p className="text-[10px] text-blue-500 font-sans tracking-wider font-bold uppercase">
-              {lang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe'}
+              {brandConfig.directorName}
             </p>
           </div>
         </div>
@@ -1665,152 +1636,14 @@ if (isLoading) {
       {/* Main Container Views */}
       <main className={`flex-grow w-full flex flex-col justify-start ${currentView === 'dashboard' ? 'px-0 py-0' : 'max-w-7xl mx-auto px-4 md:px-8 py-6'}`}>
         
-        {/* VIEW 1: HOME */}
+        {/* VIEW 1: HOME (Powered by modular siteBrandConfig and HomePageView) */}
         {currentView === 'home' && (
-          <div className="space-y-8 animate-fade-in">
-            
-            {/* Split layout HERO SECTION */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-              
-              {/* Left Column: Introductions & Sliding physics backgrounds (Bento Big Card) */}
-              <div className="lg:col-span-8 relative rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 p-6 md:p-10 flex flex-col justify-between shadow-xl bg-white dark:bg-[#0F172A] min-h-[460px] group transition-colors">
-                
-                {/* Embedded automatic slide changer backdrop */}
-                {slideImages.map((slide, sIdx) => (
-                  <div 
-                    key={sIdx}
-                    style={{ backgroundImage: `url(${slide.url})` }}
-                    className={`absolute inset-0 bg-cover bg-center transition-all duration-[1200ms] ${sIdx === activeSlide ? 'opacity-35 dark:opacity-25 scale-100' : 'opacity-0 scale-105 pointer-events-none'}`}
-                  />
-                ))}
-                
-                {/* Overlay ensuring fonts contrast beautifully in Day and Night */}
-                <div className="absolute inset-0 bg-gradient-to-r from-white/95 via-white/80 to-white/40 dark:from-slate-950/95 dark:via-slate-950/85 dark:to-transparent z-10" />
-
-                {/* Content Elements */}
-                <div className="relative z-20 space-y-6 max-w-2xl my-auto">
-                  <div>
-                    <span className="inline-block px-3.5 py-1.5 bg-blue-50 text-blue-700 dark:bg-blue-600/20 dark:text-blue-400 rounded-full text-xs font-black tracking-wider border border-blue-200 dark:border-blue-500/30 shadow-sm">
-                      {siteConfig.homeWelcomeBadge || "Welcome to Tharaka Physics Online Space"}
-                    </span>
-                  </div>
-                  
-                  <h2 className="text-3xl md:text-5xl font-black text-slate-900 dark:text-white leading-[1.15] font-display tracking-tight drop-shadow-sm">
-                    {siteConfig.heroTitle}
-                  </h2>
-                  
-                  <p className="text-slate-700 dark:text-slate-300 text-sm md:text-base leading-relaxed font-semibold">
-                    {siteConfig.heroSubtitle}
-                  </p>
-
-                  <div className="flex flex-wrap gap-3.5 pt-2">
-                    <button 
-                      onClick={() => setCurrentView('register')}
-                      className="bg-blue-600 hover:bg-blue-500 hover:scale-[1.02] active:scale-[0.98] text-white font-bold px-6 py-3 rounded-2xl shadow-lg shadow-blue-900/30 transition-all duration-150 cursor-pointer"
-                    >
-                      {lang === 'si' ? 'නව සිසු ලියාපදිංචිය (Register)' : 'New Student Registration'}
-                    </button>
-                    <button 
-                      onClick={() => setCurrentView('login')}
-                      className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700/85 hover:scale-[1.02] active:scale-[0.98] text-slate-900 dark:text-slate-100 font-bold border border-slate-300 dark:border-slate-700 px-6 py-3 rounded-2xl transition-all duration-150 shadow-sm cursor-pointer"
-                    >
-                      {lang === 'si' ? 'සිසු පිවිසුම (Login)' : 'Student Login'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Professional Teacher Branding (Bento Accent Card) */}
-              <div 
-                style={{
-                  backgroundColor: '#1d4ed8',
-                  backgroundImage: 'linear-gradient(135deg, #1d4ed8 0%, #1e40af 50%, #312e81 100%)'
-                }}
-                className="lg:col-span-4 rounded-3xl bg-blue-700 border-2 border-blue-400/40 p-8 flex flex-col justify-between text-center relative shadow-2xl overflow-hidden group text-white"
-              >
-                {/* Abstract Shape Background */}
-                <div className="absolute -top-10 -right-10 w-64 h-64 bg-white/10 rounded-full blur-3xl group-hover:bg-white/15 transition-all" />
-                
-                <div className="absolute top-4 right-4 text-[10px] tracking-widest font-mono uppercase bg-blue-950/80 text-blue-100 border border-blue-300/40 px-2.5 py-1 rounded font-bold shadow-sm">
-                  {lang === 'si' ? 'ප්‍රධාන දේශක' : 'Director Core'}
-                </div>
-
-                {/* Professional Looking Mock Vector/Graphic with rotate effect */}
-                <div className="my-6">
-                  <div className="relative w-40 h-40 mx-auto bg-white p-1.5 rounded-2xl shadow-2xl rotate-3 transform group-hover:rotate-0 group-hover:scale-105 transition-all duration-300">
-                    <div className="w-full h-full rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center relative">
-                      {siteConfig.directorImage && siteConfig.directorImage.trim() !== '' ? (
-                         <img src={siteConfig.directorImage} className="w-full h-full object-cover relative z-10" alt="Director Core" />
-                      ) : (
-                         <>
-                           <div className="absolute inset-0 bg-gradient-to-tr from-blue-600/30 to-sky-400/30 mix-blend-multiply" />
-                           <User size={64} className="text-blue-900 relative z-10" />
-                         </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5 z-10">
-                  <h3 className="text-2xl font-black text-white tracking-tight drop-shadow-md">
-                    {siteConfig.directorName || (lang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe')}
-                  </h3>
-                  <p className="text-xs text-blue-100 font-mono tracking-widest uppercase font-bold drop-shadow-sm">
-                    {siteConfig.directorTitle || (lang === 'si' ? "B.Sc (Hon's) පේරාදෙණිය විශ්වවිද්‍යාලය | භෞතික විද්‍යා දේශක" : "B.Sc (Hon's) University of Peradeniya | Physics Teacher")}
-                  </p>
-                </div>
-
-                <div 
-                  style={{ backgroundColor: 'rgba(15, 23, 42, 0.92)', color: '#ffffff' }}
-                  className="bg-slate-900/95 dark:bg-slate-950/90 border border-blue-300/40 rounded-2xl p-4 mt-6 text-left relative z-10 shadow-xl"
-                >
-                  <span 
-                    style={{ backgroundColor: '#1e3a8a', color: '#ffffff' }}
-                    className="absolute -top-3 left-4 bg-blue-900 border border-blue-300/60 p-0.5 px-2.5 font-mono text-[9px] !text-white font-black uppercase tracking-wider rounded-md shadow-md"
-                  >
-                    {lang === 'si' ? 'ගුරු උපදෙස්' : 'Advice & Quote'}
-                  </span>
-                  <p 
-                    style={{ color: '#ffffff' }}
-                    className="!text-white text-sm italic font-sans leading-relaxed py-1 drop-shadow-md font-semibold"
-                  >
-                    "{siteConfig.directorQuote || (lang === 'si' ? 'භෞතික විද්‍යාව යනු කටපාඩම් කිරීමක් නොව, විශ්වයේ රහස්‍ය ස්වභාවය අවබෝධ කරගැනීමේ සුන්දර ගමනකි.' : 'Physics is not mere memorization; it is a fascinating journey of understanding how the universe works.')}"
-                  </p>
-                </div>
-
-                <div className="pt-6 border-t border-blue-400/30 text-xs text-blue-100 justify-center flex items-center gap-1.5 z-10 font-bold drop-shadow-sm">
-                  <Award size={14} className="text-amber-300 shrink-0" /> {lang === 'si' ? 'වෘත්තීය භෞතික විද්‍යා අධ්‍යයන ඒකක' : 'Professional physics learning modules'}
-                </div>
-              </div>
-            </div>
-
-            {/* Feature Cards Section grid (Bento Grid Style) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:border-blue-500/50 transition-all shadow-md">
-                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:bg-blue-500/25 transition-all">
-                  <Globe size={22} />
-                </div>
-                <h4 className="text-lg font-bold text-slate-900 dark:text-white font-display">
-                  {lang === 'si' ? 'නොමිලේ සම්පත් (Free Resources)' : 'Free Resources'}
-                </h4>
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-sans">
-                  {siteConfig.feat1Desc || (lang === 'si' ? "නොමිලේ ලබාදෙන සම්මන්ත්‍රණ, වීඩියෝ දර්ශන, ක්‍රියාකාරී ඇලර්ට් සහ අනුමාන ප්‍රශ්න පත්‍ර ඕනෑම අයෙකුට පහසුවෙන් ලබා ගත හැක." : "Free seminar sessions, video walkthroughs, active broadcast alerts and model papers accessible to any student.")}
-                </p>
-              </div>
-
-              <div className="bg-white dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/50 rounded-3xl p-6 space-y-3 group hover:border-blue-500/50 transition-all shadow-md">
-                <div className="w-12 h-12 rounded-2xl bg-blue-500/15 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:bg-blue-500/25 transition-all">
-                  <Unlock size={22} />
-                </div>
-                <h4 className="text-lg font-bold text-slate-900 dark:text-white font-display">
-                  {lang === 'si' ? 'ගෙවීම් කළ සිසු සම්පත් (Paid Portal Resources)' : 'Paid Portal Resources'}
-                </h4>
-                <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed font-sans">
-                  {siteConfig.feat2Desc || (lang === 'si' ? "සක්‍රීය සිසුන්ට අදාළ මාසයේ සජීවී දේශන සබැඳි, සවිස්තරාත්මක නිබන්ධන පත්‍රිකා සහ සියලුම පටිගත කළ පාඩම් ලිපිගොනු ඇතුළත් වේ." : "Active enrolled students access live stream classes, comprehensive tutorial papers, and complete recorded video vaults.")}
-                </p>
-              </div>
-            </div>
-          </div>
+          <HomePageView 
+            lang={lang}
+            theme={theme}
+            dbSiteConfig={siteConfig}
+            onNavigate={(view) => setCurrentView(view)}
+          />
         )}
 
         {/* VIEW 2: FREE NOTES */}
@@ -2252,7 +2085,7 @@ if (isLoading) {
                     disabled={isSubmitButtonDisabled}
                     className={`flex-1 font-semibold text-sm px-6 py-3 rounded-xl transition-all shadow-lg ${isSubmitButtonDisabled ? 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-300 dark:border-slate-700/50 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 hover:shadow-blue-700/50 hover:translate-y-[-1px]'}`}
                   >
-                    Confirm Registration &amp; Send Admin [0719152128]
+                    Confirm Registration &amp; Send Admin [{brandConfig.supportCallingPhone}]
                   </button>
                   <button 
                     type="reset" 
@@ -3021,26 +2854,26 @@ if (isLoading) {
             )}
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2.5 text-blue-600 dark:text-blue-400 font-bold">
-            <span>Contact: Smart Physics Support Team - 0779630100</span>
+            <span>Contact: {brandConfig.supportTeamName} - {brandConfig.supportHotline}</span>
             <a 
-              href="tel:0779630100" 
+              href={`tel:${brandConfig.supportHotline.replace(/\s+/g, '')}`} 
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-[11px] transition"
-              title="Call Smart Physics Support Team"
+              title={`Call ${brandConfig.supportTeamName}`}
             >
               <Phone size={12} /> Call Hotline
             </a>
             <a 
-              href="https://wa.me/94779630100" 
+              href={`https://wa.me/${brandConfig.supportWhatsAppNumber}`} 
               target="_blank" 
               rel="noopener noreferrer" 
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] transition"
-              title="WhatsApp Smart Physics Support Team"
+              title={`WhatsApp ${brandConfig.supportTeamName}`}
             >
               <MessageCircle size={12} /> WhatsApp
             </a>
           </div>
           <div className="text-slate-700 dark:text-slate-300 font-semibold">
-            🏛️ Powered by Amarasinghe Digital
+            {brandConfig.footerPoweredBy}
           </div>
         </footer>
       )}

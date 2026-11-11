@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { emitRealtimeEvent } from '../realtimeSync';
-import { Video, Play, Square, Edit, Plus, Clock, Trash2, FileText, Send, EyeOff, MessageCircle, Eye, UserCheck, RotateCcw } from 'lucide-react';
+import { emitRealtimeEvent, sendSupabaseBroadcast } from '../realtimeSync';
+import { Video, Play, Square, Edit, Plus, Clock, Trash2, FileText, Send, EyeOff, MessageCircle, Eye, UserCheck, RotateCcw, Youtube, Radio } from 'lucide-react';
 import SecurityPasswordModal from './SecurityPasswordModal';
 
 interface AdminLiveControlsProps {
@@ -50,6 +50,11 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
   const [examStatusTab, setExamStatusTab] = useState<'uncompleted' | 'completed'>('uncompleted');
   const [examStatusSearch, setExamStatusSearch] = useState('');
 
+  // Dedicated YouTube Live Link Modal State (To add/edit YouTube live links after creating classes)
+  const [youtubeModalTarget, setYoutubeModalTarget] = useState<any | null>(null);
+  const [youtubeInputUrl, setYoutubeInputUrl] = useState<string>('');
+  const [isSavingYoutube, setIsSavingYoutube] = useState<boolean>(false);
+
   // Live Class Form State
   const [formData, setFormData] = useState({
     id: '',
@@ -63,6 +68,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
     target_class_type: '',
     zoom_join_url: '',
     zoom_start_url: '',
+    youtube_live_url: '',
     link: ''
   });
 
@@ -94,8 +100,15 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
   const fetchInitialData = async () => {
     try {
+      // Auto-cleanup any residual test records from scheduled_lives and calendar_events
+      supabase.from('scheduled_lives').delete().ilike('title', '%Test 123%').then(() => {});
+      supabase.from('calendar_events').delete().ilike('title', '%Test 123%').then(() => {});
+
       const { data: livesData } = await supabase.from('scheduled_lives').select('*').order('created_at', { ascending: false });
-      if (livesData) setLives(livesData);
+      if (livesData) {
+        const cleanLives = livesData.filter(l => !(l.title || '').toLowerCase().includes('test 123'));
+        setLives(cleanLives);
+      }
 
       const { data: configsData } = await supabase.from('class_types_config').select('*');
       if (configsData) setClassConfigs(configsData);
@@ -176,6 +189,17 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
 
   const handleSaveLive = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.title || !formData.date || !formData.time) {
+      alert("කරුණාකර පන්තියේ මාතෘකාව, දිනය සහ වේලාව ඇතුළත් කරන්න.");
+      return;
+    }
+
+    if (formData.target_classes.length === 0) {
+      alert("කරුණාකර අවම වශයෙන් එක් පන්තියක්වත් තෝරන්න (Select at least one Target Class).");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -187,45 +211,64 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
             body: { topic: formData.title, start_time: `${formData.date}T${formData.time}:00` }
           });
           if (edgeError) {
-            console.error("Zoom API invocation warning:", edgeError);
+            console.warn("Zoom API invocation notice:", edgeError);
           } else if (edgeData) {
             zoomInfo = edgeData;
           }
         } catch (zErr) {
-          console.error("Zoom invocation failed:", zErr);
+          console.warn("Zoom invocation fallback:", zErr);
         }
       }
 
       const mainClassType = formData.target_classes[0] || 'Theory';
+      const defaultZoom = 'https://zoom.us';
 
-      const zoomJoin = ((zoomInfo ? zoomInfo.join_url : '') || formData.zoom_join_url || formData.link || '').trim();
-      const zoomStart = ((zoomInfo ? zoomInfo.start_url : '') || formData.zoom_start_url || '').trim();
+      const zoomJoin = ((zoomInfo ? zoomInfo.join_url : '') || formData.zoom_join_url || formData.link || defaultZoom).trim();
+      const zoomStart = ((zoomInfo ? zoomInfo.start_url : '') || formData.zoom_start_url || zoomJoin || defaultZoom).trim();
       const zoomMeetingId = zoomInfo?.id ? String(zoomInfo.id) : ((formData as any).zoom_meeting_id || undefined);
 
       const payload: any = {
-        title: formData.title,
+        title: formData.title.trim(),
         date: formData.date,
         time: formData.time,
-        target_month: formData.target_month,
+        target_month: formData.target_month || formData.date.substring(0, 7),
         target_classes: formData.target_classes,
         target_class_type: mainClassType, 
         // A brand-new scheduled class should NEVER inherit an exam from prior sessions or forms!
         active_exam_id: formData.id ? (formData.active_exam_id || null) : null,
         is_exam_active: formData.id ? !!formData.active_exam_id : false,
-        pre_class_video_path: formData.pre_class_video_path,
+        pre_class_video_path: formData.pre_class_video_path || '/videos/waiting-video.mp4',
         platform: 'zoom',
         status: formData.id ? undefined : 'scheduled', // ensure new lives are scheduled
-        zoom_start_url: zoomStart || undefined, // HOST link for Admin/Teacher
-        zoom_join_url: zoomJoin || undefined,   // JOIN link for Students
-        link: zoomJoin || undefined,
+        zoom_start_url: zoomStart, // HOST link for Admin/Teacher
+        zoom_join_url: zoomJoin,   // JOIN link for Students
+        link: zoomJoin,
         ...(zoomMeetingId && {
           zoom_meeting_id: zoomMeetingId,
         })
       };
 
+      // YouTube Live URL: ONLY attached when updating an existing class and user specified it!
+      // When creating a brand-new class, we keep payload completely clean of youtube_live_url
+      if (formData.id && formData.youtube_live_url?.trim()) {
+        payload.youtube_live_url = formData.youtube_live_url.trim();
+      }
+
       if (formData.id) {
         const { data: oldLive } = await supabase.from('scheduled_lives').select('*').eq('id', formData.id).single();
-        await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
+        const { error: updateError } = await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
+        
+        if (updateError) {
+          console.error("Scheduled live update error:", updateError);
+          // If error is about youtube_live_url column not existing in DB, retry without it
+          if (updateError.message?.includes('youtube_live_url')) {
+            delete payload.youtube_live_url;
+            const { error: retryError } = await supabase.from('scheduled_lives').update(payload).eq('id', formData.id);
+            if (retryError) throw retryError;
+          } else {
+            throw updateError;
+          }
+        }
         
         if (oldLive) {
           await supabase.from('calendar_events')
@@ -240,9 +283,22 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
             .eq('title', oldLive.title)
             .eq('date', oldLive.date);
         }
+
+        setActionToast({ type: 'success', message: '✅ සජීවී පන්තිය සාර්ථකව යාවත්කාලීන කරන ලදී!' });
       } else {
-        await supabase.from('scheduled_lives').insert([payload]);
-        await supabase.from('calendar_events').insert([{
+        const { error: insertError } = await supabase.from('scheduled_lives').insert([payload]);
+        if (insertError) {
+          console.error("Scheduled live insert error:", insertError);
+          if (insertError.message?.includes('youtube_live_url')) {
+            delete payload.youtube_live_url;
+            const { error: retryError } = await supabase.from('scheduled_lives').insert([payload]);
+            if (retryError) throw retryError;
+          } else {
+            throw insertError;
+          }
+        }
+
+        const { error: calError } = await supabase.from('calendar_events').insert([{
           date: formData.date,
           title: formData.title,
           description: `Zoom Live Class - ${mainClassType}`,
@@ -251,14 +307,56 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
           class_type: mainClassType,
           start_time: formData.time
         }]);
+        if (calError) {
+          console.warn("Calendar event insert notice:", calError);
+        }
+
+        setActionToast({ type: 'success', message: '✅ නව සූම් පන්තිය සාර්ථකව ඩේටාබේස් එකට එක් කරන ලදී!' });
       }
 
       setIsModalOpen(false);
       await fetchInitialData();
     } catch (err: any) {
-      alert(err.message || "Error saving session.");
+      console.error("Error saving live class session:", err);
+      alert("සජීවී පන්තිය සුරැකීමේදී දෝෂයක් සිදු විය:\n" + (err.message || JSON.stringify(err)));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Dedicated Save Handler for YouTube Live Link Modal (Add / Edit after class creation)
+  const handleSaveYouTubeLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!youtubeModalTarget) return;
+    setIsSavingYoutube(true);
+    try {
+      const cleanUrl = youtubeInputUrl.trim() || null;
+      const { error } = await supabase
+        .from('scheduled_lives')
+        .update({ youtube_live_url: cleanUrl })
+        .eq('id', youtubeModalTarget.id);
+
+      if (error) {
+        if (error.message?.includes('youtube_live_url')) {
+          alert("⚠️ ඩේටාබේස් එකේ 'youtube_live_url' කොළම තවමත් නොමැත.\nකරුණාකර Supabase SQL Editor තුළ පහත විධානය run කරන්න:\n\nALTER TABLE scheduled_lives ADD COLUMN IF NOT EXISTS youtube_live_url TEXT;");
+          return;
+        }
+        throw error;
+      }
+
+      setActionToast({
+        type: 'success',
+        message: cleanUrl 
+          ? `✅ "${youtubeModalTarget.title}" පන්තියට YouTube Live ලින්ක් එක සාර්ථකව එක් කරන ලදී!` 
+          : `✅ "${youtubeModalTarget.title}" පන්තියේ YouTube Live ලින්ක් එක ඉවත් කරන ලදී!`
+      });
+      setYoutubeModalTarget(null);
+      await fetchInitialData();
+    } catch (err: any) {
+      console.error("Error saving YouTube link:", err);
+      alert("YouTube ලින්ක් එක සුරැකීමේ දෝෂයක්:\n" + (err.message || JSON.stringify(err)));
+    } finally {
+      setIsSavingYoutube(false);
     }
   };
 
@@ -383,14 +481,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
       emitRealtimeEvent('live_exam_updated', { liveId, examId, action, timestamp: nowIso });
       emitRealtimeEvent('exam_pushed', { liveId, examId, action, timestamp: nowIso });
 
-      try {
-        const liveChannel = supabase.channel('live_class_push_events');
-        liveChannel.send({
-          type: 'broadcast',
-          event: 'exam_pushed',
-          payload: { liveId, examId, action, timestamp: nowIso }
-        });
-      } catch (e) {}
+      sendSupabaseBroadcast('live_class_push_events', 'exam_pushed', { liveId, examId, action, timestamp: nowIso });
 
       await fetchInitialData();
 
@@ -552,6 +643,13 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
       // 5. Update local state immediately for instant feedback
       setLives(prev => prev.filter(l => l.id !== targetId));
       setDeleteTarget(null);
+      try {
+        localStorage.removeItem('cached_scheduled_lives');
+        localStorage.removeItem('physics_hub_scheduled_lives');
+      } catch {}
+      emitRealtimeEvent('live_deleted', { id: targetId });
+      emitRealtimeEvent('scheduled_lives_updated', { id: targetId });
+      emitRealtimeEvent('calendar_updated', { liveId: targetId });
       setActionToast({ message: 'සජීවී පන්තිය සාර්ථකව මකා දමන ලදී (Live schedule deleted successfully)', type: 'success' });
       await fetchInitialData();
     } catch (err: any) {
@@ -610,6 +708,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               target_class_type: initialClasses[0] || '',
               zoom_join_url: '',
               zoom_start_url: '',
+              youtube_live_url: '',
               link: ''
             });
             setCurrentLiveId('');
@@ -676,8 +775,41 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                     <div className="text-slate-500 dark:text-slate-400 text-xs mt-1 flex items-center gap-2">
                       <Clock size={14} className="text-blue-500" /> {live.date} @ {live.time}
                     </div>
-                    <div className="mt-2 text-[11px] font-mono text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/5 w-fit px-2 py-0.5 rounded font-bold">
-                      Target Month: {live.target_month || 'N/A'}
+                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-mono text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/5 px-2 py-0.5 rounded font-bold">
+                        Target Month: {live.target_month || 'N/A'}
+                      </span>
+
+                      {/* YouTube Live Action Button (Added after class creation) */}
+                      {live.youtube_live_url ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setYoutubeModalTarget(live);
+                            setYoutubeInputUrl(live.youtube_live_url || '');
+                          }}
+                          className="text-[11px] font-bold text-red-700 dark:text-red-300 border border-red-300 dark:border-red-900/60 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-950/70 px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          title="YouTube Live Link එක වෙනස් කරන්න හෝ ඉවත් කරන්න"
+                        >
+                          <Youtube size={13} className="text-red-600" />
+                          <span>YouTube Live Active</span>
+                          <span className="text-[10px] text-red-600 dark:text-red-400 underline font-semibold ml-0.5">(Edit)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setYoutubeModalTarget(live);
+                            setYoutubeInputUrl('');
+                          }}
+                          className="text-[11px] font-bold text-red-600 dark:text-red-400 border border-red-200 hover:border-red-400 dark:border-red-900/50 bg-white hover:bg-red-50 dark:bg-slate-900 dark:hover:bg-red-950/40 px-2.5 py-0.5 rounded-lg flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          title="මෙම පන්තිය සාදන ලද බැවින් අවශ්‍යනම් YouTube Live Link එකක් එක් කරන්න"
+                        >
+                          <Plus size={11} className="text-red-600" />
+                          <Youtube size={13} className="text-red-600" />
+                          <span>+ Add YouTube Link</span>
+                        </button>
+                      )}
                     </div>
                   </td>
 
@@ -875,6 +1007,7 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                                 target_class_type: live.target_class_type || '',
                                 zoom_join_url: live.zoom_join_url || live.link || '',
                                 zoom_start_url: live.zoom_start_url || '',
+                                youtube_live_url: live.youtube_live_url || '',
                                 link: live.zoom_join_url || live.link || ''
                               }); 
                               setCurrentLiveId(live.id); 
@@ -980,6 +1113,31 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
                     })}
                 </div>
               </div>
+
+              {/* YouTube Live Link Input (Only available when editing an existing class!) */}
+              {formData.id && (
+                <div className="p-3.5 bg-red-50/50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-red-700 dark:text-red-400 flex items-center gap-1.5 uppercase font-mono">
+                      <Youtube size={15} className="text-red-600 dark:text-red-500" />
+                      Live YouTube Link (විකල්ප / Optional)
+                    </label>
+                    <span className="text-[10px] bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 px-2 py-0.5 rounded font-medium">
+                      In-App Protected Player
+                    </span>
+                  </div>
+                  <input 
+                    type="url" 
+                    value={formData.youtube_live_url} 
+                    onChange={e => setFormData({...formData, youtube_live_url: e.target.value})} 
+                    placeholder="https://www.youtube.com/watch?v=... හෝ https://youtu.be/... හෝ Live Video ID" 
+                    className="w-full bg-white dark:bg-slate-950 border border-red-300 dark:border-red-900/60 rounded-xl p-2.5 text-slate-900 dark:text-white placeholder:text-slate-400 text-xs focus:outline-none focus:border-red-500 font-mono" 
+                  />
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-tight">
+                    මෙම ලින්ක් එක ලබා දුනහොත්, සිසුන්ට සූම් වලට අමතරව <strong>"YouTube Live මගින් නරඹන්න"</strong> බටන් එක හරහා ආරක්ෂිත LMS Custom Player එකකින් සජීවීව පන්තිය නැරඹිය හැක.
+                  </p>
+                </div>
+              )}
 
               {/* Zoom Meeting Links (Auto-generated in background, optional advanced edit) */}
               {formData.id && (formData.zoom_start_url || formData.zoom_join_url) && (
@@ -1470,6 +1628,87 @@ export default function AdminLiveControls({ currentStaff }: AdminLiveControlsPro
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* --- DEDICATED YOUTUBE LIVE LINK POPUP MODAL (Add / Edit after class creation) --- */}
+      {youtubeModalTarget && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center z-[75] p-4 animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-red-500/30 p-6 rounded-3xl w-full max-w-lg shadow-2xl text-slate-900 dark:text-white relative">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-red-600/10 border border-red-500/20 flex items-center justify-center text-red-600 dark:text-red-400">
+                  <Youtube size={22} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                    Live YouTube Link එකතු කිරීම / සංස්කරණය
+                  </h3>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    {youtubeModalTarget.title} ({youtubeModalTarget.date} @ {youtubeModalTarget.time})
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setYoutubeModalTarget(null)}
+                className="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveYouTubeLink} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5 flex items-center gap-1.5">
+                  <Radio size={13} className="text-red-500 animate-pulse" />
+                  YouTube Live Stream URL / ID
+                </label>
+                <input
+                  type="text"
+                  value={youtubeInputUrl}
+                  onChange={(e) => setYoutubeInputUrl(e.target.value)}
+                  placeholder="e.g. https://www.youtube.com/watch?v=... හෝ https://youtu.be/... හෝ Live ID"
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl p-3 text-slate-900 dark:text-white text-xs font-mono focus:outline-none focus:border-red-500"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-relaxed">
+                  මෙම පන්තිය සඳහා YouTube Live ලින්ක් එකක් ලබා දුන් පසු, සිසුන්ගේ ඩෑෂ්බෝඩ් එකේ <strong>"🔴 YouTube Live මගින් නරඹන්න"</strong> බටනය සක්‍රීය වී ඔවුන්ට මෙම පන්තිය Protected In-App Player එකෙන් නැරඹිය හැක.
+                </p>
+              </div>
+
+              {youtubeInputUrl && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-xl text-[11px] text-red-700 dark:text-red-300 flex items-center justify-between">
+                  <span className="truncate max-w-[280px]">ලින්ක් එක සක්‍රීයයි: {youtubeInputUrl}</span>
+                  <button
+                    type="button"
+                    onClick={() => setYoutubeInputUrl('')}
+                    className="text-red-600 dark:text-red-400 hover:underline font-bold text-xs shrink-0 ml-2 cursor-pointer"
+                  >
+                    Clear Link
+                  </button>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setYoutubeModalTarget(null)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-white rounded-xl text-xs font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingYoutube}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-900/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Youtube size={15} />
+                  <span>{isSavingYoutube ? 'සුරකිමින්...' : 'Save YouTube Link'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

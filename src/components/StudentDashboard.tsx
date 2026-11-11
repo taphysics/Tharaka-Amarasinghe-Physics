@@ -29,6 +29,7 @@ import {
   dismissUnblockNotification,
   getOrCreateDeviceId 
 } from '../deviceSecurityService';
+import { SITE_BRAND_CONFIG, getMergedSiteConfig } from '../config/siteBrandConfig';
 
 type TabType = "live" | "recordings" | "tutes" | "exams" | "calendar" | "history" | null;
 
@@ -94,6 +95,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
   toggleTheme
 }) => {
   const activeLang = lang || ((localStorage.getItem('physics_hub_lang') as 'si' | 'en') || 'si');
+  const brandConfig = getMergedSiteConfig(siteConfig, activeLang);
   
   // Theme state and handlers
   const [internalTheme, setInternalTheme] = useState<'light' | 'dark'>(() => {
@@ -1019,6 +1021,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         const unifiedMap = new Map<string, any>();
 
         rawLives.forEach((l: any) => {
+          const title = (l.title || '').trim();
+          if (title.toLowerCase().includes('test 123') || title.toLowerCase() === 'test') return;
           const classType = l.target_class_type || (Array.isArray(l.target_classes) ? l.target_classes[0] : null) || l.class_type || 'General';
           const eventKey = `${l.date}_${(l.title || 'Live').trim().toLowerCase()}`;
           unifiedMap.set(eventKey, {
@@ -1036,6 +1040,8 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         });
 
         rawCalEvents.forEach((c: any) => {
+          const title = (c.title || '').trim();
+          if (title.toLowerCase().includes('test 123') || title.toLowerCase() === 'test') return;
           const classType = c.target_class_type || c.class_type || 'General';
           const eventKey = `${c.date}_${(c.title || 'Event').trim().toLowerCase()}`;
           if (!unifiedMap.has(eventKey)) {
@@ -1351,20 +1357,20 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
         
         {/* Responsive Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 border-b lg:border-b-0 lg:border-r border-slate-800 pb-6 lg:pb-0 lg:pr-6">
-            <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-extrabold text-slate-400 mb-2 uppercase tracking-wider">
-              <div className="text-rose-400">Sun</div>
+          <div className="lg:col-span-8 border-b lg:border-b-0 lg:border-r border-slate-200 dark:border-slate-800 pb-6 lg:pb-0 lg:pr-6">
+            <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-extrabold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">
+              <div className="text-rose-500 dark:text-rose-400">Sun</div>
               <div>Mon</div>
               <div>Tue</div>
               <div>Wed</div>
               <div>Thu</div>
               <div>Fri</div>
-              <div className="text-cyan-400">Sat</div>
+              <div className="text-cyan-600 dark:text-cyan-400">Sat</div>
             </div>
             
             <div className="grid grid-cols-7 gap-2">
               {days.map((day, index) => {
-                if (day === null) return <div key={`empty-${index}`} className="p-2 min-h-[85px] bg-slate-950/20 rounded-xl border border-slate-900/50"></div>;
+                if (day === null) return <div key={`empty-${index}`} className="p-2 min-h-[85px] bg-slate-100/60 dark:bg-slate-950/20 rounded-xl border border-slate-200/60 dark:border-slate-900/50"></div>;
                 
                 const paddedDay = String(day).padStart(2, '0');
                 const paddedMonth = String(calendarViewMonth).padStart(2, '0');
@@ -1380,15 +1386,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     }}
                     className={`min-h-[85px] p-2 rounded-2xl border flex flex-col justify-between transition-all select-none ${
                       isToday 
-                        ? 'bg-purple-950/40 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.25)] ring-1 ring-purple-400/50' 
+                        ? 'bg-purple-100/70 dark:bg-purple-950/40 border-purple-400 dark:border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.15)] ring-1 ring-purple-400/50' 
                         : dayEvents.length > 0
-                        ? 'bg-slate-800/40 border-slate-700 hover:border-slate-500 hover:bg-slate-800/70 cursor-pointer shadow-md'
-                        : 'bg-slate-950/30 border-slate-800/60 hover:border-slate-700/80 hover:bg-slate-900/40'
+                        ? 'bg-purple-50/60 dark:bg-slate-800/40 border-purple-200 dark:border-slate-700 hover:border-purple-400 dark:hover:border-slate-500 hover:bg-purple-100/60 dark:hover:bg-slate-800/70 cursor-pointer shadow-sm'
+                        : 'bg-slate-50/80 dark:bg-slate-950/30 border-slate-200 dark:border-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700/80 hover:bg-slate-100/70 dark:hover:bg-slate-900/40'
                     }`}
                   >
                     <div className="flex items-center justify-between w-full">
                       <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-lg ${
-                        isToday ? 'bg-purple-500 text-white' : dayEvents.length > 0 ? 'bg-slate-700/80 text-white' : 'text-slate-400'
+                        isToday 
+                          ? 'bg-purple-600 text-white' 
+                          : dayEvents.length > 0 
+                          ? 'bg-purple-200 dark:bg-slate-700/80 text-purple-900 dark:text-white font-black' 
+                          : 'text-slate-600 dark:text-slate-400'
                       }`}>
                         {day}
                       </span>
@@ -1413,7 +1423,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             className={`text-[9px] px-1.5 py-0.5 rounded-md border font-bold flex items-center justify-between gap-1 transition-transform hover:scale-[1.02] cursor-pointer ${meta.cellBadge}`}
                           >
                             <span className="truncate flex-1 font-bold">{meta.stickerShort}</span>
-                            <span className="text-[8px] font-mono shrink-0 opacity-80">{ev.start_time || ''}</span>
+                            <span className="text-[8px] font-mono shrink-0 opacity-90">{ev.start_time || ''}</span>
                           </div>
                         );
                       })}
@@ -1427,10 +1437,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* Right Upcoming Stream */}
           <div className="lg:col-span-4 flex flex-col justify-start space-y-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Clock size={13} className="text-purple-400" /> ඉදිරි &amp; අද පන්ති
+              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock size={13} className="text-purple-600 dark:text-purple-400" /> ඉදිරි &amp; අද පන්ති
               </h4>
-              <span className="text-[10px] text-purple-400 font-mono font-bold bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+              <span className="text-[10px] text-purple-700 dark:text-purple-300 font-mono font-bold bg-purple-100 dark:bg-purple-500/10 px-2.5 py-1 rounded-md border border-purple-200 dark:border-purple-500/20">
                 {(() => {
                   const slNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Colombo" }));
                   const todayDateStr = `${slNow.getFullYear()}-${String(slNow.getMonth() + 1).padStart(2, '0')}-${String(slNow.getDate()).padStart(2, '0')}`;
@@ -1449,7 +1459,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                 if (filteredUpcoming.length === 0) {
                   return (
-                    <div className="text-xs text-slate-500 italic text-center py-12 bg-slate-950/30 rounded-2xl border border-slate-800/50">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 italic text-center py-12 bg-slate-50 dark:bg-slate-950/30 rounded-2xl border border-slate-200 dark:border-slate-800/50">
                       ඔබ තෝරාගෙන ඇති පන්ති සඳහා අද හෝ ඉදිරි දිනවල නියමිත පන්ති කිසිවක් හමු නොවීය.
                     </div>
                   );
@@ -1464,8 +1474,10 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <div 
                       key={idx} 
                       onClick={() => setSelectedCalendarEvent(ev)}
-                      className={`p-3.5 bg-slate-950/70 border rounded-2xl transition cursor-pointer space-y-2 group ${
-                        isTodayClass ? 'border-purple-500/60 shadow-[0_0_15px_rgba(168,85,247,0.15)] ring-1 ring-purple-500/30' : 'border-slate-800 hover:border-slate-700'
+                      className={`p-3.5 rounded-2xl transition cursor-pointer space-y-2 group border ${
+                        isTodayClass 
+                          ? 'bg-purple-50/80 dark:bg-slate-950/70 border-purple-400 dark:border-purple-500/60 shadow-[0_0_15px_rgba(168,85,247,0.15)] ring-1 ring-purple-500/30' 
+                          : 'bg-slate-50 hover:bg-purple-50/60 dark:bg-slate-950/70 border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-slate-700 shadow-sm'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -1474,27 +1486,27 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </span>
                         <div className="flex items-center gap-1.5">
                           {isTodayClass && (
-                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30 animate-pulse">
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30 animate-pulse">
                               🔴 TODAY
                             </span>
                           )}
                           <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full uppercase font-bold border ${
-                            isLive ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                            isLive ? 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30 animate-pulse' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
                           }`}>
                             {isLive ? '🔴 LIVE' : ev.status}
                           </span>
                         </div>
                       </div>
 
-                      <h5 className="text-xs font-bold text-white group-hover:text-purple-300 transition truncate" title={ev.title}>
+                      <h5 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-300 transition truncate" title={ev.title}>
                         {ev.title}
                       </h5>
 
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-900">
-                        <span className="font-mono flex items-center gap-1 text-slate-300">
-                          <Calendar size={11} className="text-purple-400" /> {ev.date}
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200/80 dark:border-slate-900">
+                        <span className="font-mono flex items-center gap-1 text-slate-700 dark:text-slate-300 font-semibold">
+                          <Calendar size={11} className="text-purple-600 dark:text-purple-400" /> {ev.date}
                         </span>
-                        <span className="font-mono font-bold flex items-center gap-1 text-purple-300">
+                        <span className="font-mono font-bold flex items-center gap-1 text-purple-700 dark:text-purple-300">
                           <Clock size={11} /> {ev.start_time || '18:00'}
                         </span>
                       </div>
@@ -1508,11 +1520,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         {/* Selected Event Modal */}
         {selectedCalendarEvent && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
               <button 
                 onClick={() => setSelectedCalendarEvent(null)}
-                className="absolute top-4 right-4 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition cursor-pointer"
+                className="absolute top-4 right-4 p-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-full text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -1521,23 +1533,23 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 mb-2 ${getClassTypeMeta(selectedCalendarEvent.class_type).bgPill}`}>
                   {getClassTypeMeta(selectedCalendarEvent.class_type).sticker}
                 </span>
-                <h3 className="text-base font-extrabold text-white">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
                   {selectedCalendarEvent.title}
                 </h3>
               </div>
 
-              <div className="p-3 bg-slate-950/60 rounded-2xl border border-slate-800 space-y-2 text-xs">
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">දිනය:</span>
-                  <span className="text-white font-mono font-bold">{selectedCalendarEvent.date}</span>
+                  <span className="text-slate-500 dark:text-slate-400">දිනය:</span>
+                  <span className="text-slate-900 dark:text-white font-mono font-bold">{selectedCalendarEvent.date}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">වේලාව:</span>
-                  <span className="text-purple-300 font-mono font-bold">{selectedCalendarEvent.start_time || '18:00'}</span>
+                  <span className="text-slate-500 dark:text-slate-400">වේලාව:</span>
+                  <span className="text-purple-700 dark:text-purple-300 font-mono font-bold">{selectedCalendarEvent.start_time || '18:00'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">තත්වය:</span>
-                  <span className="text-emerald-400 font-bold uppercase">{selectedCalendarEvent.status}</span>
+                  <span className="text-slate-500 dark:text-slate-400">තත්වය:</span>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-bold uppercase">{selectedCalendarEvent.status}</span>
                 </div>
               </div>
 
@@ -1551,12 +1563,12 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                   if (isFutureDate || (!isCurrentlyLive && !isTodayDate)) {
                     return (
-                      <div className="p-3.5 bg-purple-950/40 border border-purple-500/30 rounded-2xl text-center space-y-1.5">
-                        <div className="flex items-center justify-center gap-1.5 text-purple-300 font-bold text-xs">
+                      <div className="p-3.5 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-500/30 rounded-2xl text-center space-y-1.5">
+                        <div className="flex items-center justify-center gap-1.5 text-purple-700 dark:text-purple-300 font-bold text-xs">
                           <Clock size={15} />
                           <span>{activeLang === 'si' ? 'ඉදිරියේදී පැවැත්වීමට නියමිත පන්තියකි' : 'Upcoming Scheduled Class'}</span>
                         </div>
-                        <p className="text-[11px] text-slate-300 leading-relaxed">
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
                           {activeLang === 'si' 
                             ? `මෙම පන්තිය නියමිත දිනයේදී (${selectedCalendarEvent.date} ${selectedCalendarEvent.start_time || ''}) සජීවීව ආරම්භ වනු ඇත.`
                             : `This class is scheduled for ${selectedCalendarEvent.date} at ${selectedCalendarEvent.start_time || ''}.`}
@@ -1571,7 +1583,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         setSelectedCalendarEvent(null);
                         handleTabChange('live');
                       }}
-                      className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/40"
+                      className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-black py-3 rounded-2xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-red-900/30"
                     >
                       <Play size={15} /> {activeLang === 'si' ? 'සජීවී පන්තියට සම්බන්ධ වන්න (Join Live Player)' : 'Join Live Class Player'}
                     </button>
@@ -1580,7 +1592,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                 <button 
                   onClick={() => setSelectedCalendarEvent(null)}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-2xl text-xs transition cursor-pointer"
+                  className="w-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold py-2.5 rounded-2xl text-xs transition cursor-pointer"
                 >
                   {activeLang === 'si' ? 'වසන්න (Close)' : 'Close'}
                 </button>
@@ -2345,7 +2357,19 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="flex justify-between items-center">
                 <span className="text-slate-600 dark:text-slate-400 font-medium">අදාළ මාසය:</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono">
-                  {selectedClassToJoin.targetMonth || `${new Date().getFullYear()} ${['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'][new Date().getMonth()]}`}
+                  {(() => {
+                    const raw = selectedClassToJoin.targetMonth;
+                    if (!raw) return `${new Date().getFullYear()} ${['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'][new Date().getMonth()]}`;
+                    const parts = String(raw).trim().split('-');
+                    if (parts.length === 2) {
+                      const mIdx = parseInt(parts[1], 10) - 1;
+                      const sinhalaMonths = ['ජනවාරි', 'පෙබරවාරි', 'මාර්තු', 'අප්‍රේල්', 'මැයි', 'ජූනි', 'ජූලි', 'අගෝස්තු', 'සැප්තැම්බර්', 'ඔක්තෝබර්', 'නොවැම්බර්', 'දෙසැම්බර්'];
+                      if (mIdx >= 0 && mIdx < 12) {
+                        return `${parts[0]} ${sinhalaMonths[mIdx]} (${raw})`;
+                      }
+                    }
+                    return raw;
+                  })()}
                 </span>
               </div>
               <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-800/80">
@@ -2567,15 +2591,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <img src={siteConfig.logoUrl} alt="Logo" className="w-9 h-9 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20" />
                 ) : (
                   <div className="w-9 h-9 rounded-xl bg-blue-600 text-white font-black text-base flex items-center justify-center shadow-sm">
-                    Ω
+                    {brandConfig.brandSymbol}
                   </div>
                 )}
                 <div className="min-w-0">
                   <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                    Smart Physics
+                    {brandConfig.brandName}
                   </h2>
                   <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 truncate">
-                    තාරක අමරසිංහ
+                    {brandConfig.directorName}
                   </p>
                 </div>
               </div>
@@ -2675,15 +2699,15 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <img src={siteConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-sm ring-1 ring-blue-500/20 shrink-0" />
                   ) : (
                     <div className="w-10 h-10 rounded-xl bg-blue-600 text-white font-black text-lg flex items-center justify-center shadow-sm shrink-0">
-                      Ω
+                      {brandConfig.brandSymbol}
                     </div>
                   )}
                   <div className="min-w-0">
                     <h2 className="text-sm font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                      Smart Physics
+                      {brandConfig.brandName}
                     </h2>
                     <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 truncate">
-                      {activeLang === 'si' ? 'තාරක අමරසිංහ' : 'Tharaka Amarasinghe'}
+                      {brandConfig.directorName}
                     </p>
                   </div>
                 </div>
@@ -3389,7 +3413,7 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </button>
 
                   <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {dashboardTab === 'live' && '🔴 Zoom Live Class'}
+                    {dashboardTab === 'live' && '🔴 Live Class (Zoom & YouTube Live)'}
                     {dashboardTab === 'recordings' && '📹 Class Recordings Library'}
                     {dashboardTab === 'tutes' && '📚 Documents & Question Papers'}
                     {dashboardTab === 'exams' && '✍️ Online Exams & Scores'}
@@ -3404,7 +3428,11 @@ const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <SafeComponent>
                       <LiveClassPlayer 
                         currentUser={liveStudentData} 
-                        onNavigateToPayment={() => handleTabChange('history')}
+                        onNavigateToPayment={(classType, month) => {
+                          const targetClass = classType || liveStudentData?.class_types?.[0] || 'Theory';
+                          const targetMonth = month || currentMonthKey;
+                          handleOpenMonthPayment(targetClass, targetMonth);
+                        }}
                       />
                     </SafeComponent>
                   )}

@@ -510,7 +510,7 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
                               className="w-full py-2.5 rounded-2xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-900/20"
                               title="ආරක්ෂිතව කියවන්න"
                             >
-                              <ShieldCheck size={16} /> ආරක්ෂිතව කියවන්න (Secure View)
+                              <ShieldCheck size={16} /> View PDF
                             </button>
 
                             {isResourceDownloadAllowed(asset) && (
@@ -523,7 +523,7 @@ export default function TutsPapersManager({ currentStudent, isPaid: defaultIsPai
                                 className="w-full py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition cursor-pointer select-none bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/20 border border-emerald-500/40"
                                 title="එක් ටච් එකෙන් PDF එක බාගත කරන්න"
                               >
-                                <Download size={15} /> 📥 Download PDF (1-Touch)
+                                <Download size={15} /> 📥 Download PDF
                               </a>
                             )}
                           </div>

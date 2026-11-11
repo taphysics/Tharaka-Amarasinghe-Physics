@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { emitRealtimeEvent } from './realtimeSync';
+import { emitRealtimeEvent, sendSupabaseBroadcast } from './realtimeSync';
 
 export interface DeviceInfo {
   deviceId: string;
@@ -586,15 +586,7 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
         };
 
         emitRealtimeEvent('device_force_logout' as any, banLogoutPayload);
-
-        try {
-          const channel = supabase.channel('student_device_security');
-          channel.send({
-            type: 'broadcast',
-            event: 'force_logout',
-            payload: banLogoutPayload
-          });
-        } catch {}
+        sendSupabaseBroadcast('student_device_security', 'force_logout', banLogoutPayload);
 
         return {
           isConcurrent: true,
@@ -640,24 +632,8 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
       };
 
       emitRealtimeEvent('device_force_logout' as any, logoutPayload);
-
-      try {
-        const channel = supabase.channel('student_device_security');
-        channel.send({
-          type: 'broadcast',
-          event: 'force_logout',
-          payload: logoutPayload
-        });
-      } catch {}
-
-      try {
-        const userChannel = supabase.channel(`student_device_${username}`);
-        userChannel.send({
-          type: 'broadcast',
-          event: 'force_logout',
-          payload: logoutPayload
-        });
-      } catch {}
+      sendSupabaseBroadcast('student_device_security', 'force_logout', logoutPayload);
+      sendSupabaseBroadcast(`student_device_${username}`, 'force_logout', logoutPayload);
 
       // Update student active device without penalty
       updateLocalStudentsCache(username, {
@@ -746,24 +722,8 @@ export async function registerDeviceLogin(student: any, options?: { forceSwitch?
       };
 
       emitRealtimeEvent('device_force_logout' as any, logoutPayload);
-
-      try {
-        const channel = supabase.channel('student_device_security');
-        channel.send({
-          type: 'broadcast',
-          event: 'force_logout',
-          payload: logoutPayload
-        });
-      } catch {}
-
-      try {
-        const userChannel = supabase.channel(`student_device_${username}`);
-        userChannel.send({
-          type: 'broadcast',
-          event: 'force_logout',
-          payload: logoutPayload
-        });
-      } catch {}
+      sendSupabaseBroadcast('student_device_security', 'force_logout', logoutPayload);
+      sendSupabaseBroadcast(`student_device_${username}`, 'force_logout', logoutPayload);
     }
   }
 

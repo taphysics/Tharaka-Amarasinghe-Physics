@@ -8,6 +8,7 @@ import html2canvas from 'html2canvas-pro';
 import { jsPDF } from 'jspdf';
 import { supabase } from '../supabaseClient';
 import { subscribeRealtimeEvents } from '../realtimeSync';
+import { SITE_BRAND_CONFIG } from '../config/siteBrandConfig';
 
 interface Props {
   examId?: string;
@@ -494,16 +495,17 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
             pdf.setTextColor(30, 41, 59);
             pdf.setFont('helvetica', 'bold');
             pdf.setFontSize(22);
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 80, { align: 'center', angle: 35 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 155, { align: 'center', angle: 35 });
-            pdf.text('SMART PHYSICS  •  THARAKA AMARASINGHE', 105, 230, { align: 'center', angle: 35 });
+            const wmText = `${SITE_BRAND_CONFIG.brandName.toUpperCase()}  •  ${SITE_BRAND_CONFIG.directorName.en.toUpperCase()}`;
+            pdf.text(wmText, 105, 80, { align: 'center', angle: 35 });
+            pdf.text(wmText, 105, 155, { align: 'center', angle: 35 });
+            pdf.text(wmText, 105, 230, { align: 'center', angle: 35 });
 
             // Professional footer page numbering
             pdf.setGState(new (pdf as any).GState({ opacity: 0.8 }));
             pdf.setFontSize(8.5);
             pdf.setFont('helvetica', 'normal');
             pdf.setTextColor(100, 116, 139);
-            pdf.text(`Page ${p} of ${numPages}  •  Smart Physics Public Assessment  •  Tharaka Amarasinghe`, 105, 291, { align: 'center' });
+            pdf.text(`Page ${p} of ${numPages}  •  ${SITE_BRAND_CONFIG.brandName} Public Assessment  •  ${SITE_BRAND_CONFIG.directorName.en}`, 105, 291, { align: 'center' });
             pdf.restoreGraphicsState();
           }
         } catch (e) {
@@ -568,22 +570,22 @@ export default function PublicExamPortal({ examId: initialExamId, onBackHome }: 
       <header className="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-50 px-4 py-3 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3">
           <img 
-            src="/logo_cropped.png" 
+            src={SITE_BRAND_CONFIG.logoUrl || "/logo_cropped.png"} 
             onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
-            alt="Smart Physics Logo" 
+            alt={`${SITE_BRAND_CONFIG.brandName} Logo`} 
             className="w-11 h-11 object-contain rounded-xl p-0.5 bg-white drop-shadow-sm border border-slate-200 shrink-0" 
           />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-sm sm:text-base font-black text-slate-950 tracking-tight leading-none">
-                SMART PHYSICS
+              <h1 className="text-sm sm:text-base font-black text-slate-950 tracking-tight leading-none uppercase">
+                {SITE_BRAND_CONFIG.brandName}
               </h1>
               <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300 text-[10px] font-bold">
                 🌐 PUBLIC EXAM
               </span>
             </div>
-            <div className="text-[11px] font-bold text-blue-700 tracking-wide mt-0.5">
-              THARAKA AMARASINGHE
+            <div className="text-[11px] font-bold text-blue-700 tracking-wide mt-0.5 uppercase">
+              {SITE_BRAND_CONFIG.directorName.en}
             </div>
             <p className="text-[11px] font-semibold text-slate-600 truncate max-w-xs sm:max-w-md">
               {exam.title}

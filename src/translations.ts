@@ -1,10 +1,12 @@
+import { SITE_BRAND_CONFIG } from './config/siteBrandConfig';
+
 export type Language = 'si' | 'en';
 
 export const translations = {
   si: {
-    siteName: 'Smart Physics',
-    author: 'තාරක අමරසිංහ',
-    tagline: 'දිවයිනේ ප්‍රමුඛතම භෞතික විද්‍යා පන්ති',
+    siteName: SITE_BRAND_CONFIG.brandName,
+    author: SITE_BRAND_CONFIG.directorName.si,
+    tagline: SITE_BRAND_CONFIG.heroSubtitle.si,
     home: 'මුල් පිටුව',
     login: 'ඇතුල් වන්න',
     register: 'ලියාපදිංචි වන්න',
@@ -18,7 +20,7 @@ export const translations = {
     passwordLabel: 'මුරපදය හෝ NIC (Password / NIC)',
     forgotPassword: 'මුරපදය අමතකද?',
     confirmLogin: 'ඇතුල් වන්න',
-    supportText: 'සහාය: WhatsApp 0779630100',
+    supportText: `සහාය: WhatsApp ${SITE_BRAND_CONFIG.supportWhatsAppDisplay}`,
     adminHint: 'පරිපාලක පිවිසුම: Username: superadmin',
     needRegister: 'නැවත ලියාපදිංචි වීමට අවශ්‍යද?',
     clickHere: 'මෙහි ක්ලික් කරන්න',
@@ -42,13 +44,13 @@ export const translations = {
     timetable: 'පන්ති කාලසටහන',
     timetableDesc: 'දින, වේලාවන් සහ ඉදිරි සැසි පරික්ෂා කරන්න',
     backToHub: 'ආපසු ඩෑෂ්බෝඩයට',
-    contact: 'Contact: Smart Physics Team - 0779630100',
-    poweredBy: '🏛️ Powered by Smart Physics - තාරක අමරසිංහ'
+    contact: `Contact: ${SITE_BRAND_CONFIG.supportTeamName} - ${SITE_BRAND_CONFIG.supportHotline}`,
+    poweredBy: SITE_BRAND_CONFIG.footerPoweredBy
   },
   en: {
-    siteName: 'Smart Physics',
-    author: 'Tharaka Amarasinghe',
-    tagline: 'Leading Physics Classes in Sri Lanka',
+    siteName: SITE_BRAND_CONFIG.brandName,
+    author: SITE_BRAND_CONFIG.directorName.en,
+    tagline: SITE_BRAND_CONFIG.heroSubtitle.en,
     home: 'Home',
     login: 'Login',
     register: 'Register',
@@ -62,7 +64,7 @@ export const translations = {
     passwordLabel: 'Password or NIC Number',
     forgotPassword: 'Forgot Password?',
     confirmLogin: 'Sign In',
-    supportText: 'Support: WhatsApp 0779630100',
+    supportText: `Support: WhatsApp ${SITE_BRAND_CONFIG.supportWhatsAppDisplay}`,
     adminHint: 'Admin login: Username: superadmin',
     needRegister: 'Need to register as a new student?',
     clickHere: 'Click here',
@@ -86,7 +88,7 @@ export const translations = {
     timetable: 'Class Timetable',
     timetableDesc: 'Check dates, times & upcoming sessions',
     backToHub: 'Back to Dashboard',
-    contact: 'Contact: Smart Physics Team - 0779630100',
-    poweredBy: '🏛️ Powered by Smart Physics - Tharaka Amarasinghe'
+    contact: `Contact: ${SITE_BRAND_CONFIG.supportTeamName} - ${SITE_BRAND_CONFIG.supportHotline}`,
+    poweredBy: SITE_BRAND_CONFIG.footerPoweredBy
   }
 };

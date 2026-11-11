@@ -21,27 +21,27 @@ html:not(.dark) {
 }
 
 /* Text clarity inside Day Mode surfaces (except inside dedicated dark media players) */
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-white:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-white:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #0f172a !important;
 }
 
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-100:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-slate-100:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #1e293b !important;
 }
 
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-200:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-slate-200:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #1e293b !important;
 }
 
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-300:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-slate-300:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #334155 !important;
 }
 
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-400:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-slate-400:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-rose"]):not([class*="bg-purple"]):not([class*="bg-indigo"]):not([class*="bg-amber"]):not([class*="bg-teal"]):not([class*="bg-gradient"]) {
   color: #475569 !important;
 }
 
-html:not(.dark) :not([data-dark-surface]):not([data-video-player]):not([data-video-player] *) > .text-slate-500 {
+html:not(.dark) :not([data-dark-surface]):not([data-dark-surface] *):not([data-video-player]):not([data-video-player] *) > .text-slate-500 {
   color: #475569 !important;
 }
 
@@ -74,18 +74,47 @@ html:not(.dark) .border-slate-200\/80 {
    Ensures buttons never look like dull/pitch-black boxes and are clearly identifiable
    ========================================================================= */
 
-/* Secondary/Cancel buttons in Day Mode: Light crisp slate instead of dark black */
-html:not(.dark) button.bg-slate-800:not([class*="from-"]):not([class*="text-amber"]),
-html:not(.dark) button.bg-slate-900:not([class*="from-"]):not([class*="text-amber"]):not([class*="text-emerald"]):not([class*="text-blue"]) {
+/* Secondary/Cancel buttons in Day Mode: Light crisp slate instead of dark black (exempting video players) */
+html:not(.dark) button.bg-slate-800:not([data-video-player] *):not([data-video-player]):not([class*="from-"]):not([class*="text-amber"]),
+html:not(.dark) button.bg-slate-900:not([data-video-player] *):not([data-video-player]):not([class*="from-"]):not([class*="text-amber"]):not([class*="text-emerald"]):not([class*="text-blue"]) {
   background-color: #f1f5f9 !important;
   color: #1e293b !important;
   border: 1px solid #cbd5e1 !important;
 }
 
-html:not(.dark) button.bg-slate-800:hover,
-html:not(.dark) button.bg-slate-900:hover {
+html:not(.dark) button.bg-slate-800:not([data-video-player] *):not([data-video-player]):hover,
+html:not(.dark) button.bg-slate-900:not([data-video-player] *):not([data-video-player]):hover {
   background-color: #e2e8f0 !important;
   color: #0f172a !important;
+}
+
+/* DEDICATED DARK VIDEO PLAYER STYLING IMMUNITY (Maintains crystal clear white labels in all themes) */
+[data-video-player],
+[data-video-player] * {
+  color-scheme: dark;
+}
+
+html:not(.dark) [data-video-player] .text-white,
+html:not(.dark) [data-video-player] span.text-white,
+html:not(.dark) [data-video-player] p.text-white,
+html:not(.dark) [data-video-player] button.text-white,
+html:not(.dark) [data-video-player] div.text-white {
+  color: #ffffff !important;
+}
+
+html:not(.dark) [data-video-player] button.bg-slate-900,
+html:not(.dark) [data-video-player] button.bg-slate-800,
+html:not(.dark) [data-video-player] button.bg-slate-950 {
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  border-color: #334155 !important;
+}
+
+html:not(.dark) [data-video-player] button.bg-slate-900:hover,
+html:not(.dark) [data-video-player] button.bg-slate-800:hover,
+html:not(.dark) [data-video-player] button.bg-slate-950:hover {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
 }
 
 /* Save / Submit / Primary Action buttons receive vivid, clear recognizable accents */

@@ -1,4 +1,6 @@
 // Cross-tab and in-memory Realtime Synchronization Hub for Smart Physics
+import { supabase } from './supabaseClient';
+
 export type SyncEventType = 
   | 'pending_payment_submitted'
   | 'pending_payment_deleted'
@@ -26,6 +28,8 @@ export type SyncEventType =
   | 'device_violation_updated'
   | 'lecturer_shares_updated'
   | 'live_exam_updated'
+  | 'live_deleted'
+  | 'scheduled_lives_updated'
   | 'exam_pushed'
   | 'exam_updated'
   | 'ubt_exam_created'
@@ -125,3 +129,31 @@ export function subscribeRealtimeEvents(callback: (type: SyncEventType, payload:
     }
   };
 }
+
+/**
+ * ⚡ Send a Supabase Realtime broadcast message safely without triggering REST fallback deprecation warnings.
+ * Uses official httpSend(event, payload) explicitly for REST delivery.
+ */
+export async function sendSupabaseBroadcast(channelName: string, event: string, payload: any = {}) {
+  try {
+    const channel = supabase.channel(channelName);
+    const safePayload = payload ?? {};
+
+    if (typeof (channel as any).httpSend === 'function') {
+      await (channel as any).httpSend(event, safePayload);
+    } else if (typeof (channel as any).send === 'function') {
+      await (channel as any).send({
+        type: 'broadcast',
+        event,
+        payload: safePayload
+      });
+    }
+
+    try {
+      supabase.removeChannel(channel);
+    } catch {}
+  } catch (err) {
+    // Non-fatal broadcast delivery exception
+  }
+}
+

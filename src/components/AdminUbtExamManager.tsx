@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { emitRealtimeEvent, subscribeRealtimeEvents } from '../realtimeSync';
+import { emitRealtimeEvent, subscribeRealtimeEvents, sendSupabaseBroadcast } from '../realtimeSync';
 import { 
   FileText, 
   Plus, 
@@ -894,19 +894,13 @@ export default function AdminUbtExamManager({ currentStaff, availableClasses = [
       emitRealtimeEvent('ubt_exam_updated', { id: exam.id, status: 'active', mode, timestamp: nowIso });
       emitRealtimeEvent('live_exam_updated', { examId: exam.id, action: mode === 'all_retake' ? 'repush_all' : 'repush_pending', timestamp: nowIso });
 
-      // 6. Broadcast via channel
-      try {
-        const liveChannel = supabase.channel('live_class_push_events');
-        liveChannel.subscribe((status) => {
-          if (status === 'SUBSCRIBED') {
-            liveChannel.send({
-              type: 'broadcast',
-              event: 'exam_pushed',
-              payload: { examId: exam.id, title: exam.title, action: mode === 'all_retake' ? 'repush_all' : 'repush_pending', timestamp: nowIso }
-            });
-          }
-        });
-      } catch (e) {}
+      // 6. Broadcast via channel using official HTTP delivery
+      sendSupabaseBroadcast('live_class_push_events', 'exam_pushed', {
+        examId: exam.id,
+        title: exam.title,
+        action: mode === 'all_retake' ? 'repush_all' : 'repush_pending',
+        timestamp: nowIso
+      });
 
       if (mode === 'all_retake') {
         setRepushSuccessMessage(`🔄 "${exam.title}" විභාගය "${exam.class_type}" පන්තියේ සියලුම සිසුන්ට 2 වන අවස්ථාව (2nd Attempt) ලෙස නැවත ලිවීමට සාර්ථකව Push කරන ලදී!`);

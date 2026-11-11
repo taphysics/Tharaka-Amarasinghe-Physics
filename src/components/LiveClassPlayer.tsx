@@ -37,8 +37,14 @@ import {
   HelpCircle,
   GripHorizontal,
   KeyRound,
-  Copy
+  Copy,
+  Youtube,
+  Radio,
+  XCircle,
+  Sparkles
 } from 'lucide-react';
+import YouTubeLivePlayer from './YouTubeLivePlayer';
+import { getLocalPendingPayments } from '../pendingPaymentsService';
 
 interface Student {
   id?: string;
@@ -74,6 +80,7 @@ interface ScheduledLive {
   status: string;
   zoom_join_url?: string;
   zoom_start_url?: string;
+  youtube_live_url?: string;
   link?: string;
   platform?: string;
   is_exam_active?: boolean;
@@ -99,7 +106,7 @@ interface OnlineExam {
 
 interface LiveClassPlayerProps {
   currentUser: Student | null;
-  onNavigateToPayment?: () => void;
+  onNavigateToPayment?: (classType?: string, month?: string) => void;
 }
 
 // Convert month string (e.g. "2026-10") into readable Sinhala & English display name
@@ -280,6 +287,8 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [scheduledLives, setScheduledLives] = useState<ScheduledLive[]>([]);
   const [paymentsList, setPaymentsList] = useState<any[]>([]);
+  const [pendingPaymentsList, setPendingPaymentsList] = useState<any[]>([]);
+  const [copiedTxnId, setCopiedTxnId] = useState<boolean>(false);
   const [freshStudent, setFreshStudent] = useState<any>(currentUser);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshingPayment, setIsRefreshingPayment] = useState<boolean>(false);
@@ -290,8 +299,18 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   const [isFullscreen, setIsFullscreen] = useState(false);
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
-  // Student username strictly used for Zoom auto-population
-  const studentUsername = currentUser?.username || 'Student';
+  // Stream Platform Selection: 'zoom' or 'youtube'
+  const [selectedStreamType, setSelectedStreamType] = useState<'zoom' | 'youtube'>('zoom');
+
+  // Student username strictly used for Zoom auto-population & watermark
+  const studentUsername = currentUser?.username || (currentUser as any)?.full_name || (currentUser as any)?.name || 'Student';
+
+  // Automatically select YouTube if class only has YouTube Live URL
+  useEffect(() => {
+    if (targetClass?.youtube_live_url && !targetClass?.zoom_join_url && !targetClass?.link) {
+      setSelectedStreamType('youtube');
+    }
+  }, [targetClass]);
 
   // Browser Media Permission & Active Stream states
   const [mediaPermissionGranted, setMediaPermissionGranted] = useState<boolean>(false);
@@ -414,7 +433,12 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     const unsubRealtime = subscribeRealtimeEvents((type) => {
       if (
         type === 'calendar_updated' || 
+        type === 'live_deleted' ||
+        type === 'scheduled_lives_updated' ||
         type === 'payment_approved' || 
+        type === 'payment_rejected' ||
+        type === 'pending_payment_submitted' ||
+        type === 'pending_payment_deleted' ||
         type === 'payment_status_changed' ||
         type === 'payments_updated' ||
         type === 'student_updated'
@@ -429,6 +453,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scheduled_lives' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_payments' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'exams' }, () => fetchData())
       .subscribe();
@@ -485,42 +510,103 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
 
-      // Student enrolled classes normalized
-      const studentClasses = (currentUser?.class_types || []).map(c => c.trim().toLowerCase());
+      // Normalize all possible student enrolled classes (handling class_types, classTypes, class, and enrolled_classes)
+      const studentClassList: string[] = [];
+      const addEnrolled = (v: any) => {
+        if (!v) return;
+        if (Array.isArray(v)) {
+          v.forEach(x => typeof x === 'string' && x.trim() && studentClassList.push(x.trim().toLowerCase()));
+        } else if (typeof v === 'string' && v.trim()) {
+          studentClassList.push(v.trim().toLowerCase());
+        }
+      };
+      addEnrolled(currentUser?.class_types);
+      addEnrolled((currentUser as any)?.classTypes);
+      addEnrolled((currentUser as any)?.class);
+      addEnrolled((currentUser as any)?.enrolled_classes);
+      addEnrolled(freshStudent?.class_types);
+      addEnrolled((freshStudent as any)?.classTypes);
+      addEnrolled((freshStudent as any)?.class);
+
+      const studentClasses = Array.from(new Set(studentClassList));
       const hasClasses = studentClasses.length > 0;
 
       const isMatch = (type1?: string, type2?: string, arr?: string[]) => {
         if (!hasClasses) return true;
-        if (type1 && studentClasses.includes(type1.trim().toLowerCase())) return true;
-        if (type2 && studentClasses.includes(type2.trim().toLowerCase())) return true;
-        if (arr && arr.some(a => studentClasses.includes(a.trim().toLowerCase()))) return true;
-        return false;
+        const normalizedArr = (arr || []).map(a => String(a).trim().toLowerCase());
+        const t1 = (type1 || '').trim().toLowerCase();
+        const t2 = (type2 || '').trim().toLowerCase();
+
+        return studentClasses.some(sc => {
+          if (t1 && (sc === t1 || sc.includes(t1) || t1.includes(sc))) return true;
+          if (t2 && (sc === t2 || sc.includes(t2) || t2.includes(sc))) return true;
+          if (normalizedArr.some(na => sc === na || sc.includes(na) || na.includes(sc))) return true;
+          return false;
+        });
       };
 
-      // Run parallel fast fetch across all tables in a single round-trip
-      const [calRes, liveRes, studentRes, payRes] = await Promise.all([
+      // Clear any stale local cache of scheduled lives
+      try {
+        localStorage.removeItem('cached_scheduled_lives');
+        localStorage.removeItem('physics_hub_scheduled_lives');
+      } catch {}
+
+      // Run parallel fast fetch across all tables in a single round-trip directly from Supabase
+      const [calRes, liveRes, studentRes, payRes, pendingPayRes] = await Promise.all([
         supabase.from('calendar_events').select('*').gte('date', today).eq('status', 'scheduled'),
         supabase.from('scheduled_lives').select('*').in('status', ['scheduled', 'live']),
         currentUser?.id ? supabase.from('students').select('*').eq('id', currentUser.id).maybeSingle() : Promise.resolve({ data: null }),
-        currentUser?.id ? supabase.from('payments').select('*').eq('student_id', currentUser.id) : Promise.resolve({ data: [] })
+        currentUser?.id ? supabase.from('payments').select('*').eq('student_id', currentUser.id) : Promise.resolve({ data: [] }),
+        (currentUser?.id || currentUser?.username)
+          ? supabase.from('pending_payments')
+              .select('*')
+              .or(`student_id.eq.${currentUser?.id || ''},username.eq.${currentUser?.username || ''}`)
+              .order('created_at', { ascending: false })
+          : Promise.resolve({ data: [] })
       ]);
+
+      // If any lingering test session named "Test 123" or "Test 12345" exists in the database, automatically purge it
+      if (liveRes.data && liveRes.data.some((l: any) => (l.title || '').toLowerCase().includes('test 123'))) {
+        supabase.from('scheduled_lives').delete().ilike('title', '%Test 123%').then(() => {});
+        supabase.from('calendar_events').delete().ilike('title', '%Test 123%').then(() => {});
+      }
 
       if (calRes.data) {
         const filteredCal = calRes.data
-          .filter((ev: any) => isMatch(ev.class_type, ev.target_class_type))
+          .filter((ev: any) => {
+            const titleLower = (ev.title || '').toLowerCase().trim();
+            if (titleLower.includes('test 123') || titleLower === 'test') return false;
+            return isMatch(ev.class_type, ev.target_class_type);
+          })
           .sort((a: any, b: any) => new Date(`${a.date}T${a.start_time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.start_time || '00:00'}:00`).getTime());
         setCalendarEvents(filteredCal);
+      } else {
+        setCalendarEvents([]);
       }
 
       if (liveRes.data) {
         const filteredLive = liveRes.data
-          .filter((cls: any) => isMatch(cls.target_class_type, undefined, cls.target_classes))
+          .filter((cls: any) => {
+            // Strictly exclude ended sessions
+            if (cls.status === 'ended') return false;
+
+            // Strictly filter out test sessions that do not exist in real curriculum
+            const titleLower = (cls.title || '').toLowerCase().trim();
+            if (titleLower.includes('test 123') || titleLower === 'test') return false;
+
+            // Strictly enforce date: If date is strictly prior to today, session is expired
+            if (cls.date && cls.date < today) return false;
+
+            return isMatch(cls.target_class_type, cls.class_type, cls.target_classes);
+          })
           .sort((a: any, b: any) => {
             if (a.status === 'live' && b.status !== 'live') return -1;
             if (b.status === 'live' && a.status !== 'live') return 1;
             return new Date(`${a.date}T${a.time || '00:00'}:00`).getTime() - new Date(`${b.date}T${b.time || '00:00'}:00`).getTime();
           });
         setScheduledLives(filteredLive);
+      } else {
+        setScheduledLives([]);
       }
 
       if (studentRes.data) {
@@ -529,6 +615,20 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
       if (payRes.data) {
         setPaymentsList(payRes.data);
       }
+
+      // Process and merge pending payments list
+      let pendingList = (pendingPayRes?.data || []) as any[];
+      try {
+        const localPendings = getLocalPendingPayments().filter((p: any) => 
+          (currentUser?.id && String(p.student_id) === String(currentUser.id)) ||
+          (currentUser?.username && String(p.username).toLowerCase() === String(currentUser.username).toLowerCase())
+        );
+        const map = new Map<string, any>();
+        localPendings.forEach((p: any) => map.set(p.id, p));
+        pendingList.forEach((p: any) => map.set(p.id, p));
+        pendingList = Array.from(map.values()).sort((a: any, b: any) => (b.created_at || '').localeCompare(a.created_at || ''));
+      } catch (e) {}
+      setPendingPaymentsList(pendingList);
     } catch (error) {
       console.error('Error fetching live class player data:', error);
     } finally {
@@ -1236,9 +1336,216 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
   const currentMonthFormatted = getMonthDisplayName(currentMonth);
 
   // =========================================================================
-  // REQUIREMENT 1: UNPAID STUDENTS -> LIVE CLASS DISABLED / LOCKED VIEW
+  // REQUIREMENT 1: UNPAID STUDENTS -> PENDING, REJECTED, OR LOCKED VIEW
   // =========================================================================
   if (targetClass && !paymentStatus.isPaidOrFree) {
+    const tClassLower = (currentClassType || '').toLowerCase().trim();
+    const tMonthLower = (currentMonth || '').toLowerCase().trim();
+
+    // Look for matching pending or rejected payment requests for this class/month
+    const matchingPending = pendingPaymentsList.find((p: any) => {
+      const pClass = String(p.class_type || '').toLowerCase().trim();
+      const pMonth = String(p.month || '').toLowerCase().trim();
+      const classMatch = !pClass || !tClassLower || pClass === tClassLower || pClass.includes(tClassLower) || tClassLower.includes(pClass);
+      const monthMatch = !pMonth || !tMonthLower || pMonth === tMonthLower || tMonthLower.includes(pMonth) || pMonth.includes(tMonthLower);
+      return classMatch && monthMatch;
+    }) || pendingPaymentsList.find((p: any) => {
+      const pClass = String(p.class_type || '').toLowerCase().trim();
+      return pClass === tClassLower || pClass.includes(tClassLower) || tClassLower.includes(pClass);
+    });
+
+    // -----------------------------------------------------------------------
+    // CASE A: PAYMENT PENDING VERIFICATION (පොරොත්තු වේ)
+    // -----------------------------------------------------------------------
+    if (matchingPending && matchingPending.status === 'pending') {
+      const pendingWaMsg = `හෙලෝ සර්, මම [${matchingPending.class_type || currentClassType}] පන්තිය සඳහා [${currentMonthFormatted}] මාසයට ගෙවීම් සිදුකර Transaction ID (${matchingPending.transaction_id}) සබ්මිට් කර ඇත. කරුණාකර අනුමත කර සජීවී පන්තියට අවස්ථාව ලබා දෙන්න.\nUsername: ${studentUsername}`;
+      const pendingWaUrl = `https://wa.me/94719152128?text=${encodeURIComponent(pendingWaMsg)}`;
+
+      return (
+        <div className="w-full bg-white dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col p-4 md:p-6 rounded-2xl border border-amber-300 dark:border-amber-500/40 shadow-xl dark:shadow-2xl animate-in fade-in duration-300">
+          <div className="max-w-3xl mx-auto w-full space-y-6">
+            
+            <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-b from-amber-50 via-white to-white dark:from-amber-950/40 dark:to-slate-900/90 border border-amber-300 dark:border-amber-500/40 shadow-md text-center relative overflow-hidden">
+              <div className="w-16 h-16 md:w-20 md:h-20 bg-amber-500/15 border-2 border-amber-400 dark:border-amber-500/50 rounded-2xl flex items-center justify-center mx-auto mb-5 text-amber-600 dark:text-amber-400 shadow-lg">
+                <Clock size={36} className="animate-spin text-amber-500 [animation-duration:8s]" />
+              </div>
+
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/15 dark:bg-amber-500/25 border border-amber-300 dark:border-amber-500/50 text-amber-800 dark:text-amber-300 text-xs font-black uppercase tracking-wider mb-4 shadow-sm">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+                ⏳ Payment Pending (ගෙවීම් තහවුරු කරමින් පවතී)
+              </div>
+
+              <h1 className="text-xl md:text-3xl font-extrabold text-slate-900 dark:text-white mb-3 leading-snug">
+                {targetClass.title}
+              </h1>
+
+              <p className="text-sm md:text-base text-slate-700 dark:text-amber-200/90 max-w-xl mx-auto leading-relaxed">
+                ඔබ විසින් <strong className="text-slate-900 dark:text-white underline decoration-amber-500 underline-offset-4">{matchingPending.class_type || currentClassType}</strong> පන්තියේ <strong className="text-slate-900 dark:text-white">{currentMonthFormatted}</strong> මාසය සඳහා ගෙවීම් තොරතුරු සාර්ථකව පද්ධතියට යොමු කර ඇත. අපගේ Admin කණ්ඩායම විසින් එය පරීක්ෂා කර අනුමත කළ විගස මෙම පිටුව ස්වයංක්‍රීයව Live Class එකට Unlock වනු ඇත. කිසිදු Refresh කිරීමක් අවශ්‍ය නොවේ.
+              </p>
+
+              {/* Pending Meta Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl mx-auto mt-6 text-left text-xs">
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">අදාළ පන්ති වර්ගය</span>
+                  <span className="text-xs md:text-sm font-bold text-slate-900 dark:text-white">{matchingPending.class_type || currentClassType}</span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">අදාළ මාසය</span>
+                  <span className="text-xs md:text-sm font-bold text-amber-600 dark:text-amber-300">{currentMonthFormatted}</span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">ගෙවීම් ක්‍රමය</span>
+                  <span className="text-xs md:text-sm font-bold text-slate-900 dark:text-white">
+                    {matchingPending.payment_method === 'qr' ? 'LankaQR Pay' : 'බැංකු තැන්පතු (Bank)'}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1 sm:col-span-2 md:col-span-2">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">යොමු කළ Transaction ID / Ref</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-xs md:text-sm text-blue-600 dark:text-blue-400 break-all">
+                      {matchingPending.transaction_id}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(matchingPending.transaction_id);
+                        setCopiedTxnId(true);
+                        setTimeout(() => setCopiedTxnId(false), 2000);
+                      }}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-1 transition cursor-pointer shrink-0"
+                    >
+                      {copiedTxnId ? <><Check size={12} className="text-emerald-500" /> Copied</> : <><Copy size={12} /> Copy</>}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-1">
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block font-medium">ගාස්තුව</span>
+                  <span className="text-xs md:text-sm font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                    රු. {Number(matchingPending.amount || 3500).toLocaleString()}/=
+                  </span>
+                </div>
+              </div>
+
+              {/* Realtime Live Pulse Banner */}
+              <div className="mt-5 p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 max-w-xl mx-auto flex items-center justify-center gap-2 text-xs text-emerald-700 dark:text-emerald-300 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Live Real-time Sync Active - ඇඩ්මින් විසින් අනුමත කළ ක්ෂණිකව මෙම පන්තිය ඔබ වෙනුවෙන් විවෘත වේ
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center mt-7">
+                <button
+                  onClick={handleManualPaymentRefresh}
+                  disabled={isRefreshingPayment}
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition hover:scale-[1.02] cursor-pointer"
+                >
+                  <RefreshCw size={14} className={isRefreshingPayment ? 'animate-spin' : ''} />
+                  {isRefreshingPayment ? 'පරීක්ෂා කරමින්...' : 'Refresh Status (නැවත පරීක්ෂා කරන්න)'}
+                </button>
+
+                <a
+                  href={pendingWaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full sm:w-auto px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/30 transition hover:scale-[1.02]"
+                >
+                  <MessageCircle size={16} /> Admin WhatsApp [0719152128]
+                </a>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // CASE B: PAYMENT REJECTED (ප්‍රතික්ෂේප කර ඇත)
+    // -----------------------------------------------------------------------
+    if (matchingPending && matchingPending.status === 'rejected') {
+      const rejectWaMsg = `හෙලෝ සර්, මගේ [${matchingPending.class_type || currentClassType}] පන්තියේ [${currentMonthFormatted}] මාසයට යොමු කළ ගෙවීම් රික්වෙස්ට් එක ප්‍රතික්ෂේප විය.\nහේතුව: ${matchingPending.note || 'නැත'}\nUsername: ${studentUsername}\nTransaction ID: ${matchingPending.transaction_id || ''}`;
+      const rejectWaUrl = `https://wa.me/94719152128?text=${encodeURIComponent(rejectWaMsg)}`;
+
+      return (
+        <div className="w-full bg-white dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col p-4 md:p-6 rounded-2xl border border-rose-300 dark:border-rose-500/40 shadow-xl dark:shadow-2xl animate-in fade-in duration-300">
+          <div className="max-w-3xl mx-auto w-full space-y-6">
+            
+            <div className="p-6 md:p-8 rounded-3xl bg-gradient-to-b from-rose-50 via-white to-white dark:from-rose-950/40 dark:to-slate-900/90 border border-rose-300 dark:border-rose-500/40 shadow-md text-center relative overflow-hidden">
+              <div className="w-16 h-16 md:w-20 md:h-20 bg-rose-500/15 border-2 border-rose-400 dark:border-rose-500/50 rounded-2xl flex items-center justify-center mx-auto mb-5 text-rose-600 dark:text-rose-400 shadow-lg">
+                <XCircle size={36} className="text-rose-600 dark:text-rose-400 animate-bounce" />
+              </div>
+
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-rose-500/15 dark:bg-rose-500/25 border border-rose-300 dark:border-rose-500/50 text-rose-800 dark:text-rose-300 text-xs font-black uppercase tracking-wider mb-4 shadow-sm">
+                <ShieldAlert size={15} /> ඔබගේ ගෙවීම් තොරතුරු ප්‍රතික්ෂේප කර ඇත (Payment Rejected)
+              </div>
+
+              <h1 className="text-xl md:text-3xl font-extrabold text-slate-900 dark:text-white mb-3 leading-snug">
+                {targetClass.title}
+              </h1>
+
+              {/* Admin Rejection Reason Box */}
+              <div className="p-4 rounded-2xl bg-rose-100/70 dark:bg-rose-950/60 border-2 border-rose-300 dark:border-rose-700/80 text-left max-w-xl mx-auto my-4 space-y-1.5 shadow-sm">
+                <div className="flex items-center gap-2 text-rose-800 dark:text-rose-300 font-extrabold text-xs uppercase tracking-wide">
+                  <AlertTriangle size={15} className="shrink-0 text-rose-600" />
+                  ඇඩ්මින් විසින් සඳහන් කළ හේතුව (Rejection Reason):
+                </div>
+                <p className="text-xs md:text-sm font-semibold text-rose-950 dark:text-rose-100 pl-6 leading-relaxed">
+                  "{matchingPending.note || 'ඔබ යොමු කළ Transaction ID එක වැරදියි හෝ බැංකු ගිණුමට මුදල් බැර වී නොමැත.'}"
+                </p>
+                {matchingPending.transaction_id && (
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 pl-6 pt-1">
+                    පෙර යොමු කළ Transaction ID: <span className="font-mono font-bold text-slate-900 dark:text-slate-200">{matchingPending.transaction_id}</span>
+                  </div>
+                )}
+              </div>
+
+              <p className="text-sm md:text-base text-slate-700 dark:text-rose-200/90 max-w-xl mx-auto leading-relaxed mt-2">
+                ඔබ යොමු කළ Transaction ID එක වැරදි හෝ මුදල් ලැබී නොමැති බැවින් මෙම ගෙවීම ප්‍රතික්ෂේප කර ඇත. කරුණාකර නැවත නිවැරදිව බැංකු ගිණුමට හෝ LankaQR මගින් මුදල් තැන්පත් කර නිවැරදි Transaction ID එක නැවත ඇතුළත් කර යොමු කරන්න.
+              </p>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-3 justify-center items-center mt-7">
+                {onNavigateToPayment && (
+                  <button
+                    onClick={() => onNavigateToPayment(currentClassType, currentMonth)}
+                    className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition hover:scale-[1.02] cursor-pointer"
+                  >
+                    <CreditCard size={16} /> නැවත නිවැරදිව ගෙවීම් තොරතුරු යොමු කරන්න (Invoice)
+                  </button>
+                )}
+
+                <a
+                  href={rejectWaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/30 transition hover:scale-[1.02]"
+                >
+                  <MessageCircle size={16} /> Admin WhatsApp [0719152128]
+                </a>
+
+                <button
+                  onClick={handleManualPaymentRefresh}
+                  disabled={isRefreshingPayment}
+                  className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs md:text-sm flex items-center justify-center gap-2 border border-slate-200 dark:border-slate-700 transition cursor-pointer"
+                >
+                  <RefreshCw size={14} className={isRefreshingPayment ? 'animate-spin' : ''} />
+                  {isRefreshingPayment ? 'පරීක්ෂා කරමින්...' : 'Refresh Status'}
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // -----------------------------------------------------------------------
+    // CASE C: STANDARD UNPAID NOTICE (NOT PAID YET)
+    // -----------------------------------------------------------------------
     const whatsappNotice = `හෙලෝ සර්, මගේ සජීවී පන්තියට සම්බන්ධ වීමට ගෙවීම් තහවුරු කර දෙන්න.\nUsername: ${studentUsername}\nපන්තිය: ${currentClassType}\nමාසය: ${currentMonthFormatted} (${currentMonth})`;
     const waUrl = `https://wa.me/94719152128?text=${encodeURIComponent(whatsappNotice)}`;
 
@@ -1291,7 +1598,7 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
             <div className="flex flex-col sm:flex-row gap-3 justify-center items-center mt-7">
               {onNavigateToPayment && (
                 <button
-                  onClick={onNavigateToPayment}
+                  onClick={() => onNavigateToPayment(currentClassType, currentMonth)}
                   className="w-full sm:w-auto px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition hover:scale-[1.02] cursor-pointer"
                 >
                   <CreditCard size={16} /> ගෙවීම් තොරතුරු සහ රිසිට්පත (Invoice)
@@ -1395,6 +1702,63 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
 
   return (
     <div className="w-full bg-white dark:bg-slate-950 text-slate-900 dark:text-white flex flex-col p-2 md:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 relative">
+
+      {/* =========================================================================
+          STREAM ENGINE SELECTOR: ZOOM VS YOUTUBE LIVE (DUAL SELECTION BUTTONS)
+         ========================================================================= */}
+      {targetClass && paymentStatus.isPaidOrFree && !isExamOpen && (
+        <div className="w-full mb-4 bg-gradient-to-r from-slate-50 via-white to-slate-50 dark:from-slate-900/90 dark:via-slate-950/90 dark:to-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 sm:p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+              <Radio size={20} className="text-blue-500 dark:text-blue-400 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-900 dark:text-white">
+                  සජීවී පන්ති විකාශන ක්‍රමවේදය (Live Streaming Mode):
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                  {selectedStreamType === 'zoom' ? '🎥 Zoom Web Player' : '🔴 Protected YouTube Player'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Zoom හෝ YouTube Live මඟින් ඔබ කැමති ක්‍රමවේදය තෝරාගෙන සජීවීව පන්තිය නරඹන්න
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 w-full md:w-auto shrink-0">
+            {/* 1. ZOOM BUTTON */}
+            <button
+              onClick={() => setSelectedStreamType('zoom')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm ${
+                selectedStreamType === 'zoom'
+                  ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/30 ring-2 ring-blue-400 dark:ring-blue-500'
+                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              <Video size={16} className={selectedStreamType === 'zoom' ? 'text-white' : 'text-blue-500'} />
+              <span>Zoom මගින් සම්බන්ධ වන්න</span>
+            </button>
+
+            {/* 2. YOUTUBE LIVE BUTTON */}
+            <button
+              onClick={() => setSelectedStreamType('youtube')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm relative ${
+                selectedStreamType === 'youtube'
+                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-600/30 ring-2 ring-red-400 dark:ring-red-500'
+                  : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              <Youtube size={16} className={selectedStreamType === 'youtube' ? 'text-white' : 'text-red-500'} />
+              <span>YouTube Live මගින් නරඹන්න</span>
+              {targetClass.youtube_live_url && (
+                <span className="w-2 h-2 rounded-full bg-red-400 animate-ping"></span>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* =========================================================================
           FEATURE: ALREADY COMPLETED EXAM BANNER (PREVENTS RE-POPUP ON REFRESH)
@@ -2150,11 +2514,39 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                     <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
                   </span>
                   <span className="text-white font-bold text-xs md:text-sm truncate max-w-[200px] md:max-w-md">
-                    සජීවී: {targetClass.title}
+                    {selectedStreamType === 'youtube' ? '🔴 YouTube Live:' : 'සජීවී:'} {targetClass.title}
                   </span>
                 </>
               )}
             </div>
+
+            {/* Quick Stream Engine Toggle Pills */}
+            {!isExamOpen && (
+              <div className="flex items-center bg-black/40 p-0.5 rounded-lg border border-white/10 shrink-0">
+                <button
+                  onClick={() => setSelectedStreamType('zoom')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                    selectedStreamType === 'zoom' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="Zoom Live"
+                >
+                  <Video size={11} /> Zoom
+                </button>
+                <button
+                  onClick={() => setSelectedStreamType('youtube')}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                    selectedStreamType === 'youtube' 
+                      ? 'bg-red-600 text-white' 
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="YouTube Live"
+                >
+                  <Youtube size={11} /> YouTube
+                </button>
+              </div>
+            )}
 
             {/* Student Username Badge, Cam/Mic Perms, & Controls */}
             <div className="flex items-center gap-1.5 shrink-0">
@@ -2163,33 +2555,21 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 <button
                   onClick={() => startCameraStream(true)}
                   disabled={isRequestingCamera}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition cursor-pointer shadow-md ${
                     isCameraActive
-                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                      : 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/40 text-amber-300'
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 shadow-emerald-950/20'
+                      : 'bg-amber-400 hover:bg-amber-300 text-slate-950 border-amber-300 shadow-amber-950/20'
                   }`}
                   title={isCameraActive ? "කැමරාව සාර්ථකව ක්‍රියාත්මකයි" : "බ්‍රවුසරයේ කැමරා සහ මයික්‍රෆෝන් අවසරය ලබා ගන්න"}
                 >
                   {isRequestingCamera ? (
-                    <><RotateCcw size={13} className="animate-spin text-amber-400" /> <span className="hidden sm:inline">කැමරාව සක්‍රීය වෙමින්...</span></>
+                    <><RotateCcw size={14} className="animate-spin text-slate-950" /> <span className="font-bold text-slate-950">කැමරාව සක්‍රීය වෙමින්...</span></>
                   ) : isCameraActive ? (
-                    <><Camera size={13} className="text-emerald-400" /> <span className="hidden sm:inline">Camera ON</span></>
+                    <><Camera size={14} className="text-white" /> <span className="font-bold text-white">Camera ON</span></>
                   ) : (
-                    <><VideoOff size={13} className="text-amber-400" /> <span className="hidden sm:inline">Turn Cam ON</span></>
+                    <><VideoOff size={14} className="text-slate-950" /> <span className="font-bold text-slate-950">Turn Cam ON</span></>
                   )}
                 </button>
-              )}
-
-              {zoomDirectUrl && !isExamOpen && (
-                <a
-                  href={getDirectZoomJoinUrl(zoomDirectUrl, studentUsername, targetClass)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-200 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 border border-emerald-500/40 transition shadow-sm"
-                  title="Auto Join Link එකෙන් කෙලින්ම Open කරන්න (පාස්කෝඩ් නොමැතිව)"
-                >
-                  <ExternalLink size={13} /> <span className="hidden sm:inline">Auto Join</span>
-                </a>
               )}
 
               {!isExamOpen && (
@@ -2281,15 +2661,43 @@ const LiveClassPlayer: React.FC<LiveClassPlayerProps> = ({ currentUser, onNaviga
                 </div>
               )}
 
-              <iframe
-                src={zoomEmbedUrl}
-                allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write; clipboard-read"
-                allowFullScreen={true}
-                sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads allow-presentation"
-                className={`absolute inset-0 w-full h-full border-0 max-w-full ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}
-                style={{ touchAction: 'pan-x pan-y' }}
-                title="Zoom Live Class Web Client"
-              />
+              {selectedStreamType === 'youtube' ? (
+                targetClass.youtube_live_url ? (
+                  <YouTubeLivePlayer
+                    videoUrl={targetClass.youtube_live_url}
+                    title={targetClass.title}
+                    studentName={studentUsername}
+                    className="absolute inset-0 w-full h-full"
+                    onFullscreenChange={setIsFullscreen}
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-900 text-white">
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-500 mb-4 shadow-lg shadow-red-950/40">
+                      <Youtube size={36} />
+                    </div>
+                    <h3 className="text-base font-bold mb-1">YouTube Live ලින්ක් එකක් සපයා නොමැත</h3>
+                    <p className="text-xs text-slate-300 max-w-md mb-4">
+                      මෙම පන්තිය සඳහා YouTube Live විකාශයක් සක්‍රීය කර නොමැත. කරුණාකර පහත බටන් එක මඟින් Zoom හරහා පන්තියට සම්බන්ධ වන්න.
+                    </p>
+                    <button
+                      onClick={() => setSelectedStreamType('zoom')}
+                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-2 cursor-pointer shadow-md shadow-blue-900/30"
+                    >
+                      <Video size={15} /> Zoom මඟින් සම්බන්ධ වන්න
+                    </button>
+                  </div>
+                )
+              ) : (
+                <iframe
+                  src={zoomEmbedUrl}
+                  allow="camera; microphone; fullscreen; display-capture; autoplay; clipboard-write; clipboard-read"
+                  allowFullScreen={true}
+                  sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-modals allow-downloads allow-presentation"
+                  className={`absolute inset-0 w-full h-full border-0 max-w-full ${isFloatingDragging ? 'pointer-events-none' : 'pointer-events-auto'}`}
+                  style={{ touchAction: 'pan-x pan-y' }}
+                  title="Zoom Live Class Web Client"
+                />
+              )}
             </div>
           )}
         </div>

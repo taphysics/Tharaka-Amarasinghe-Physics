@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import { emitRealtimeEvent } from './realtimeSync';
+import { emitRealtimeEvent, sendSupabaseBroadcast } from './realtimeSync';
 
 export interface PendingPaymentRequest {
   id: string;
@@ -175,15 +175,22 @@ export function normalizeToYearMonth(rawMonth?: string): string {
   const ym = clean.match(/^(\d{4})-(\d{1,2})$/);
   if (ym) return `${ym[1]}-${String(ym[2]).padStart(2, '0')}`;
   
+  // If single or double digit month (1-12)
+  if (/^(0?[1-9]|1[0-2])$/.test(clean)) {
+    return `${currentY}-${String(clean).padStart(2, '0')}`;
+  }
+
   const monthMap: Record<string, string> = {
     january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
     july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
-    jan: '01', feb: '02', mar: '03', apr: '04', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    jan: '01', feb: '02', mar: '03', apr: '04', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+    'ජනවාරි': '01', 'පෙබරවාරි': '02', 'මාර්තු': '03', 'අප්‍රේල්': '04', 'මැයි': '05', 'ජූනි': '06',
+    'ජූලි': '07', 'අගෝස්තු': '08', 'සැප්තැම්බර්': '09', 'ඔක්තෝබර්': '10', 'නොවැම්බර්': '11', 'දෙසැම්බර්': '12'
   };
   const lower = clean.toLowerCase();
   let foundMonth = '';
   for (const [k, v] of Object.entries(monthMap)) {
-    if (lower.includes(k)) {
+    if (lower.includes(k.toLowerCase())) {
       foundMonth = v;
       break;
     }
@@ -237,19 +244,29 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
 
   // 3. Find real student in Supabase
   let realStudentId: string = target.student_id;
-  let targetClasses: string[] = target.class_type 
-    ? target.class_type.split(',').map((s: string) => s.trim()).filter(Boolean)
-    : [];
-  if (targetClasses.length === 0 && target.class_type) {
-    targetClasses.push(target.class_type.trim());
-  }
+  let stdData: any = null;
 
   try {
-    const { data: stdData } = await supabase
-      .from('students')
-      .select('*')
-      .or(`username.eq.${target.username},id.eq.${target.student_id}`)
-      .maybeSingle();
+    if (target.student_id) {
+      const { data } = await supabase.from('students').select('*').eq('id', target.student_id).maybeSingle();
+      if (data) stdData = data;
+    }
+    if (!stdData && target.username) {
+      const cleanUser = target.username.trim().replace(/^@/, '');
+      const { data } = await supabase.from('students').select('*').ilike('username', cleanUser).maybeSingle();
+      if (data) stdData = data;
+    }
+    if (!stdData && target.student_name) {
+      const { data } = await supabase.from('students').select('*').ilike('name', target.student_name.trim()).maybeSingle();
+      if (data) stdData = data;
+    }
+
+    let targetClasses: string[] = target.class_type 
+      ? target.class_type.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : [];
+    if (targetClasses.length === 0 && target.class_type) {
+      targetClasses.push(target.class_type.trim());
+    }
 
     if (stdData) {
       realStudentId = stdData.id;
@@ -262,9 +279,9 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
         }
       }
       
-      // Ensure all target classes are added
+      // Ensure all target classes are added to student's classes
       targetClasses.forEach(cls => {
-        if (!currentClasses.includes(cls)) {
+        if (!currentClasses.some(c => c.toLowerCase() === cls.toLowerCase())) {
           currentClasses.push(cls);
         }
       });
@@ -283,38 +300,17 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
       if (target.month && !currentActiveMonths.includes(target.month)) {
         currentActiveMonths.push(target.month);
       }
-
-      // Calculate past months of the current year before target.month to mark as absent
-      const [targetYear, targetMonthNum] = normalizedMonth.split('-').map(Number);
-      const pastMonthsAbsent: { class: string; month: string; status: string }[] = [];
-      if (!isNaN(targetYear) && !isNaN(targetMonthNum)) {
-        for (let m = 1; m < targetMonthNum; m++) {
-          const mStr = `${targetYear}-${String(m).padStart(2, '0')}`;
-          targetClasses.forEach(cls => {
-            pastMonthsAbsent.push({ class: cls, month: mStr, status: 'absent' });
-          });
+      targetClasses.forEach(cls => {
+        const classMonthKey = `${cls}:${normalizedMonth}`;
+        if (!currentActiveMonths.includes(classMonthKey)) {
+          currentActiveMonths.push(classMonthKey);
         }
-      }
-
-      // Read and update deactivated_months
-      let deactivatedList: any[] = [];
-      if (stdData.deactivated_months) {
-        if (Array.isArray(stdData.deactivated_months)) deactivatedList = [...stdData.deactivated_months];
-        else if (typeof stdData.deactivated_months === 'string') {
-          try { deactivatedList = JSON.parse(stdData.deactivated_months); } catch (e) {}
-        }
-      }
-      for (const p of pastMonthsAbsent) {
-        if (!deactivatedList.some((d: any) => d.class === p.class && d.month === p.month)) {
-          deactivatedList.push(p);
-        }
-      }
+      });
 
       // Update student table directly in Supabase
       await supabase.from('students').update({
         class_types: currentClasses,
         active_months: currentActiveMonths,
-        deactivated_months: deactivatedList,
         is_paid: true
       }).eq('id', stdData.id);
 
@@ -330,106 +326,100 @@ export async function approvePendingPayment(requestId: string): Promise<boolean>
           });
         } catch (e) {}
       }
-
-      // Automatically mark previous months as 'absent' in payments table
-      for (const p of pastMonthsAbsent) {
-        const absentRecordId = `${stdData.id}_${p.month}_${p.class}`;
-        try {
-          await supabase.from('payments').upsert({
-            id: crypto.randomUUID(),
-            record_id: absentRecordId,
-            student_id: stdData.id,
-            username: target.username,
-            class_type: p.class,
-            month: p.month,
-            target_month: p.month,
-            amount: 0,
-            status: 'absent',
-            reminder_sent: false,
-            whatsapp_sent: false
-          }, { onConflict: 'record_id' });
-        } catch (errUpsert) {}
-      }
     }
-  } catch (e) {
-    console.warn('Failed to update student in remote table:', e);
-  }
 
-  // 4. CRITICAL: Automatically update Manage Payments in Supabase `payments` table
-  const feePerClass = targetClasses.length > 0 ? Math.round(target.amount / targetClasses.length) : target.amount;
+    // 4. CRITICAL: Automatically update Manage Payments in Supabase `payments` table
+    const feePerClass = targetClasses.length > 0 ? Math.round(target.amount / targetClasses.length) : target.amount;
 
-  for (const cls of targetClasses) {
-    // 1. Primary Record ID matching AdminPaymentManager: `${student.id}_${monthKey}_${className}`
-    const recordId = `${realStudentId}_${normalizedMonth}_${cls}`;
-    
-    const paymentPayload = {
-      id: crypto.randomUUID(),
-      record_id: recordId,
-      student_id: realStudentId,
-      username: target.username,
-      class_type: cls,
-      month: normalizedMonth,
-      target_month: normalizedMonth,
-      amount: feePerClass,
-      status: 'paid',
-      reminder_sent: false,
-      whatsapp_sent: false,
-      payment_method: target.payment_method || 'bank',
-      transaction_id: target.transaction_id || '',
-      enrollment_id: target.id,
-      created_at: reviewedAt
-    };
+    for (const cls of targetClasses) {
+      // Primary Record ID matching AdminPaymentManager: `${student.id}_${monthKey}_${className}`
+      const recordId = `${realStudentId}_${normalizedMonth}_${cls}`;
 
-    try {
-      const { error: upsertErr } = await supabase.from('payments').upsert(paymentPayload, { onConflict: 'record_id' });
-      if (upsertErr) {
-        console.warn('Payment upsert error, trying update/insert fallback:', upsertErr);
+      // Check if a payment record with this record_id already exists in Supabase
+      const { data: existingRecords } = await supabase
+        .from('payments')
+        .select('id, record_id')
+        .or(`record_id.eq.${recordId},and(student_id.eq.${realStudentId},month.eq.${normalizedMonth},class_type.eq.${cls})`);
+
+      if (existingRecords && existingRecords.length > 0) {
+        // Record exists: update directly by ID so no constraint errors can happen
+        for (const rec of existingRecords) {
+          await supabase.from('payments').update({
+            status: 'paid',
+            record_id: recordId,
+            amount: feePerClass,
+            month: normalizedMonth,
+            target_month: normalizedMonth,
+            class_type: cls,
+            class_name: cls,
+            payment_method: target.payment_method || 'bank',
+            transaction_id: target.transaction_id || '',
+            reminder_sent: false,
+            whatsapp_sent: false,
+            created_at: reviewedAt
+          }).eq('id', rec.id);
+        }
+      } else {
+        // Record does not exist: insert fresh row with complete fields
+        const paymentPayload = {
+          id: crypto.randomUUID(),
+          record_id: recordId,
+          student_id: realStudentId,
+          username: target.username || stdData?.username || '',
+          class_type: cls,
+          class_name: cls,
+          month: normalizedMonth,
+          target_month: normalizedMonth,
+          amount: feePerClass,
+          status: 'paid',
+          reminder_sent: false,
+          whatsapp_sent: false,
+          payment_method: target.payment_method || 'bank',
+          transaction_id: target.transaction_id || '',
+          enrollment_id: target.id,
+          created_at: reviewedAt
+        };
+
+        const { error: insErr } = await supabase.from('payments').insert([paymentPayload]);
+        if (insErr) {
+          console.warn('Payment direct insert error, using upsert fallback:', insErr);
+          await supabase.from('payments').upsert(paymentPayload);
+        }
+      }
+
+      // Also ensure any matching student/month records are marked as paid
+      try {
         await supabase.from('payments').update({
           status: 'paid',
           amount: feePerClass,
           reminder_sent: false,
           whatsapp_sent: false
-        }).eq('record_id', recordId);
-      }
-    } catch (e) {
+        })
+        .eq('student_id', realStudentId)
+        .eq('class_type', cls)
+        .or(`month.eq.${normalizedMonth},target_month.eq.${normalizedMonth}`);
+      } catch (e3) {}
+
+      // Clear any past fee reminders for this class from announcements
       try {
-        await supabase.from('payments').insert(paymentPayload);
-      } catch (e2) {}
-    }
+        await supabase
+          .from('announcements')
+          .delete()
+          .eq('target_user', target.username)
+          .eq('type', 'private')
+          .ilike('content', `%[${cls}]%`);
+      } catch (e) {}
 
-    // Also update any existing records that used target.month or target.student_id
-    try {
-      await supabase.from('payments').update({
-        status: 'paid',
-        amount: feePerClass,
-        reminder_sent: false,
-        whatsapp_sent: false
-      })
-      .eq('class_type', cls)
-      .or(`student_id.eq.${realStudentId},username.eq.${target.username}`)
-      .or(`month.eq.${normalizedMonth},month.eq.${target.month},target_month.eq.${normalizedMonth}`);
-    } catch (e3) {}
-
-    // Clear any past fee reminders for this class from announcements
-    try {
-      await supabase
-        .from('announcements')
-        .delete()
-        .eq('target_user', target.username)
-        .eq('type', 'private')
-        .ilike('content', `%[${cls}]%`);
-    } catch (e) {}
-
-    // Broadcast realtime update to student dashboard
-    try {
-      const channel = supabase.channel(`student_dashboard_${realStudentId}`);
-      await channel.send({
-        type: 'broadcast',
-        event: 'payment_updated',
-        payload: { studentId: realStudentId, monthKey: normalizedMonth, className: cls, status: 'paid' }
+      // Broadcast realtime update to student dashboard
+      sendSupabaseBroadcast(`student_dashboard_${realStudentId}`, 'payment_updated', {
+        studentId: realStudentId,
+        monthKey: normalizedMonth,
+        className: cls,
+        status: 'paid'
       });
-      supabase.removeChannel(channel);
-    } catch (errB) {}
+    }
+  } catch (e) {
+    console.warn('Failed to update student and payments in remote table:', e);
   }
 
   // 5. Send Instant Approval Notification to Student
